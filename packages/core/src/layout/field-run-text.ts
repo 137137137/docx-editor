@@ -5,7 +5,12 @@
 // a disagreement is an offset bug. Keeping the vocabulary in one module keeps them agreeing
 // by construction.
 
-import { hardBreakText, type OoxmlNode, type OoxmlProperty } from '@docx-editor.dev/core/store';
+import {
+  hardBreakText,
+  WML_NAMESPACE_URI,
+  type OoxmlNode,
+  type OoxmlProperty,
+} from '@docx-editor.dev/core/store';
 import { runTextOutlineProperty } from './run-text-outline.ts';
 import {
   hyphenDisplayText,
@@ -54,6 +59,26 @@ export function propertiesOfRunContainer(container: OoxmlNode | undefined): Ooxm
   const props: OoxmlProperty[] = [];
   for (const child of container.children) {
     if (child.kind === 'textValue') continue;
+    if (child.localName === 'lang') {
+      // Foreign extensions stay in the canonical tree. They do not select Word language.
+      if (child.namespaceUri !== WML_NAMESPACE_URI) continue;
+      const attributes: Record<string, string> = {};
+      for (const entry of child.attributes) {
+        if (
+          entry.namespaceUri === WML_NAMESPACE_URI &&
+          (entry.localName === 'val' ||
+            entry.localName === 'eastAsia' ||
+            entry.localName === 'bidi')
+        )
+          attributes[entry.localName] = entry.value;
+      }
+      props.push(
+        Object.keys(attributes).length > 0
+          ? { localName: 'lang', attributes }
+          : { localName: 'lang' }
+      );
+      continue;
+    }
     if (child.localName === 'ligatures') {
       const value = runLigaturesValue(child);
       if (value !== undefined) props.push({ localName: 'ligatures', attributes: { val: value } });
