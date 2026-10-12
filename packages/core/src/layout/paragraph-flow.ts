@@ -1181,7 +1181,7 @@ export function breakParagraph(
         ...paragraphSpanMetadata(piece),
       });
       line.end = piece.end;
-      if (pageBreaksIgnored) continue;
+      if (pageBreaksIgnored || pieces[pieceIndex + 1]?.breakKind === 'line') continue;
       growLineMetrics(line, breakMetrics);
       const slotLine: boolean = firstLineOpen;
       closeLine();
