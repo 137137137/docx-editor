@@ -981,5 +981,14 @@
     "insertionsBackground": "挿入の背景",
     "movedFromBackground": "移動元の背景",
     "movedToBackground": "移動先の背景"
+  },
+  "formattingMarks": {
+    "columnBreak": "段区切り",
+    "pageBreak": "改ページ",
+    "sectionBreakContinuous": "セクション区切り (現在の位置から新しいセクション)",
+    "sectionBreakEvenPage": "セクション区切り (偶数ページから新しいセクション)",
+    "sectionBreakNextColumn": "セクション区切り (次の段から新しいセクション)",
+    "sectionBreakNextPage": "セクション区切り (次のページから新しいセクション)",
+    "sectionBreakOddPage": "セクション区切り (奇数ページから新しいセクション)"
   }
 }

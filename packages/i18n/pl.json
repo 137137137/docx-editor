@@ -981,5 +981,14 @@
     "insertionsBackground": "Tło wstawień",
     "movedFromBackground": "Tło tekstu przeniesionego z",
     "movedToBackground": "Tło tekstu przeniesionego do"
+  },
+  "formattingMarks": {
+    "columnBreak": "Podział kolumny",
+    "pageBreak": "Podział strony",
+    "sectionBreakContinuous": "Podział sekcji (ciągły)",
+    "sectionBreakEvenPage": "Podział sekcji (na stronie parzystej)",
+    "sectionBreakNextColumn": "Podział sekcji (nowa kolumna)",
+    "sectionBreakNextPage": "Podział sekcji (na następnej stronie)",
+    "sectionBreakOddPage": "Podział sekcji (na stronie nieparzystej)"
   }
 }

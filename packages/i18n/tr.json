@@ -981,5 +981,14 @@
     "insertionsBackground": "Eklemelerin arka planı",
     "movedFromBackground": "Taşıma kaynağının arka planı",
     "movedToBackground": "Taşıma hedefinin arka planı"
+  },
+  "formattingMarks": {
+    "columnBreak": "Sütun Sonu",
+    "pageBreak": "Sayfa Sonu",
+    "sectionBreakContinuous": "Bölüm Sonu (Sürekli)",
+    "sectionBreakEvenPage": "Bölüm Sonu (Çift Sayfa)",
+    "sectionBreakNextColumn": "Bölüm Sonu (Yeni Sütun)",
+    "sectionBreakNextPage": "Bölüm Sonu (Sonraki Sayfa)",
+    "sectionBreakOddPage": "Bölüm Sonu (Tek Sayfa)"
   }
 }

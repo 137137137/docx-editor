@@ -981,5 +981,14 @@
     "insertionsBackground": "सम्मिलन की पृष्ठभूमि",
     "movedFromBackground": "स्थानांतरण स्रोत की पृष्ठभूमि",
     "movedToBackground": "स्थानांतरण गंतव्य की पृष्ठभूमि"
+  },
+  "formattingMarks": {
+    "columnBreak": "कॉलम ब्रेक",
+    "pageBreak": "पृष्ठ ब्रेक",
+    "sectionBreakContinuous": "अनुभाग ब्रेक (निरंतर)",
+    "sectionBreakEvenPage": "अनुभाग ब्रेक (सम पृष्ठ)",
+    "sectionBreakNextColumn": "अनुभाग ब्रेक (अगला कॉलम)",
+    "sectionBreakNextPage": "अनुभाग ब्रेक (अगला पृष्ठ)",
+    "sectionBreakOddPage": "अनुभाग ब्रेक (विषम पृष्ठ)"
   }
 }

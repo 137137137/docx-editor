@@ -981,5 +981,14 @@
     "insertionsBackground": "Fondo de inserciones",
     "movedFromBackground": "Fondo del origen de movimientos",
     "movedToBackground": "Fondo del destino de movimientos"
+  },
+  "formattingMarks": {
+    "columnBreak": "Salto de columna",
+    "pageBreak": "Salto de página",
+    "sectionBreakContinuous": "Salto de sección (Continua)",
+    "sectionBreakEvenPage": "Salto de sección (Página par)",
+    "sectionBreakNextColumn": "Salto de sección (Columna nueva)",
+    "sectionBreakNextPage": "Salto de sección (Página siguiente)",
+    "sectionBreakOddPage": "Salto de sección (Página impar)"
   }
 }

@@ -981,5 +981,14 @@
     "insertionsBackground": "Latar belakang penyisipan",
     "movedFromBackground": "Latar belakang asal perpindahan",
     "movedToBackground": "Latar belakang tujuan perpindahan"
+  },
+  "formattingMarks": {
+    "columnBreak": "Pemisah Kolom",
+    "pageBreak": "Pemisah Halaman",
+    "sectionBreakContinuous": "Pemisah Bagian (Berkelanjutan)",
+    "sectionBreakEvenPage": "Pemisah Bagian (Halaman Genap)",
+    "sectionBreakNextColumn": "Pemisah Bagian (Kolom Baru)",
+    "sectionBreakNextPage": "Pemisah Bagian (Halaman Berikutnya)",
+    "sectionBreakOddPage": "Pemisah Bagian (Halaman Ganjil)"
   }
 }

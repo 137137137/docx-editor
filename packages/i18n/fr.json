@@ -981,5 +981,14 @@
     "insertionsBackground": "Arrière-plan des insertions",
     "movedFromBackground": "Arrière-plan du texte déplacé depuis",
     "movedToBackground": "Arrière-plan du texte déplacé vers"
+  },
+  "formattingMarks": {
+    "columnBreak": "Saut de colonne",
+    "pageBreak": "Saut de page",
+    "sectionBreakContinuous": "Saut de section (continu)",
+    "sectionBreakEvenPage": "Saut de section (page paire)",
+    "sectionBreakNextColumn": "Saut de section (nouvelle colonne)",
+    "sectionBreakNextPage": "Saut de section (page suivante)",
+    "sectionBreakOddPage": "Saut de section (page impaire)"
   }
 }
