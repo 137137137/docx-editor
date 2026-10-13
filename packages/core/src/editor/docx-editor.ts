@@ -1,4 +1,5 @@
 import { createEditorEvents } from './editor-events.ts';
+import { createEditorDiagnostics, reportEditorFontError } from './editor-diagnostics.ts';
 import { surfaceFieldResultsScope } from './field-results-scope.ts';
 import { createRevisionMarkupState } from './revision-markup-state.ts';
 import { withDisplayedHyphens } from '../store/package/hyphen-text.ts';
@@ -88,7 +89,6 @@ import { EditorFontError } from '@docx-editor.dev/core/contracts/editor';
 import {
   FontResolutionError,
   HARD_MAX_FONT_BYTES,
-  HarfBuzzShapingError,
   fontRequestKey,
   resolveDefaultSurfaceMeasurer,
   type TextMeasurer,
@@ -166,7 +166,6 @@ import {
   createLayoutShaping,
   disposeLayoutShaping,
   toEditorFontError,
-  warnFontFailureOnce,
 } from './font-configuration.ts';
 import {
   composeFontConfiguration,
@@ -300,7 +299,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   /** Defers a big document's open behind a painted frame; see `docx-editor-open-scheduler.ts`. */
   const openScheduler = createOpenScheduler({
     mount: (bytes) => mountBytes(bytes),
-    continueOpen: (budgetMs) => !surface || preparedOpen.continueOpen(surface, budgetMs),
+    continueOpen: (budgetMs) => {
+      if (!surface) return true;
+      const done = diagnostics.continueOpen(() => preparedOpen.continueOpen(surface!, budgetMs));
+      if (done) diagnostics.openSettled(surface);
+      return done;
+    },
     // Fonts resolved before the mount are laid out once, by the mount; see `preparedOpenHook`.
     prepare: preparedOpen.preparedOpenHook(
       () => reviewModelOption(modules, reportDiagnostic),
@@ -524,6 +528,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
 
   const events = createEditorEvents(snapshotNow);
   const { emitError, emitDocumentChange, emitSelectionChange } = events;
+  const diagnostics = createEditorDiagnostics({ modules, events, customNodes: reportDiagnostic });
+  const suggesting = () => editingMode === 'suggesting';
 
   const revisionMarkupState = createRevisionMarkupState(config.revisionMarkup, {
     container: () => container,
@@ -578,6 +584,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       mountBytesNow(...args);
       refreshHost?.mounted(args[0]);
     } catch (error) {
+      diagnostics.openCrashed(error);
       refreshHost?.mounted(args[0], error);
       if (!refreshing) throw error;
     }
@@ -598,9 +605,11 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       pendingBytes = bytes;
       if (initialTextFormInput) pendingTextFormInputs.set(bytes, initialTextFormInput);
       parseError = null;
+      diagnostics.openDeferred();
       bump();
       return;
     }
+    diagnostics.openMounting();
     teardownSurface();
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
@@ -635,6 +644,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
       revisionMarkup: revisionMarkupState.current(),
       ...reviewModelOption(modules, reportDiagnostic),
+      onRejection: (reason) => diagnostics.inputRejected(reason, suggesting()),
+      onTiming: (phase, value) => diagnostics.timing(phase, value, surface ?? undefined),
       ...preparedOpen.takePreparedOpen(bytes),
       ...(shapedMeasurer
         ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
@@ -691,7 +702,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       parseError = result.detail ? `${result.reason}: ${result.detail}` : result.reason;
       // Failure is observable state too: `snapshot().parseError` moved.
       bump();
-      emitError(editorError(result.reason, `failed to open document: ${parseError}`));
+      // The message names the reason only: `detail` can quote the file, and hosts log errors.
+      emitError(editorError(result.reason, `failed to open document: ${result.reason}`));
+      diagnostics.openRejected(result.reason, result.limit, result.detail);
       return;
     }
     parseError = null;
@@ -708,6 +721,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     if (pendingHostModeFallback !== null) applyHostModeDecision(pendingHostModeFallback, false);
     else adoptDocumentTracking();
     sweepCustomNodePayloadsOnOpen(surface, modules);
+    if (!preparedOpen.stillOpening(surface)) diagnostics.openSettled(surface);
     mountGeneration += 1;
     // A surface is rebuilt on load and on the font remount, and it comes up editable. The
     // engine's own guards refuse the WRITE, but the pages layer stays `contenteditable`
@@ -778,6 +792,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       return;
     }
     pendingTextFormInputs = new WeakMap();
+    diagnostics.openStarted(bytes);
     // The previous document can leave its comments pane open. Close it before a deferred
     // open publishes `isOpening`, so the loading page uses the full centred workspace.
     reviewPaneOpen = false;
@@ -819,27 +834,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   }
 
   function reportFontError(error: EditorFontError): void {
-    // A shaper that never loaded is not a per-face degradation: NOTHING measures correctly,
-    // and the fault is the host's build rather than the document's content. Said out loud
-    // exactly once, and only when nobody is listening — a host that reports it in its own
-    // UI does not need library noise it cannot switch off. Before this was fixed the same
-    // misconfiguration failed the BUILD, so a green build with a silent console would be a
-    // strictly worse trade (#282).
-    const shaperNeverLoaded =
-      error.code === 'wasmUnavailable' ||
-      (error.cause instanceof HarfBuzzShapingError && error.cause.code === 'unsupportedRuntime');
-    if (shaperNeverLoaded && !config.onFontError && !events.hasErrorHandlers()) {
-      warnFontFailureOnce(error);
-    }
-    // A host handler that throws must not abort font resolution — reporting a dropped
-    // face would then cost the whole shaped measurer, and the catch's own report would
-    // throw again as an unhandled rejection.
-    try {
-      config.onFontError?.(error);
-    } catch {
-      /* the host's reporting problem, not the document's */
-    }
-    emitError(error);
+    reportEditorFontError(error, { config, events, diagnostics });
   }
 
   // Fonts resolve asynchronously (HarfBuzz init + validation) PER LOAD, composing the
@@ -1312,6 +1307,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     else {
       parseError = unloadableSourceReason(config.document);
       emitError(editorError('unsupported', parseError));
+      diagnostics.openRejected('unsupported');
     }
   }
 
@@ -1756,6 +1752,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       bump();
       emitSelectionChange();
     },
+    report: { diagnostics, tracked: () => editingMode === 'suggesting' },
   });
   const { resolveReviewItem } = reviewCommands;
 
@@ -1860,6 +1857,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         // unrecognized string is a typo. The current document (if any) stays mounted
         // rather than being torn down for nothing.
         emitError(editorError('unsupported', unloadableSourceReason(document)));
+        diagnostics.openRejected('unsupported');
         return;
       }
       refreshHost?.invalidate();
@@ -2650,6 +2648,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       pendingTextFormInputs = new WeakMap();
       mountGeneration += 1;
       bump();
+      diagnostics.dispose();
       events.clear();
     },
 
@@ -2670,6 +2669,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       openScheduler.cancel();
     },
   });
+  diagnostics.attach(editor, suggesting);
   // Host calls read and write saved field results in this editor's mode.
   return fieldScope.methods(editor);
 }
