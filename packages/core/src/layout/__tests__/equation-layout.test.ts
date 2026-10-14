@@ -74,6 +74,23 @@ function assertFiniteGeometry(node: EquationGeometry): void {
   }
 }
 
+test('display-only mathematical letters keep one canonical equation position', () => {
+  const part = load(
+    '<w:p><w:r><w:t>A</w:t></w:r><m:oMath><m:r><m:t>QN</m:t></m:r></m:oMath><w:r><w:t>Z</w:t></w:r></w:p>'
+  );
+  const before = canonicalOoxmlFingerprint(part);
+  const result = layoutSemanticDocument(part, 1, { measurer });
+  const spans = linesOf(result).flatMap((line) => line.spans);
+  expect(spans.map((span) => span.text)).toEqual(['A', '\uFFFC', 'Z']);
+  const equation = spans.find((span) => span.equation)!;
+  expect(equation.range.end - equation.range.start).toBe(1);
+  expect(equation.equation?.fallbackText).toBe('QN');
+  const geometry = equation.equation?.geometry;
+  if (geometry?.kind !== 'text') throw new Error('Missing equation text');
+  expect(geometry.text).toBe('𝑄𝑁');
+  expect(canonicalOoxmlFingerprint(part)).toBe(before);
+});
+
 const complexEquation =
   '<m:oMath>' +
   '<m:f><m:num><m:r><m:t>a+b</m:t></m:r></m:num>' +

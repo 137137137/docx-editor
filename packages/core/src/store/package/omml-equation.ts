@@ -49,6 +49,7 @@ export type EquationExpression =
         readonly italic?: boolean;
         readonly literal?: boolean;
         readonly normalText?: boolean;
+        readonly mathStyle?: 'p' | 'b' | 'i' | 'bi';
       };
     }
   | { readonly kind: 'bar'; readonly body: EquationExpression; readonly position: 'top' | 'bottom' }

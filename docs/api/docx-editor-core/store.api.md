@@ -1330,6 +1330,7 @@ export type EquationExpression = {
         readonly fontFamily?: string;
         readonly italic?: boolean;
         readonly literal?: boolean;
+        readonly mathStyle?: 'p' | 'b' | 'i' | 'bi';
         readonly normalText?: boolean;
     };
     readonly kind: 'text';

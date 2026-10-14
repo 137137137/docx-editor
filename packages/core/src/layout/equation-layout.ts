@@ -3,6 +3,7 @@
 import type { EquationExpression, OmmlEquationProjection } from '@docx-editor.dev/core/store';
 import { measureDisplayText, withFontFamily, type ResolvedRunStyle } from './run-style.ts';
 import type { LayoutBox, TextMeasurer } from './semantic-records.ts';
+import { equationDisplayText } from './equation-display-text.ts';
 
 const SCRIPT_SCALE = 0.7;
 const NARY_OPERATOR_SCALE = 1.25;
@@ -253,33 +254,38 @@ function layoutExpression(
 ): EquationGeometry {
   switch (expression.kind) {
     case 'text': {
-      if (!expression.format)
-        return textGeometry('text', expression.value, measurer, style, scale, cache);
-      let formatted = cache.formats.get(expression.format);
-      if (!formatted) {
-        const familyStyle = expression.format.fontFamily
-          ? withFontFamily(style, expression.format.fontFamily)
+      const authoredFamily = expression.format?.fontFamily;
+      const display = equationDisplayText(expression, authoredFamily ?? style.fontFamily);
+      const familyStyle =
+        authoredFamily && !display.mathematicalGlyphs
+          ? withFontFamily(style, authoredFamily)
           : style;
+      const formatKey = expression.format ?? expression;
+      let formatted = cache.formats.get(formatKey);
+      if (!formatted) {
         const face = Object.freeze({
           ...familyStyle,
-          bold: expression.format.bold ?? familyStyle.bold,
+          // Mathematical alphanumeric glyphs already carry their style in this
+          // regular face. Do not request a second italic or bold font program.
+          bold:
+            display.mathStyle === null
+              ? (expression.format?.bold ?? familyStyle.bold)
+              : !display.mathematicalGlyphs &&
+                (display.mathStyle === 'b' || display.mathStyle === 'bi'),
           italic:
-            expression.format.italic ?? (expression.format.normalText ? false : familyStyle.italic),
+            display.mathStyle === null
+              ? (expression.format?.italic ??
+                (expression.format?.normalText ? false : familyStyle.italic))
+              : !display.mathematicalGlyphs &&
+                (display.mathStyle === 'i' || display.mathStyle === 'bi'),
         });
         formatted = {
           style: face,
           cache: { styles: new Map(), metrics: new Map(), formats: new WeakMap() },
         };
-        cache.formats.set(expression.format, formatted);
+        cache.formats.set(formatKey, formatted);
       }
-      return textGeometry(
-        'text',
-        expression.value,
-        measurer,
-        formatted.style,
-        scale,
-        formatted.cache
-      );
+      return textGeometry('text', display.text, measurer, formatted.style, scale, formatted.cache);
     }
     case 'fallback':
       return textGeometry('fallback', expression.text || '…', measurer, style, scale, cache);

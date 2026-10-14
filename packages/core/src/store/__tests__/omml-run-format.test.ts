@@ -41,6 +41,23 @@ test.each(['0', 'false', 'off'])('retains explicit false math toggle %s', (value
   });
 });
 
+test.each(['p', 'b', 'i', 'bi'] as const)(
+  'retains math style %s independently of Word italics',
+  (mathStyle) => {
+    const node = run(`<w:rPr><w:i w:val="0"/></w:rPr><m:rPr><m:sty m:val="${mathStyle}"/></m:rPr>`);
+    const before = JSON.stringify(node);
+    expect(equationRunFormat(node)).toEqual({ italic: false, mathStyle });
+    expect(JSON.stringify(node)).toBe(before);
+  }
+);
+
+test('uses italic for an empty math style and retains the normal-text override', () => {
+  expect(equationRunFormat(run('<m:rPr><m:sty/><m:nor/></m:rPr>'))).toEqual({
+    mathStyle: 'i',
+    normalText: true,
+  });
+});
+
 test.each([
   '<w:rPr><w:rFonts w:ascii="Face A" w:hAnsi="Face B"/></w:rPr>',
   '<w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/></w:rPr>',
@@ -48,7 +65,9 @@ test.each([
   '<w:rPr><w:b w:val="unknown"/></w:rPr>',
   '<w:rPr><w:b/><w:b w:val="0"/></w:rPr>',
   '<w:rPr/><w:rPr/>',
-  '<m:rPr><m:sty m:val="i"/></m:rPr>',
+  '<m:rPr><m:sty m:val="unknown"/></m:rPr>',
+  '<m:rPr><m:sty w:val="i"/></m:rPr>',
+  '<m:rPr><m:sty m:val="i"/><m:sty m:val="p"/></m:rPr>',
   '<m:rPr><m:nor w:val="1"/></m:rPr>',
   '<m:rPr><m:nor/><m:nor m:val="0"/></m:rPr>',
   '<m:rPr/><m:rPr/>',

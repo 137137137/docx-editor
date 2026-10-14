@@ -30,10 +30,15 @@ const formatted =
   '<m:sup><m:r><m:rPr><m:lit/></m:rPr><m:t>al</m:t></m:r></m:sup></m:sSubSup>';
 const barred =
   '<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>' + '<m:e><m:r><m:t>N</m:t></m:r></m:e></m:bar>';
+const mathStyles =
+  '<m:r><m:t>Q</m:t></m:r>' +
+  '<m:r><m:rPr><m:sty m:val="bi"/></m:rPr><m:t>N</m:t></m:r>' +
+  '<m:r><m:rPr><m:lit/><m:nor/></m:rPr><m:t>al</m:t></m:r>';
 
 for (const [name, source] of [
   ['formatted script', formatted],
   ['bar', barred],
+  ['math styles', mathStyles],
 ] as const) {
   test(`two editors preserve ${name} through edits, undo, removal, and save`, async () => {
     const { createDocxEditor } = await import('@docx-editor.dev/core/editor');
@@ -99,6 +104,30 @@ for (const [name, source] of [
     try {
       const original = equationXml(await left.save());
       expect(original).toHaveLength(1);
+      if (name === 'math styles') {
+        const saved = readOoxmlPackage(new Uint8Array(await left.save()));
+        if (!saved.ok) throw new Error(saved.reason);
+        const part = saved.package.parts.get(saved.package.mainDocumentPart)!;
+        const texts: string[] = [];
+        const styles: string[] = [];
+        walk(part.root, (node) => {
+          if (node.kind === 'textValue' || node.namespaceUri !== M) return;
+          if (node.localName === 't') {
+            texts.push(
+              node.children.map((child) => (child.kind === 'textValue' ? child.value : '')).join('')
+            );
+          }
+          if (node.localName === 'sty') {
+            const value = node.attributes.find(
+              (attribute) => attribute.namespaceUri === M && attribute.localName === 'val'
+            );
+            if (value) styles.push(value.value);
+          }
+        });
+        expect(texts).toEqual(['Q', 'N', 'al']);
+        expect(styles).toEqual(['bi']);
+        expect(original[0]).not.toMatch(/[\u{1D400}-\u{1D7FF}]/u);
+      }
       const select = (editor: typeof left, offset: number) => {
         const surface = editor.surface!;
         const paragraphId = surface.session.paragraphIds()[0]!;

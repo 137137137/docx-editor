@@ -11,6 +11,7 @@ export interface EquationRunFormat {
   readonly italic?: boolean;
   readonly literal?: boolean;
   readonly normalText?: boolean;
+  readonly mathStyle?: 'p' | 'b' | 'i' | 'bi';
 }
 
 function element(node: OoxmlNode, namespace: string, localName: string): boolean {
@@ -38,6 +39,7 @@ export function equationRunFormat(run: OoxmlElement): EquationRunFormat | null {
     italic?: boolean;
     literal?: boolean;
     normalText?: boolean;
+    mathStyle?: 'p' | 'b' | 'i' | 'bi';
   } = {};
   const seen = new Set<string>();
   for (const child of run.children) {
@@ -79,6 +81,14 @@ export function equationRunFormat(run: OoxmlElement): EquationRunFormat | null {
           family = attr.value;
         }
         if (family !== undefined) format.fontFamily = family;
+      } else if (math && property.localName === 'sty') {
+        if (property.children.length !== 0 || property.attributes.length > 1) return null;
+        const attribute = property.attributes[0];
+        if (attribute && (attribute.namespaceUri !== namespace || attribute.localName !== 'val'))
+          return null;
+        const value = attribute?.value ?? 'i';
+        if (value !== 'p' && value !== 'b' && value !== 'i' && value !== 'bi') return null;
+        format.mathStyle = value;
       } else {
         const key = word
           ? property.localName === 'b'
