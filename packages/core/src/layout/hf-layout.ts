@@ -952,6 +952,9 @@ export function framedStoryEntry(label: string, story: HeaderFooterStoryLayout):
   return framedTokenJoin([
     label,
     String(story.flowHeight),
+    // Published pages carry the story's relationship id, so a rewrite that only renames it
+    // must not hand back pages showing the old one.
+    story.rId ?? '',
     story.contentKey,
     story.projectionEpoch ?? '',
     storyDrawingResourceToken(story),
