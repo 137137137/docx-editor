@@ -97,6 +97,8 @@ Set `context.document.changeTrackingMode = 'TrackMineOnly'` before `insertConten
 
 `getRange(location?)` accepts `Whole`, `Content`, `Start`, `End`, `Before`, and `After`. Resolve the returned range before dependent use. `delete(true)` removes the wrapper and preserves its content. `delete(false)` removes both wrapper and content. Deletion and value changes can fail because of protection, XML binding, unsupported structure, or tracking mode.
 
+A batch that inserts a control or paragraph inside a control and deletes that control with `delete(false)` refuses with `ConflictingChanges` before it writes. Use separate sync calls for these edits. Text writes and nested control deletions in one batch succeed.
+
 Do not delete a binding or wrapper to force a failed template write. Read again and report an ineligible control to the application or template author.
 
 ## Next steps
