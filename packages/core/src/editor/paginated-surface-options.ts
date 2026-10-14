@@ -20,6 +20,26 @@ import type { ContentLockPolicy } from '../store/package/ooxml-edit.ts';
 import type { PaginatedSurfaceState, SurfaceEditingMode } from './paginated-surface-contract.ts';
 
 /**
+ * How the caret moves through an inline content control whose effective lock is
+ * `contentLocked` or `sdtContentLocked`.
+ *
+ * - `'characters'` (the default) — the caret walks through the control's characters, as in Word.
+ * - `'atomic'` — the control is one caret unit, as a `w:showingPlcHdr` prompt already is. Arrows
+ *   step over it, Shift+arrows select it whole, and a press or double click inside it selects it
+ *   whole. A press on its edge still places a caret beside it.
+ *
+ * It applies in the body, headers and footers; notes and text boxes publish no control
+ * boundaries, so they keep character navigation.
+ *
+ * Navigation only: what a lock refuses does not change. The rule covers keyboard motions and
+ * the engine's own pointer gestures. A selection set in code (`setSelection`, find) is kept as
+ * given, and `pointer: 'native'` leaves caret placement to the browser.
+ *
+ * @public
+ */
+export type LockedControlNavigation = 'characters' | 'atomic';
+
+/**
  * How a paginated surface opens. Every field is optional.
  *
  * `measurer` is the injection seam that keeps layout DOM-free — supply one to lay a document out
@@ -122,6 +142,8 @@ export interface PaginatedSurfaceOptions {
    * pointer handlers and leaves the browser's own caret placement in charge.
    */
   readonly pointer?: 'engine' | 'native';
+  /** How the caret moves through a content-locked inline control; see `LockedControlNavigation`. */
+  readonly lockedControlNavigation?: LockedControlNavigation;
   readonly onChange?: (state: PaginatedSurfaceState) => void;
   /**
    * Told each time an edit is refused, with the raw reason: a store code such as `'locked'`,

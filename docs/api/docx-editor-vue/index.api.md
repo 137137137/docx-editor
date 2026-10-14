@@ -103,6 +103,7 @@ import { LoadFontsRequest } from '@docx-editor.dev/core/editor';
 import { LoadFontsResult } from '@docx-editor.dev/core/editor';
 import { LOADING_SNAPSHOT } from '@docx-editor.dev/core/editor';
 import { LocaleStrings } from '@docx-editor.dev/i18n';
+import { LockedControlNavigation } from '@docx-editor.dev/core/editor';
 import { MarkedFontResolver } from '@docx-editor.dev/core/editor';
 import { MAX_RESOLVER_FAMILIES } from '@docx-editor.dev/core/editor';
 import { MaybeRef } from 'vue';
@@ -3758,6 +3759,7 @@ export interface DocxEditorProps {
     // (undocumented)
     i18n?: Translations;
     locale?: string;
+    lockedControlNavigation?: LockedControlNavigation;
     // (undocumented)
     menu?: boolean | DocxEditorMenuProps;
     mode?: EditorMode;
@@ -3950,6 +3952,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: StringConstructor;
     };
+    lockedControlNavigation: {
+        default: undefined;
+        type: PropType<LockedControlNavigation>;
+    };
     mode: {
         default: undefined;
         type: PropType<'edit' | 'view' | 'suggesting'>;
@@ -4017,6 +4023,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: StringConstructor;
     };
+    lockedControlNavigation: {
+        default: undefined;
+        type: PropType<LockedControlNavigation>;
+    };
     mode: {
         default: undefined;
         type: PropType<'edit' | 'view' | 'suggesting'>;
@@ -4058,6 +4068,7 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
     fonts: _docx_editor_dev_core.FontConfiguration | _docx_editor_dev_core.FontConfigurationFragment | _docx_editor_dev_core.FontResolver | undefined;
     imageDecodePort: ImageDecodePort;
     locale: string;
+    lockedControlNavigation: LockedControlNavigation;
     mode: "edit" | "suggesting" | "view";
     modules: readonly EditorModule[];
     tableInteractionLabel: ((key: 'table.insertRowBelow' | 'table.insertColumnRight') => string) | undefined;
@@ -4093,6 +4104,7 @@ export interface DocxEditorRootProps {
     // (undocumented)
     imageDecodePort?: ImageDecodePort;
     locale?: string;
+    lockedControlNavigation?: LockedControlNavigation;
     mode?: 'edit' | 'view' | 'suggesting';
     modules?: readonly EditorModule[];
     // (undocumented)

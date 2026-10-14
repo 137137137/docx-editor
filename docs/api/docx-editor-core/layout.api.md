@@ -489,6 +489,7 @@ export interface ContentControlBoundaryRecord {
     readonly lock: ContentControlLock;
     readonly nestingDepth: number;
     readonly placeholder: boolean;
+    readonly range?: ContentControlModelRange;
     // (undocumented)
     readonly tag?: string;
 }
@@ -521,6 +522,13 @@ export type ContentControlLock = 'unlocked' | 'sdtLocked' | 'contentLocked' | 's
 
 // @public
 export type ContentControlMappedType = 'richText' | 'plainText' | 'checkbox' | 'dropdown' | 'comboBox' | 'date' | 'picture' | 'buildingBlockGallery' | 'repeatingSection';
+
+// @public
+export interface ContentControlModelRange {
+    readonly end: number;
+    readonly paragraphId: string;
+    readonly start: number;
+}
 
 // @public
 export function contentControlRecordsInPart(part: OoxmlPart,

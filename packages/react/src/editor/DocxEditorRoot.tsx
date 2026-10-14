@@ -5,12 +5,14 @@ import type {
   FieldResultsMode,
   ContentLockPolicy,
   FontShapingOptions,
+  LockedControlNavigation,
 } from '@docx-editor.dev/core/editor';
 import { FormControlTranslateProvider } from './form-control-translate';
 import { DialogProvider } from './dialog-host';
 import { PopupConfigProvider, type DocxEditorPopups } from './popup-config';
 import { warnFieldResultsChanged } from './field-results-warning';
 import { warnContentLockPolicyChanged } from './content-lock-policy-warning';
+import { warnLockedControlNavigationChanged } from './locked-control-navigation-warning';
 import type { DocxEditorChildren } from '../docx-editor-children';
 // Provider-first host for the docx editor facade.
 //
@@ -152,6 +154,13 @@ export interface DocxEditorRootProps {
    * with a development warning.
    */
   contentLockPolicy?: ContentLockPolicy;
+  /**
+   * How the caret moves through an inline content control whose content is locked.
+   * `'characters'` (the default) walks through its characters, as Word does. `'atomic'` makes
+   * the control one caret unit. Read once, when the editor is created: a later change is
+   * ignored, with a development warning.
+   */
+  lockedControlNavigation?: LockedControlNavigation;
 
   /** Fired once per instance, after it is published to the tree (and after any
    *  `DocxEditor.Content` in the same commit has attached its mount point). A large
@@ -284,6 +293,8 @@ export function DocxEditorRoot(props: DocxEditorRootProps) {
   const createdFieldResults = useRef(props.fieldResults);
   /** The `contentLockPolicy` the current instance was created with. */
   const createdContentLockPolicy = useRef(props.contentLockPolicy);
+  /** The `lockedControlNavigation` the current instance was created with. */
+  const createdLockedControlNavigation = useRef(props.lockedControlNavigation);
 
   // The channel `<DocxEditor.ColorByChangeType>` / `<DocxEditor.AuthorStyle>` declare through.
   // A store: declarations register from anywhere in the subtree, and identity must hold
@@ -308,6 +319,7 @@ export function DocxEditorRoot(props: DocxEditorRootProps) {
     const declaredStyles = revisionStyleRegistry.current();
     createdFieldResults.current = p.fieldResults;
     createdContentLockPolicy.current = p.contentLockPolicy;
+    createdLockedControlNavigation.current = p.lockedControlNavigation;
     const instance = createDocxEditor({
       ...(p.document !== undefined ? { document: p.document } : {}),
       ...(p.fonts ? { fonts: p.fonts } : {}),
@@ -319,6 +331,9 @@ export function DocxEditorRoot(props: DocxEditorRootProps) {
       ...(p.reviewDisplayMode !== undefined ? { reviewDisplayMode: p.reviewDisplayMode } : {}),
       ...(p.fieldResults !== undefined ? { fieldResults: p.fieldResults } : {}),
       ...(p.contentLockPolicy !== undefined ? { contentLockPolicy: p.contentLockPolicy } : {}),
+      ...(p.lockedControlNavigation !== undefined
+        ? { lockedControlNavigation: p.lockedControlNavigation }
+        : {}),
       ...(p.mode !== undefined ? { mode: p.mode } : {}),
       ...(declaredStyles !== undefined ? { revisionStyles: declaredStyles } : {}),
       ...(p.modules !== undefined ? { modules: p.modules } : {}),
@@ -463,6 +478,16 @@ export function DocxEditorRoot(props: DocxEditorRootProps) {
     if (editor)
       warnContentLockPolicyChanged(createdContentLockPolicy.current, props.contentLockPolicy);
   }, [editor, props.contentLockPolicy]);
+
+  // Read once at creation, like `fieldResults`.
+  useEffect(() => {
+    if (editor) {
+      warnLockedControlNavigationChanged(
+        createdLockedControlNavigation.current,
+        props.lockedControlNavigation
+      );
+    }
+  }, [editor, props.lockedControlNavigation]);
 
   // Table furniture labels follow the live locale resolver without remounting the editor.
   useEffect(() => {

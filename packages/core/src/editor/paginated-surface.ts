@@ -109,7 +109,6 @@ import {
   validateTreeOp,
   type DetectedToc,
   type OoxmlElement,
-  type OoxmlNode,
   type StoryScope,
   type TreeDocOp,
 } from '@docx-editor.dev/core/store';
@@ -259,11 +258,8 @@ import { createSurfaceFormatPainter } from './surface-format-painter.ts';
 import { authoredRunPropertiesAt, type SurfaceProperty } from './surface-formatting.ts';
 import { mergedRunWrite } from '../store/store/direct-properties.ts';
 import { bindDirectionChord, createDirectionChordHandler } from './surface-direction-chord.ts';
-import {
-  absorbPlaceholderControls,
-  createPointerController,
-  type PointerController,
-} from './surface-pointer.ts';
+import { createPointerController, type PointerController } from './surface-pointer.ts';
+import { absorbAtomicControls, leaveAtomicControl } from './surface-atomic-controls.ts';
 import { createReviewViewState } from './surface-review-view.ts';
 import { selectionsEqual } from './dom-selection.ts';
 import { createSurfaceSelectionSync } from './surface-selection-sync.ts';
@@ -289,7 +285,10 @@ import {
   storyScopeOfNodeId,
 } from './surface-scope.ts';
 import { createCaretViewFollower, type CaretFollowMode } from './surface-caret-follow.ts';
-import { contentControlSelectionRange } from './surface-content-control-range.ts';
+import {
+  contentChildrenOf,
+  contentControlSelectionRange,
+} from './surface-content-control-range.ts';
 import { createHeaderFooterOps } from './surface-hf-ops.ts';
 import { createImageOps } from './surface-image-ops.ts';
 import {
@@ -404,6 +403,8 @@ export function mountPaginatedSurface(
   }
   let producer = producerIdentity();
   const document = container.ownerDocument;
+  // `lockedControlNavigation: 'atomic'`: inline controls with locked content are one caret unit.
+  const atomicNavigation = options.lockedControlNavigation === 'atomic';
 
   const pagesLayer = document.createElement('div');
   pagesLayer.className = 'docx-pages';
@@ -2071,12 +2072,6 @@ export function mountPaginatedSurface(
     return contentControlHoldingParagraph(part, selection.head.paragraphId);
   }
 
-  function isContentControlElement(node: OoxmlNode): node is OoxmlElement {
-    // Shared walk predicate: typed `contentControl`, or generic WML `sdt` only.
-    // Foreign-namespace `<x:sdt>` stays opaque and is never treated as a Word control.
-    return isContentControl(node);
-  }
-
   /**
    * The control a given id names, in whichever story owns it.
    *
@@ -2091,7 +2086,7 @@ export function mountPaginatedSurface(
     // one of the 64 story-store slots per part touched and never give it back.
     const part = partOfNodeId(session, controlId);
     const node = findNode(part ?? session.part(), controlId);
-    if (!node || !isContentControlElement(node)) return null;
+    if (!node || !isContentControl(node)) return null;
     return node;
   }
 
@@ -2147,19 +2142,6 @@ export function mountPaginatedSurface(
         if (ta === null && tb !== null) return 1;
         return 0; // document order already from layout
       });
-  }
-
-  function contentChildrenOf(control: OoxmlElement): readonly OoxmlNode[] {
-    for (const child of control.children) {
-      if (child.kind === 'textValue') continue;
-      if (
-        (child as { kind: string }).kind === 'contentControlContent' ||
-        child.localName === 'sdtContent'
-      ) {
-        return child.children;
-      }
-    }
-    return [];
   }
 
   /**
@@ -4760,8 +4742,9 @@ export function mountPaginatedSurface(
         setSelection(collapsedAt(target), true);
         return;
       }
+      const layout = editingLayout();
       let moved = navigateInActiveScope(
-        editingLayout(),
+        layout,
         hiddenMarks.shown(selection.head),
         command,
         desiredX,
@@ -4779,6 +4762,13 @@ export function mountPaginatedSurface(
       );
       // The escape lands elsewhere, so the motion's caret (and its page) no longer applies.
       if (outside) moved = { ...moved, position: outside, caret: undefined };
+      // Atomic navigation: a caret that landed INSIDE a locked inline control crosses it (or
+      // takes its nearer edge) — for a Shift motion too, so the head selects the control whole
+      // and Shift in the opposite direction shrinks it back to the anchor.
+      if (atomicNavigation) {
+        const crossed = leaveAtomicControl(layout, selection.head, moved.position);
+        if (crossed !== moved.position) moved = { ...moved, position: crossed, caret: undefined };
+      }
       if (tocAtPosition(session.part(), moved.position)) {
         if (extend) return;
         const backwards = new Set<NavigationCommand>([
@@ -4842,7 +4832,12 @@ export function mountPaginatedSurface(
       // until the view followed it. A plain move is collapsed, where `head` and `caret` mean
       // the same thing, EXCEPT when it lands on a prompt and ABSORBS it: that is a range the
       // reader never dragged, so it is revealed by its start, where the next keystroke goes.
-      const next = extend ? target : absorbPlaceholderControls(currentLayout, target);
+      // An extended range takes a locked control whole, even from an anchor a host placed inside
+      // it; a plain move absorbs only prompts, as `leaveAtomicControl` already moved it out.
+      const next =
+        extend && !atomicNavigation
+          ? target
+          : absorbAtomicControls(layout, target, { atomic: extend && atomicNavigation });
       const absorbed = !extend && !selectionsEqual(next, target);
       const before = selection;
       setSelection(next, true, absorbed ? 'none' : 'head', absorbed ? undefined : moved.caret);
@@ -6190,7 +6185,10 @@ export function mountPaginatedSurface(
       ...(options.reviewModel ? { onChangeBarToggle: reviewView.toggleByChangeBar } : {}),
       isReadOnlyPosition: (position) => tocAtPosition(session.part(), position) !== undefined,
     },
-    options.pointer ? { mode: options.pointer } : {}
+    {
+      ...(options.pointer ? { mode: options.pointer } : {}),
+      ...(atomicNavigation ? { atomicInlineControls: true } : {}),
+    }
   );
 
   const tableInteraction = createSurfaceTableInteraction({

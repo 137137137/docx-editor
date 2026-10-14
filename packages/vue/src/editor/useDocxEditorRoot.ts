@@ -5,10 +5,12 @@ import type {
   FieldResultsMode,
   ContentLockPolicy,
   FontShapingOptions,
+  LockedControlNavigation,
 } from '@docx-editor.dev/core/editor';
 import { formControlTranslateKey } from './form-control-translate';
 import { warnFieldResultsChanged } from './field-results-warning';
 import { warnContentLockPolicyChanged } from './content-lock-policy-warning';
+import { warnLockedControlNavigationChanged } from './locked-control-navigation-warning';
 import {
   computed,
   inject,
@@ -105,6 +107,13 @@ export interface DocxEditorRootProps {
    * with a development warning.
    */
   contentLockPolicy?: ContentLockPolicy;
+  /**
+   * How the caret moves through an inline content control whose content is locked.
+   * `'characters'` (the default) walks through its characters, as Word does. `'atomic'` makes
+   * the control one caret unit. Read once, when the editor is created: a later change is
+   * ignored, with a development warning.
+   */
+  lockedControlNavigation?: LockedControlNavigation;
 
   tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
   imageDecodePort?: ImageDecodePort;
@@ -155,6 +164,8 @@ export function useDocxEditorRootOwner(
   let createdFieldResults: DocxEditorRootProps['fieldResults'];
   /** The `contentLockPolicy` the current instance was created with. */
   let createdContentLockPolicy: DocxEditorRootProps['contentLockPolicy'];
+  /** The `lockedControlNavigation` the current instance was created with. */
+  let createdLockedControlNavigation: DocxEditorRootProps['lockedControlNavigation'];
   const markupRevision = shallowRef(0);
   let applyingMarkup = false;
   const tick = shallowRef(0);
@@ -250,6 +261,7 @@ export function useDocxEditorRootOwner(
     const p = toValue(props);
     createdFieldResults = p.fieldResults;
     createdContentLockPolicy = p.contentLockPolicy;
+    createdLockedControlNavigation = p.lockedControlNavigation;
     const instance = createDocxEditor({
       ...(p.document !== undefined ? { document: p.document } : {}),
       ...(p.fonts ? { fonts: p.fonts } : {}),
@@ -261,6 +273,9 @@ export function useDocxEditorRootOwner(
       ...(p.reviewDisplayMode !== undefined ? { reviewDisplayMode: p.reviewDisplayMode } : {}),
       ...(p.fieldResults !== undefined ? { fieldResults: p.fieldResults } : {}),
       ...(p.contentLockPolicy !== undefined ? { contentLockPolicy: p.contentLockPolicy } : {}),
+      ...(p.lockedControlNavigation !== undefined
+        ? { lockedControlNavigation: p.lockedControlNavigation }
+        : {}),
       ...(p.mode !== undefined ? { mode: p.mode } : {}),
       ...(revisionStyleRegistry.current() !== undefined
         ? { revisionStyles: revisionStyleRegistry.current() }
@@ -426,6 +441,17 @@ export function useDocxEditorRootOwner(
     () => [editorRef.value, toValue(props).contentLockPolicy] as const,
     ([editor, contentLockPolicy]) => {
       if (editor) warnContentLockPolicyChanged(createdContentLockPolicy, contentLockPolicy);
+    },
+    { flush: 'post' }
+  );
+
+  // Read once at creation, like `fieldResults`.
+  watch(
+    () => [editorRef.value, toValue(props).lockedControlNavigation] as const,
+    ([editor, lockedControlNavigation]) => {
+      if (editor) {
+        warnLockedControlNavigationChanged(createdLockedControlNavigation, lockedControlNavigation);
+      }
     },
     { flush: 'post' }
   );

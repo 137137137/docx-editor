@@ -122,6 +122,7 @@ import { FORMAT_PAINTER_OFF } from './surface-format-painter-contract.ts';
 import { resolveDocTargetSelection } from './doc-target-resolution.ts';
 import { createOpenScheduler } from './docx-editor-open-scheduler.ts';
 import * as preparedOpen from './docx-editor-prepared-open.ts';
+import { configSurfaceOptions } from './docx-editor-surface-config.ts';
 import type { TreeDocxSessionView } from '../binding/tree-session-contract.ts';
 import {
   customNodeDiagnosticReporter,
@@ -650,10 +651,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
         : {}),
       ...(embeddedFaces ? { fontAlias: embeddedFaces.alias } : {}),
-      ...(config.tableInteractionLabel
-        ? { tableInteractionLabel: config.tableInteractionLabel }
-        : {}),
-      ...(config.imageDecodePort ? { imageDecodePort: config.imageDecodePort } : {}),
+      ...configSurfaceOptions(config),
       ...(modules.collaboration ? { collaborationModel: modules.collaboration } : {}),
       ...(fieldScope.mode === 'editable' ? { fieldResults: fieldScope.mode } : {}),
       // Read through the holder rather than captured: the popover mounts AFTER the editor

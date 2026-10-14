@@ -166,6 +166,7 @@ export {
   type BlockFragmentRecord,
   type ContentControlBoundaryRecord,
   type ContentControlGeometryFragment,
+  type ContentControlModelRange,
   type ContentControlLevel,
   type ContentControlLock,
   type ContentControlMappedType,

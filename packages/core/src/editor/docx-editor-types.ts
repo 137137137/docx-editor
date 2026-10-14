@@ -13,6 +13,7 @@ import type {
 } from './popup-sessions.ts';
 import type { TextFormFieldChromeHandlers } from './text-form-field-session.ts';
 import type { ContentLockPolicy } from '../store/package/ooxml-edit.ts';
+import type { LockedControlNavigation } from './paginated-surface-options.ts';
 /**
  * Instance-level types for `createDocxEditor` — kept out of the composition root so
  * `docx-editor.ts` stays under the max-lines gate. Re-exported from `docx-editor.ts`
@@ -161,6 +162,12 @@ export interface DocxEditorConfig {
    * shared paragraph text keeps every field one unit.
    */
   fieldResults?: FieldResultsMode;
+  /**
+   * How the caret moves through an inline control with a content lock. `'atomic'` makes such a
+   * control one caret unit; `'characters'` (the default) walks through its characters, as Word
+   * does. Fixed for the instance.
+   */
+  lockedControlNavigation?: LockedControlNavigation;
   /** Override raster decode for insert/replace image commands; defaults to browser/headless. */
   imageDecodePort?: import('../store/package/image-resources.ts').ImageDecodePort;
   /**

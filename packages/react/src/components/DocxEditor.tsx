@@ -259,6 +259,7 @@ const DocxEditorFrame = forwardRef<DocxEditorRef, DocxEditorProps>(
       reviewDisplayMode,
       fieldResults,
       contentLockPolicy,
+      lockedControlNavigation,
       onReady,
       onChange,
       onFontError,
@@ -444,6 +445,7 @@ const DocxEditorFrame = forwardRef<DocxEditorRef, DocxEditorProps>(
         reviewDisplayMode={reviewDisplayMode}
         {...(fieldResults !== undefined ? { fieldResults } : {})}
         {...(contentLockPolicy !== undefined ? { contentLockPolicy } : {})}
+        {...(lockedControlNavigation !== undefined ? { lockedControlNavigation } : {})}
         {...(zoomMode !== undefined ? { zoomMode } : {})}
         tableInteractionLabel={tableInteractionLabel}
         {...(onReady ? { onReady } : {})}

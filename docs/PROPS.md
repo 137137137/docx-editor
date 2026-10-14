@@ -28,6 +28,7 @@ Staged React/Vue prop divergences are enforced by `bun run check:editor-contract
 | `mode` | `'edit' \| 'view' \| 'suggesting'` | React, Vue | Editing mode; changes apply without remounting. |
 | `zoom` | `number` | React, Vue | Fixed zoom scale; changes apply without remounting. |
 | `zoomMode` | `ZoomMode \| 'auto'` | React, Vue | Automatic or fixed zoom behavior. |
+| `lockedControlNavigation` | `'characters' \| 'atomic'` | React, Vue | Caret movement through an inline content control with locked content. `'atomic'` steps over the control as one unit. Read once, at creation. For details, see [Caret movement in content-locked controls](https://www.docx-editor.dev/docs/2.x/guides/content-controls#caret-movement-in-content-locked-controls). |
 | `locale` | `string` | React, Vue | Regional date input and generated labels; defaults to `en-US`. |
 | `i18n` | `Translations` | React, Vue | UI translations, including form controls; separate from `locale`. |
 | `t` | `(key, params?) => string` | React, Vue | Host translation function for editor chrome. |

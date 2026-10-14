@@ -98,6 +98,7 @@ import { LoadFontsRequest } from '@docx-editor.dev/core/editor';
 import { LoadFontsResult } from '@docx-editor.dev/core/editor';
 import { LOADING_SNAPSHOT } from '@docx-editor.dev/core/editor';
 import { LocaleStrings } from '@docx-editor.dev/i18n';
+import { LockedControlNavigation } from '@docx-editor.dev/core/editor';
 import { MarkedFontResolver } from '@docx-editor.dev/core/editor';
 import { MAX_RESOLVER_FAMILIES } from '@docx-editor.dev/core/editor';
 import { NavigateToChangeOptions } from '@docx-editor.dev/core/editor';
@@ -1240,6 +1241,7 @@ export interface DocxEditorProps {
     i18n?: Translations;
     readonly loadingIndicator?: DocxEditorChildren;
     locale?: string;
+    lockedControlNavigation?: LockedControlNavigation;
     menu?: boolean | DocxEditorMenuProps;
     mode?: EditorMode;
     modules?: readonly EditorModule[];
@@ -1351,6 +1353,7 @@ export interface DocxEditorRootProps {
     fontShaping?: FontShapingOptions;
     imageDecodePort?: ImageDecodePort;
     locale?: string;
+    lockedControlNavigation?: LockedControlNavigation;
     mode?: 'edit' | 'view' | 'suggesting';
     modules?: readonly EditorModule[];
     onChange?: (change: DocumentChange) => void;

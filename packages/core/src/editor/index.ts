@@ -217,6 +217,8 @@ export type { FontMeasurementState } from './docx-editor-types.ts';
 export type { FieldResultsMode } from '../store/package/field-result-mode.ts';
 // `DocxEditorConfig.contentLockPolicy` takes it.
 export type { ContentLockPolicy } from '../store/package/ooxml-edit.ts';
+// `DocxEditorConfig.lockedControlNavigation` takes it.
+export type { LockedControlNavigation } from './paginated-surface-options.ts';
 // Automation over an editor that is already open. The protocol itself lives in the neutral
 // automation subpath — only the adapter that needs a live editor ships from here, and only as
 // a factory: there is no composition hook a consumer could point at a second document model.

@@ -5,6 +5,7 @@ import type {
   FieldResultsMode,
   ContentLockPolicy,
   FontShapingOptions,
+  LockedControlNavigation,
 } from '@docx-editor.dev/core/editor';
 import type { DocxEditorPopups } from './editor/popup-config';
 import type { DocxEditorChildren } from './docx-editor-children';
@@ -265,6 +266,13 @@ export interface DocxEditorProps {
    * with a development warning.
    */
   contentLockPolicy?: ContentLockPolicy;
+  /**
+   * How the caret moves through an inline content control whose content is locked.
+   * `'characters'` (the default) walks through its characters, as Word does. `'atomic'` makes
+   * the control one caret unit. Read once, when the editor is created: a later change is
+   * ignored, with a development warning.
+   */
+  lockedControlNavigation?: LockedControlNavigation;
 
   /**
    * BCP-47 locale for regional date input and engine-generated labels. Defaults to en-US.
