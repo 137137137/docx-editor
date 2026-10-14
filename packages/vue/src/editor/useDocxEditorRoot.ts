@@ -3,6 +3,7 @@ import type {
   ResolvedRevisionMarkup,
   ReviewDisplayMode,
   FieldResultsMode,
+  FontShapingOptions,
 } from '@docx-editor.dev/core/editor';
 import { formControlTranslateKey } from './form-control-translate';
 import { warnFieldResultsChanged } from './field-results-warning';
@@ -60,6 +61,8 @@ export interface DocxEditorRootProps {
   popups?: import('./popup-config').DocxEditorPopups;
   document?: DocumentSource;
   fonts?: FontConfiguration | FontConfigurationFragment | FontResolver;
+  /** Explicit shaping byte ceiling; a changed maxFontBytes value remounts. */
+  fontShaping?: FontShapingOptions;
   /** Author for later comments, replies, and tracked changes. Changes apply without a remount. */
   author?: string;
   /**
@@ -238,6 +241,7 @@ export function useDocxEditorRootOwner(
     const instance = createDocxEditor({
       ...(p.document !== undefined ? { document: p.document } : {}),
       ...(p.fonts ? { fonts: p.fonts } : {}),
+      ...(p.fontShaping ? { fontShaping: p.fontShaping } : {}),
       ...(p.author !== undefined ? { author: p.author } : {}),
       ...(p.locale !== undefined ? { locale: p.locale } : {}),
       translate: translateResolver.value,
@@ -300,8 +304,12 @@ export function useDocxEditorRootOwner(
 
   if (typeof window !== 'undefined') {
     watch(
-      () =>
-        [toValue(props).document, toValue(props).fonts, toValue(props).imageDecodePort] as const,
+      [
+        () => toValue(props).document,
+        () => toValue(props).fonts,
+        () => toValue(props).fontShaping?.maxFontBytes,
+        () => toValue(props).imageDecodePort,
+      ],
       createEditor,
       { immediate: true, flush: 'post' }
     );
