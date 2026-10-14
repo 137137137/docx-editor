@@ -140,7 +140,10 @@ export function createPictureBulletResourceResolver(options: {
     pendingCount: () => inFlight.size,
     reset(): void {
       generation += 1;
-      epoch += 1;
+      // Only a layout that resolved a bullet read the epoch's resources. With none resolved,
+      // a package change that resets the bundle, such as adding the first comment part, must
+      // not change every paragraph's cache key.
+      if (states.size > 0 || inFlight.size > 0) epoch += 1;
       ownerPartName = undefined;
       states.clear();
       inFlight.clear();
