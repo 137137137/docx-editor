@@ -3706,6 +3706,8 @@ export interface SemanticLayoutOptions {
     readonly notes?: NotesLayoutInput;
     readonly numberingIndex?: NumberingIndex;
     readonly pageBottomReserves?: ReadonlyMap<number, number>;
+    // @internal
+    readonly pageBottomReservesFromPreviousPass?: boolean;
     readonly paragraphLineUnitPt?: number;
     readonly producer?: string;
     readonly projectFieldLink?: FieldLinkProjector;

@@ -187,6 +187,7 @@ export interface SemanticLayoutOptions {
    * `pageBottomReserves` index the pages of the previous pass, the seed a notes pass starts
    * from. A multi-section pass moves each section's entries by how far its first page moved,
    * so a section after an edit that added or removed pages sees the reserves it had.
+   * @internal
    */
   readonly pageBottomReservesFromPreviousPass?: boolean;
   /** Derived note marks for body/note projection (provisional or final). */

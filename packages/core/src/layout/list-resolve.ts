@@ -837,8 +837,9 @@ function resolveStoryListItemsStable(
   for (let index = 0; index < blocks.length; index += 1) {
     listResolveBlockVisits += 1;
     const block = blocks[index]!;
+    // A style can number a paragraph, so a block's list holds only under the same cascade.
     const numbered =
-      last && last.blocks[index] === block
+      last && last.blocks[index] === block && last.styleCascade === styleCascade
         ? last.numberedByBlock[index]!
         : numberedParagraphsOfBlock(block, styleCascade);
     numberedByBlock[index] = numbered;

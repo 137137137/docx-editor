@@ -431,4 +431,42 @@ describe('withResolvedListItems session resume', () => {
       expect(shape(resumed.listItems!)).toEqual(shape(fresh.listItems!));
     }
   });
+
+  test('a style that starts numbering a paragraph numbers it on the next resolve', () => {
+    const cascade = (stylePr: string) => {
+      const result = readOoxmlPart(
+        `<w:styles xmlns:w="${W}"><w:style w:type="paragraph" w:styleId="S">` +
+          `<w:pPr>${stylePr}</w:pPr></w:style></w:styles>`,
+        { name: '/word/styles.xml', contentType: 'app/xml' }
+      );
+      if (!result.ok) throw new Error(result.reason);
+      return buildStyleCascadeTable(result.part.root);
+    };
+    const numberingIndex = loadNumbering(TWO_LISTS);
+    const blocks = storyBlocks(longBody());
+    const session = createLayoutSession();
+    withResolvedListItemsForSession({ numberingIndex, styleCascade: cascade('') }, blocks, session);
+    const styled = readOoxmlPart(
+      `<w:document xmlns:w="${W}"><w:body>` +
+        '<w:p><w:pPr><w:pStyle w:val="S"/></w:pPr><w:r><w:t>styled</w:t></w:r></w:p>' +
+        '</w:body></w:document>',
+      { name: '/word/styled.xml', contentType: 'app/xml' }
+    );
+    if (!styled.ok) throw new Error(styled.reason);
+    const withStyled = [...storyBlocks(styled.part), ...blocks];
+    const numbered = cascade('<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>');
+    withResolvedListItemsForSession(
+      { numberingIndex, styleCascade: cascade('') },
+      withStyled,
+      session
+    );
+    const resumed = withResolvedListItemsForSession(
+      { numberingIndex, styleCascade: numbered },
+      withStyled,
+      session
+    );
+    const fresh = withResolvedListItems({ numberingIndex, styleCascade: numbered }, withStyled);
+    expect(shape(resumed.listItems!)).toEqual(shape(fresh.listItems!));
+    expect(resumed.listItems!.get(withStyled[0]!.id)?.markerText).toBe('1.');
+  });
 });
