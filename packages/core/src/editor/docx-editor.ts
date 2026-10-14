@@ -31,6 +31,8 @@ import {
   findReviewPlacement,
   keyUnderQuery,
   narrowReviewItems,
+  createPairedActivation,
+  litReviewKeys,
   replacementPairHalves,
   reviewItemWithHalves,
   withRevealPairKey,
@@ -340,6 +342,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   let reviewActivationExclusions: readonly ReviewRevisionKind[] | null = null;
   let reviewActivationFormattingKinds: readonly string[] | undefined;
   let allowExcludedFormatNavigation = false;
+  const pairedPin = createPairedActivation(reviewPane.pairsReplacements, () => surface);
   const reviewAuthorVisibility = createRevisionAuthorVisibility();
   // How tracked changes are coloured, replaceable live; a reload mounts with the latest.
   const revisionStyleState = createRevisionStyleState(config.revisionStyles);
@@ -669,6 +672,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
       revisionMarkup: revisionMarkupState.current(),
       ...preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
+      pairsReplacements: pairedPin.lightsPair,
       ...diagnostics.surfaceHooks(suggesting, () => surface),
       ...preparedOpen.takePreparedOpen(bytes),
       ...(shapedMeasurer
@@ -1542,18 +1546,16 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
    */
   function reviewPlacements(query?: ReviewItemQuery): readonly ReviewItemPlacement[] {
     if (!reviewEnabled) return [];
-    // Kind exclusion and opt-in replacement pairing; see `review-replacement-pairs.ts`.
-    const items = narrowReviewItems(
-      filterReviewItemsByAuthor(surface?.session.reviewItems() ?? [], reviewAuthorVisibility),
-      query
-    );
+    // Kind exclusion and default replacement pairing; see `review-replacement-pairs.ts`.
+    const visible = reviewAuthorVisibility.filterItems(surface?.session.reviewItems() ?? []);
+    const items = narrowReviewItems(visible, query);
     const withPlacement = query?.placement !== false;
     let anchors: Map<string, ReviewParagraphAnchor> | null = null;
     if (withPlacement && items.length > 0) {
       const layout = surface?.publishedLayout() ?? null;
       if (layout) anchors = anchorIndexOf(layout);
     }
-    const activeReviewKey = activeReviewKeyNow();
+    const activeKeys = litReviewKeys(() => visible, activeReviewKeyNow(), pairedPin.lightsPair());
     // The queue ranks furniture stories after the whole body (tree order), but the rail
     // stacks cards top-down and never moves one UP past its anchor — a header card sorted
     // after page 40's cards would render at the rail's bottom, pages away from the header
@@ -1591,10 +1593,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         activatable: reviewItemWithHalves(item).every(reviewItemActivatable),
         anchorY: geometry?.y ?? null,
         pageIndex: geometry?.pageIndex ?? null,
-        // The surface names the half the caret is in; a pair is active when either half is.
-        isActive: reviewItemWithHalves(item).some(
-          (part) => reviewItemKey(part) === activeReviewKey
-        ),
+        // A pair is active when either half is; an open replacement makes both halves active.
+        isActive: reviewItemWithHalves(item).some((part) => activeKeys.has(reviewItemKey(part))),
       };
       if (item.kind === 'comment') {
         return {
@@ -2339,7 +2339,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       }
       // The surface knows only store items: a paired replacement opens as its deletion.
       const halves = replacementPairHalves(item);
-      const pinKey = halves ? reviewItemKey(halves.deletion) : key;
+      const pinKey = pairedPin.set(halves ? reviewItemKey(halves.deletion) : null) ?? key;
       const range = firstReviewRange(item);
       if (!range) {
         return {
