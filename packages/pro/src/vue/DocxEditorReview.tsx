@@ -420,18 +420,26 @@ const ReviewRoot = defineComponent({
         if (!scroller || documentAbsent.value || props.hidden) return;
         const win = hostWindowOf(scroller);
         let frame = 0;
+        const read = () => ({
+          top: scroller.scrollTop - RAIL_OVERSCAN,
+          bottom: scroller.scrollTop + scroller.clientHeight + RAIL_OVERSCAN,
+        });
+        // Read in the scroll event, while layout is clean. By the frame the editor has built
+        // the pages scrolled into view, and reading there forced a layout of the document.
+        let pending: { top: number; bottom: number } | null = null;
         const sync = (): void => {
           frame = 0;
-          const top = scroller.scrollTop - RAIL_OVERSCAN;
-          const bottom = scroller.scrollTop + scroller.clientHeight + RAIL_OVERSCAN;
+          const next = pending ?? read();
+          pending = null;
           const previous = scrollWindow.value;
           scrollWindow.value =
-            previous && previous.top === top && previous.bottom === bottom
+            previous && previous.top === next.top && previous.bottom === next.bottom
               ? previous
-              : { top, bottom };
+              : next;
         };
         let settle = 0;
         const onScroll = (): void => {
+          pending = read();
           if (frame === 0) frame = win.requestAnimationFrame(sync);
           rail?.setAttribute('data-scrolling', '');
           win.clearTimeout(settle);
