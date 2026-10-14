@@ -2429,9 +2429,14 @@ export function paintSemanticLayoutWithAuthorSlots(
   container.dataset.revision = String(layout.revision);
 
   if (urlRegistry) {
+    // Keep decoded images and URLs only for painted pages, including selection pins.
+    const paintedLayout = {
+      ...layout,
+      pages: pages.filter((entry) => entry.materialized).map((entry) => entry.record),
+    };
     urlRegistry.reconcile(
-      collectUsedDrawingResourceKeys(layout),
-      collectUsedDrawingElementKeys(layout)
+      collectUsedDrawingResourceKeys(paintedLayout),
+      collectUsedDrawingElementKeys(paintedLayout)
     );
   }
 
