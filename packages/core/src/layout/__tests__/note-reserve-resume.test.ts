@@ -3,7 +3,8 @@
 // pass must equal a fresh pass over the same inputs.
 
 import { describe, expect, test } from 'bun:test';
-import { readOoxmlPart, type OoxmlPart } from '../../store/package/ooxml-tree.ts';
+import { readOoxmlPart, type OoxmlNode, type OoxmlPart } from '../../store/package/ooxml-tree.ts';
+import { applyTreeOp } from '../../store/index.ts';
 import {
   createFixedMeasurer,
   createLayoutSession,
@@ -127,6 +128,33 @@ describe('a section pass whose reserves moved', () => {
       const resumed = lay(broken, next, session);
       expect(signature(resumed)).toEqual(signature(lay(broken, next)));
     }
+  });
+
+  test('a table edit in the same pass as a moved reserve still reflows the page', () => {
+    const table = (text: string) =>
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+      `<w:tr><w:tc>${paragraph(text)}</w:tc></w:tr></w:tbl>`;
+    const before = partOf(table('cell a') + filler(60, 'p') + sectPr);
+    // An edit through the store, so every block but the table keeps its identity.
+    const cellParagraph = (node: OoxmlNode): OoxmlNode | undefined =>
+      node.kind === 'textValue'
+        ? undefined
+        : node.kind === 'paragraph'
+          ? node
+          : node.children.map(cellParagraph).find(Boolean);
+    const edited = applyTreeOp(before, {
+      op: 'insertText',
+      paragraphId: cellParagraph(before.root)!.id,
+      offset: 0,
+      text: 'x',
+    });
+    if (!edited.ok) throw new Error(edited.reason);
+    const after = edited.part;
+    const session = createLayoutSession();
+    lay(before, new Map(), session);
+    const moved = new Map([[0, 40]]);
+    const resumed = lay(after, moved, session);
+    expect(signature(resumed)).toEqual(signature(lay(after, moved)));
   });
 });
 

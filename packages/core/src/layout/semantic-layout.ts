@@ -1432,7 +1432,12 @@ function* layoutBlocksPass(
     prepass,
     inputsEqual: prepassInputsValid,
     rowInputsEqual: autofitInputsEqual,
-    eligible: resumable && !furnitureHasWrap && !options.drawingExclusionZonesByPage?.size,
+    // Returns the other pages as they were, so never when a page's reserve moved.
+    eligible:
+      resumable &&
+      reserveResume.moved === undefined &&
+      !furnitureHasWrap &&
+      !options.drawingExclusionZonesByPage?.size,
     firstChanged,
     commonSuffix,
     deps: tableDeps,
