@@ -60,6 +60,7 @@ export const SEMANTIC_LAYOUT_OPTION_ROLES = Object.freeze({
   documentProperties: 'document-coordinator',
   notes: 'document-coordinator',
   pageBottomReserves: 'layout-internal',
+  pageBottomReservesFromPreviousPass: 'layout-internal',
   noteMarks: 'layout-internal',
   inlineDrawingLayout: 'document-coordinator',
   drawingTokenForParagraph: 'document-coordinator',

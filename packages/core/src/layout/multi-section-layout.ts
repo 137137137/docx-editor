@@ -11,6 +11,7 @@ import { characterHeaderPageToken } from './character-header-pages.ts';
 
 import type { OoxmlElement } from '@docx-editor.dev/core/store';
 import { finalizePageFieldProjection, withPageFieldSources } from './field-projection.ts';
+import { recordMovedSeedReserves } from './note-reserves.ts';
 import { pageRefAssignmentToken } from './field-page-furniture.ts';
 import { framedTokenJoin } from './layout-cache.ts';
 import type { ContinuedPageHost } from './continued-page-zones.ts';
@@ -440,6 +441,21 @@ export function layoutMultiSectionDocument(
     if (retainKeys && !rest.retainKeys) rest.cache?.retain(retainKeys);
   };
 
+  // A notes pass seeds its first run with the reserves of the previous pass. When an edit
+  // added or removed pages, every later section starts at another page index, and the seed
+  // then gave each of those sections reserves at the wrong pages: they laid out again under
+  // a new context, and again on every round of the reserve search. Each section reads its
+  // own entries moved by how far its first page moved; with a section added or removed the
+  // seed stays as it is.
+  const seed =
+    options.pageBottomReservesFromPreviousPass &&
+    options.pageBottomReserves &&
+    multi &&
+    multi.spans.length > 0 &&
+    multi.spans.length === sections.length
+      ? options.pageBottomReserves
+      : undefined;
+  const movedSeed = seed ? new Map<number, number>() : undefined;
   const pages: PageRecord[] = [];
   const remappedAll: PageRecord[] = [];
   const newSpans: SectionStackSpan[] = [];
@@ -574,8 +590,19 @@ export function layoutMultiSectionDocument(
     // section, so a continued section that merges onto its host sheet needs no special case.
     const measuredPageNumberFormat = section.properties.pageNumbering?.fmt;
 
+    const sectionReserves =
+      seed && movedSeed && prevSpan
+        ? movedSectionSeed(
+            seed,
+            prevSpan,
+            startIndex,
+            continues ? startIndex - 1 : startIndex,
+            movedSeed
+          )
+        : undefined;
     const laid = layoutSection(slice, revision, {
       ...rest,
+      ...(sectionReserves ? { pageBottomReserves: sectionReserves } : {}),
       retainKeys,
       geometry,
       furniture,
@@ -843,7 +870,31 @@ export function layoutMultiSectionDocument(
     return owner?.at(documentPageIndex, box);
   });
   registerParityPlan(finalized, evenAndOddHeaders, sheetStarts, runningAfter);
+  if (movedSeed && session) recordMovedSeedReserves(session, movedSeed);
 
   retainOnce();
   return finalized;
+}
+
+/**
+ * One section's seed entries: the reserves of the pages it had in the previous pass, moved to
+ * where its pages start now. Also adds them to `moved`, the map the whole pass used.
+ */
+function movedSectionSeed(
+  seed: ReadonlyMap<number, number>,
+  previous: SectionStackSpan,
+  startIndex: number,
+  pageIndexStart: number,
+  moved: Map<number, number>
+): ReadonlyMap<number, number> {
+  const shift = startIndex - previous.startIndex;
+  const previousStart = pageIndexStart - shift;
+  const previousEnd = previousStart + previous.sourcePages.length;
+  const own = new Map<number, number>();
+  for (const [pageIndex, height] of seed) {
+    if (pageIndex < previousStart || pageIndex >= previousEnd) continue;
+    own.set(pageIndex + shift, height);
+    moved.set(pageIndex + shift, height);
+  }
+  return own;
 }

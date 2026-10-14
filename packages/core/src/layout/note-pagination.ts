@@ -71,6 +71,7 @@ import {
   noteColumnBudgetPt,
   recordFootnoteReserve,
   RESERVE_BOUNDARY_BACKOFF_PT,
+  takeMovedSeedReserves,
 } from './note-reserves.ts';
 export { notesReserveContextKey };
 import {
@@ -359,12 +360,22 @@ interface NotesPassMemo {
       readonly allowOrphanDeferral: boolean;
       /** Whether the next page opens with a split row's rest ({@link continuedRowId}). */
       readonly nextOpening: string | null;
+      /**
+       * The next page's content box, which decides whether a reference line may move there.
+       * A resumed body pass keeps this page while the next page's reserve, and so its box,
+       * changed.
+       */
+      readonly nextBox: string;
       readonly reserve: number;
       /** The raw note-area height (hold-out's `existingAreaHeight` input). */
       readonly areaHeight: number;
       readonly reasons: readonly NotePaginationFallbackReason[];
     }
   >;
+}
+
+function contentBoxToken(page: PageRecord | undefined): string {
+  return page ? `${page.contentBox.width}x${page.contentBox.height}` : '';
 }
 
 /** Identity fields the fingerprint cannot express; compared against the previous input. */
@@ -2194,6 +2205,7 @@ function computeFootnoteReservesWithPolicy(
         cached.marks === noteMarks &&
         cached.allowOrphanDeferral === allowOrphanDeferral &&
         cached.nextOpening === continuedRowId(nextPage) &&
+        cached.nextBox === contentBoxToken(nextPage) &&
         pageRefsEqual(fnRefs, cached.pageRefs)
       ) {
         for (const reason of cached.reasons) reasons.push(reason);
@@ -2251,6 +2263,7 @@ function computeFootnoteReservesWithPolicy(
       memo.pageReserve.set(page, {
         allowOrphanDeferral,
         nextOpening: continuedRowId(nextPage),
+        nextBox: contentBoxToken(nextPage),
         pageRefs: fnRefs,
         marks: noteMarks,
         reserve: localNeeded,
@@ -2599,6 +2612,7 @@ export function layoutSemanticDocumentWithNotes<
   Opts extends Pick<NotesLayoutInput, 'styleCascade' | 'numberingIndex'> & {
     noteMarks?: NoteMarkContext;
     pageBottomReserves?: ReadonlyMap<number, number>;
+    pageBottomReservesFromPreviousPass?: boolean;
     session?: {
       previous: SemanticLayout | null;
       multi: unknown;
@@ -2658,7 +2672,11 @@ export function layoutSemanticDocumentWithNotes<
     ...optionsWithLists,
     noteMarks,
     pageBottomReserves: usedReserves,
+    ...(seeded ? { pageBottomReservesFromPreviousPass: true } : {}),
   });
+  // The seed at the page indices this pass laid it out at, when sections moved it.
+  const movedSeed = takeMovedSeedReserves(optionsWithLists.session);
+  if (movedSeed) usedReserves = compactFootnoteReserves(movedSeed);
   if (noteBodyGeometryChanged(optionsWithLists.session, bodyLayout, part)) {
     seeded = undefined;
     usedReserves = new Map();

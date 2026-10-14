@@ -182,11 +182,7 @@ import {
 import { pageBreakBeforeRules } from './page-break-before.ts';
 import { marginInset } from './page-body-margins.ts';
 import { columnSeparatorBoxes, resolveSectionColumns } from './section-columns.ts';
-import {
-  inheritNotesLayoutInput,
-  layoutSemanticDocumentWithNotes,
-  notesReserveContextKey,
-} from './note-pagination.ts';
+import { inheritNotesLayoutInput, layoutSemanticDocumentWithNotes } from './note-pagination.ts';
 import { closingSpaceAfterPt } from './note-area-fit.ts';
 import { passProducerOf } from './pass-producer.ts';
 import { documentProjectionProducer } from './document-property-context.ts';
@@ -207,6 +203,7 @@ import { limitBodyBlocks } from './body-block-limit.ts';
 import { refTokenForTableBlock } from './field-ref.ts';
 import { createListFirstLineMetrics, markerLineStart, publishListMarker } from './list-marker.ts';
 import { FlowCheckpointOwner, flowCheckpointsMatch } from './flow-checkpoint.ts';
+import { sectionReserveResume } from './note-reserve-resume.ts';
 import type { FlowCheckpoint, LayoutSession } from './layout-session.ts';
 import { furnitureForSection, layoutMultiSectionDocument } from './multi-section-layout.ts';
 import { hostedStoryFlowDeps, layoutTextboxStory } from './textbox-story-layout.ts';
@@ -556,13 +553,6 @@ function* layoutBlocksPass(
   );
   const leadingBreakGroups = createLeadingBreakGroups(options, bodyPageFieldContext);
 
-  // Only the reserve entries THIS pass can read belong in its context key. The pass reads
-  // reserves at `pageIndexStart` plus consecutive local page slots as it opens pages, so a
-  // bound of "the page count the previous pass produced, plus one" covers every slot an
-  // input-identical replay can touch — and keeps a reserve on another section's pages from
-  // invalidating this one. A fresh session has no such bound and folds every entry from
-  // `pageIndexStart` on (conservative, one full pass).
-  const reserveKeyBound = session?.previous ? session.previous.pages.length + 1 : Infinity;
   const columnRegionBottom = options.columnRegionBottom;
   const continuedInsets = options.continuedPageInsets;
   // Local page 0 of a continued section IS the host sheet: its text wraps around the host's
@@ -592,9 +582,14 @@ function* layoutBlocksPass(
     sectionPageBorders: options.sectionPageBorders,
     sectionMarkCollapses: options.sectionMarkCollapses,
   });
-  const context = contextFor(
-    notesReserveContextKey(pageBottomReserves, pageIndexStart, reserveKeyBound)
+  // Only the reserve entries THIS pass can read belong in its context key.
+  const reserveResume = sectionReserveResume(
+    session,
+    contextFor,
+    pageBottomReserves,
+    pageIndexStart
   );
+  const context = reserveResume.context;
   const startPageParity = pageIndexStart & 1;
   /** Set when this pass places an anchored drawing whose geometry reads page parity. */
   let usedPageParity = false;
@@ -1085,7 +1080,7 @@ function* layoutBlocksPass(
   const comparable =
     previous !== null &&
     session !== undefined &&
-    session.context === context &&
+    (session.context === context || reserveResume.moved !== undefined) &&
     session.producer === producer &&
     (!session.parityDependent || session.startPageParity === startPageParity);
   const resumable = columns.count === 1 && comparable;
@@ -1097,6 +1092,7 @@ function* layoutBlocksPass(
     while (firstChanged < limit && flowKeys[firstChanged] === session.keys[firstChanged]) {
       firstChanged += 1;
     }
+    firstChanged = reserveResume.resumeLimit(session.checkpoints, firstChanged);
   }
 
   /**
@@ -1869,7 +1865,8 @@ function* layoutBlocksPass(
     // into line once the page it disturbed has been completed.
     if (resumable && commonSuffix > 0 && index >= prepared.length - commonSuffix) {
       const mark = session.checkpoints[index + (session.keys.length - prepared.length)];
-      if (mark && flowCheckpointsMatch(mark, checkpoints[index]!)) {
+      const tailHolds = mark && reserveResume.tailHolds(mark, pages.length);
+      if (mark && tailHolds && flowCheckpointsMatch(mark, checkpoints[index]!)) {
         // The in-page flow matches. At delta 0 the previous pages are appended by identity;
         // at a nonzero delta the tail is identical content `delta` sheets away and is reused
         // through `remapPage`, gated by `convergenceTailShiftAllowed`.
@@ -2804,16 +2801,7 @@ function* layoutBlocksPass(
         ]
       : checkpoints;
     session.keys = flowKeys;
-    // Re-sliced with the page count THIS pass produced: a pass that grew past the start-time
-    // bound read reserve slots the start-time key never folded, and the next comparison must
-    // see them. An input-identical replay produces the same count, so its start-time bound
-    // (previous count + 1) rebuilds this exact string. When the counts agree the start-time
-    // string IS that string — reuse it by identity so the next pass's context check is a
-    // pointer compare, not a rebuild plus memcmp.
-    session.context =
-      pages.length + 1 === reserveKeyBound
-        ? context
-        : contextFor(notesReserveContextKey(pageBottomReserves, pageIndexStart, pages.length + 1));
+    reserveResume.publish(session, pages.length);
     session.producer = producer;
     // Sticky whenever any part of the previous layout was reused: a resumed pass never
     // re-places the prefix and a converged pass never re-places the tail, so their
