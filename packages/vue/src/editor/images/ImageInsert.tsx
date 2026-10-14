@@ -1,7 +1,6 @@
 import { defineComponent, h, inject, provide, ref, type InjectionKey } from 'vue';
 import {
   editorHostDocument,
-  editorHostWindow,
   executeImageCommand,
   toolbarCommandState,
 } from '@docx-editor.dev/core/editor';
@@ -14,6 +13,9 @@ import { normalizeImageBytes } from './normalizeImageFile';
 import { useToolbarLabel } from '../toolbar/toolbar-context';
 import { chromeControlForSlot, chromeIcon, guardToolbarMousedown } from '../toolbar/ToolbarButton';
 import { Slot } from '../toolbar/Slot';
+import { usePopupConfig } from '../popup-config-context';
+import { renderPopup } from '../popup-renderer';
+import { DocxEditorImageInsertErrorDialog } from './ImageInsertErrorDialog';
 
 const ACCEPT = 'image/png,image/jpeg,image/gif';
 
@@ -57,6 +59,12 @@ export const ImageInsertProvider = defineComponent({
     const { t } = useTranslation();
     const inputRef = ref<HTMLInputElement | null>(null);
     const busyRef = ref(false);
+    const popups = usePopupConfig();
+    // A refusal shows in an editor dialog. A browser alert would stop every script on the page.
+    const refusal = ref<string | null>(null);
+    const closeRefusal = () => {
+      refusal.value = null;
+    };
     /** A picker made in a pop-out window's document, until it reports a choice or a cancel. */
     let strayPicker: HTMLInputElement | null = null;
 
@@ -70,8 +78,7 @@ export const ImageInsertProvider = defineComponent({
       if (!editor || busyRef.value) return;
       const normalized = normalizeImageBytes(bytes);
       if (!normalized.ok) {
-        // Alerts open in the editor's window: a pop-out editor's opener may be hidden.
-        editorHostWindow(editor).alert(t(normalized.reasonKey as TranslationKey));
+        refusal.value = t(normalized.reasonKey as TranslationKey);
         return;
       }
       const command = {
@@ -86,10 +93,9 @@ export const ImageInsertProvider = defineComponent({
       try {
         const result = await executeImageCommand(editor, command);
         if (!result.ok) {
-          editorHostWindow(editor).alert(
+          refusal.value =
             localizeDisabledReason(readableReason(result.reason) ?? null, t) ??
-              t('imageInsert.errors.refused')
-          );
+            t('imageInsert.errors.refused');
         } else {
           editor.focus();
         }
@@ -187,6 +193,14 @@ export const ImageInsertProvider = defineComponent({
         onMousedown: (event: MouseEvent) => event.stopPropagation(),
       }),
       ...flattenChildren(slots.default?.() ?? []),
+      refusal.value === null
+        ? null
+        : popups.value?.imageInsertError !== undefined
+          ? renderPopup(popups.value.imageInsertError, {
+              message: refusal.value,
+              onClose: closeRefusal,
+            })
+          : h(DocxEditorImageInsertErrorDialog, { message: refusal.value, onClose: closeRefusal }),
     ];
   },
 });

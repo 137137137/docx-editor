@@ -4,10 +4,9 @@ import type { ReactNode } from 'react';
 //
 // Toolbar and menu both trigger the same picker; Content attaches paste/drop to the same path.
 
-import { createContext, useCallback, useContext, useMemo, useRef } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import {
   editorHostDocument,
-  editorHostWindow,
   executeImageCommand,
   toolbarCommandState,
 } from '@docx-editor.dev/core/editor';
@@ -20,6 +19,9 @@ import { normalizeImageBytes } from './normalizeImageFile';
 import { useToolbarLabel } from '../toolbar/toolbar-context';
 import { chromeControlForSlot, chromeIcon, guardToolbarMousedown } from '../toolbar/ToolbarButton';
 import { Slot } from '../toolbar/Slot';
+import { usePopupConfig } from '../popup-config-context';
+import { renderPopup } from '../popup-renderer';
+import { DocxEditorImageInsertErrorDialog } from './ImageInsertErrorDialog';
 
 const ACCEPT = 'image/png,image/jpeg,image/gif';
 
@@ -57,6 +59,9 @@ export function ImageInsertProvider({ children }: ImageInsertProviderProps) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const busyRef = useRef(false);
+  const popups = usePopupConfig();
+  // A refusal shows in an editor dialog. A browser alert would stop every script on the page.
+  const [refusal, setRefusal] = useState<string | null>(null);
   /** A picker made in a pop-out window's document, until it reports a choice or a cancel. */
   const strayPickerRef = useRef<HTMLInputElement | null>(null);
 
@@ -76,8 +81,7 @@ export function ImageInsertProvider({ children }: ImageInsertProviderProps) {
       if (!editor || busyRef.current) return;
       const normalized = normalizeImageBytes(bytes);
       if (!normalized.ok) {
-        // Alerts open in the editor's window: a pop-out editor's opener may be hidden.
-        editorHostWindow(editor).alert(t(normalized.reasonKey as TranslationKey));
+        setRefusal(t(normalized.reasonKey as TranslationKey));
         return;
       }
       const command = {
@@ -92,7 +96,7 @@ export function ImageInsertProvider({ children }: ImageInsertProviderProps) {
       try {
         const result = await executeImageCommand(editor, command);
         if (!result.ok) {
-          editorHostWindow(editor).alert(
+          setRefusal(
             localizeDisabledReason(readableReason(result.reason) ?? null, t) ??
               t('imageInsert.errors.refused')
           );
@@ -208,6 +212,15 @@ export function ImageInsertProvider({ children }: ImageInsertProviderProps) {
         onMouseDown={(event) => event.stopPropagation()}
       />
       {children}
+      {refusal !== null &&
+        (popups?.imageInsertError !== undefined ? (
+          renderPopup(popups.imageInsertError, {
+            message: refusal,
+            onClose: () => setRefusal(null),
+          })
+        ) : (
+          <DocxEditorImageInsertErrorDialog message={refusal} onClose={() => setRefusal(null)} />
+        ))}
     </ImageInsertContext.Provider>
   );
 }

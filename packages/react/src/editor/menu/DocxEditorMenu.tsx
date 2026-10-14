@@ -56,6 +56,8 @@ import { useTranslation } from '../../i18n';
 import type { TranslationKey } from '../../i18n';
 import { DocxEditorPageSetupDialog } from '../DocxEditorPageSetup';
 import { DocxEditorParagraphDialog } from '../DocxEditorParagraphDialog';
+import { DocxEditorWatermarkDialog } from '../DocxEditorWatermark';
+import { MenuWatermark } from './menu-watermark';
 import type { ToolbarTranslate } from '../toolbar/toolbar-context';
 import { chromeIcon, guardToolbarMousedown } from '../toolbar/ToolbarButton';
 import {
@@ -274,6 +276,7 @@ function DocxEditorMenuRoot(props: DocxEditorMenuProps) {
   const [activeMenu, setActiveMenu] = useState<MenuId | null>(null);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [paragraphDialogOpen, setParagraphDialogOpen] = useState(false);
+  const [watermarkDialogOpen, setWatermarkDialogOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -461,6 +464,17 @@ function DocxEditorMenuRoot(props: DocxEditorMenuProps) {
               )
             )
           : setParagraphDialogOpen(true),
+      onWatermarkDialog: editor
+        ? () =>
+            dialogs
+              ? dialogs.open(
+                  'watermark',
+                  rootRef.current?.querySelector<HTMLElement>(
+                    '[data-menu="insert"] > [role="menuitem"]'
+                  )
+                )
+              : setWatermarkDialogOpen(true)
+        : undefined,
       onReportIssue,
       reportIssue,
       opening,
@@ -709,6 +723,10 @@ function DocxEditorMenuRoot(props: DocxEditorMenuProps) {
         open={paragraphDialogOpen}
         onClose={() => setParagraphDialogOpen(false)}
       />
+      <DocxEditorWatermarkDialog
+        open={watermarkDialogOpen}
+        onClose={() => setWatermarkDialogOpen(false)}
+      />
     </MenuContext.Provider>
   );
 }
@@ -743,6 +761,8 @@ export interface DocxEditorMenuNamespace {
   readonly PageSetup: typeof MenuPageSetup;
   /** Insert › Image, so a host can hide it or place it elsewhere by name. */
   readonly ImageInsert: typeof MenuImageInsert;
+  /** Insert › Watermark, so a host can hide it or place it elsewhere by name. */
+  readonly Watermark: typeof MenuWatermark;
   /** Review > Markup Options > Reviewers. */
   readonly Reviewers: typeof MenuReviewers;
   /** Help › Report issue, so a host can drop it or point it elsewhere by name. */
@@ -780,6 +800,7 @@ export const DocxEditorMenu: DocxEditorMenuNamespace = Object.assign(DocxEditorM
   Print: MenuPrint,
   PageSetup: MenuPageSetup,
   ImageInsert: MenuImageInsert,
+  Watermark: MenuWatermark,
   Reviewers: MenuReviewers,
   ReportIssue: MenuReportIssue,
 });

@@ -726,10 +726,7 @@ export interface Editor extends EditorAnchorNavigation, EditorHighlights, Editor
         readonly kind: string;
         readonly story?: 'body' | 'header' | 'footer' | 'footnote' | 'endnote';
     }[];
-    getWatermark(): {
-        readonly kind: 'text' | 'image';
-        readonly text?: string;
-    } | null;
+    getWatermark(): WatermarkState | null;
     // (undocumented)
     getZoom(): number;
     getZoomMode(): ZoomMode;
@@ -993,7 +990,6 @@ export interface EditorCommands extends EditorCommandShape<DocEdits>, EditorHead
         width?: number | null;
         widthType?: string | null;
     };
-    // (undocumented)
     setWatermark: {
         watermark: Watermark | null;
     };
@@ -2576,10 +2572,42 @@ export type ViewScope = Exclude<EditorScope, {
 
 // @public
 export interface Watermark {
-    // (undocumented)
+    readonly bold?: boolean;
+    readonly color?: string;
+    readonly fontFamily?: string;
+    readonly fontSizePt?: number | null;
     readonly imageData?: Uint8Array;
+    readonly italic?: boolean;
+    readonly layout?: WatermarkLayout;
+    readonly scale?: number | null;
+    readonly text?: string;
+    readonly transparency?: number;
+    readonly washout?: boolean;
+}
+
+// @public
+export type WatermarkLayout = 'diagonal' | 'horizontal';
+
+// @public
+export interface WatermarkState {
+    // (undocumented)
+    readonly bold?: boolean;
+    readonly color?: string;
+    // (undocumented)
+    readonly fontFamily?: string;
+    readonly fontSizePt?: number | null;
+    // (undocumented)
+    readonly italic?: boolean;
+    // (undocumented)
+    readonly kind: 'text' | 'image';
+    // (undocumented)
+    readonly layout?: WatermarkLayout;
     // (undocumented)
     readonly text?: string;
+    // (undocumented)
+    readonly transparency?: number;
+    // (undocumented)
+    readonly washout?: boolean;
 }
 
 // @public
