@@ -63,3 +63,8 @@ export function holdsMoveNode(node: OoxmlNode): boolean {
   if (keepsSubtreeMemo(node)) movePresence.set(node, result);
   return result;
 }
+
+/** Whether `node` is a move range marker or a move wrapper, or holds one. */
+export function isOrHoldsMoveNode(node: OoxmlNode): boolean {
+  return node.kind !== 'textValue' && (MOVE_KINDS.has(node.kind) || holdsMoveNode(node));
+}

@@ -59,14 +59,9 @@ export function mergeParagraphBreakEdits(
   };
   const starts = new Map<string, number[]>();
   const ends = new Map<string, number[]>();
+  // NUL-separated: XML text cannot carry U+0000, so a file's author name cannot forge a boundary.
   const key = (item: ReviewRevisionItem, paragraph: string, offset: number): string =>
-    JSON.stringify([
-      item.revisionKind === 'paragraphMark' ? item.markDirection : item.revisionKind,
-      item.author,
-      item.nesting,
-      paragraph,
-      offset,
-    ]);
+    `${item.revisionKind === 'paragraphMark' ? item.markDirection : item.revisionKind}\u0000${item.author}\u0000${item.nesting}\u0000${paragraph}\u0000${offset}`;
   const add = (map: Map<string, number[]>, at: string, index: number): void => {
     const bucket = map.get(at);
     if (bucket) bucket.push(index);
