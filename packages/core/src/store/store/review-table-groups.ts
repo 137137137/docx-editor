@@ -139,7 +139,7 @@ function groupRowRevisions(
     for (const child of node.children) collect(child, group);
   };
   const walk = (node: OoxmlNode, tableDepth = 0): void => {
-    if (!holdsTableStructure(node)) return;
+    if (node.kind === 'textValue' || !holdsTableStructure(node)) return;
     if (isW(node, 'tr') && tableDepth > 1) {
       const properties = node.children.find((child) => isW(child, 'trPr'));
       if (properties && properties.kind !== 'textValue') {
