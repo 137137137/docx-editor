@@ -42,8 +42,15 @@ export function progressiveOpenPending(surface: object): boolean {
   return steps.has(surface);
 }
 
-/** The work a sliced opening aims to do per slice, in milliseconds. */
-const OPENING_SLICE_MS = 40;
+/**
+ * The work a sliced opening aims to do per slice, in milliseconds.
+ *
+ * Every prefix pass also walks the blocks laid out before it, so that cost repeats once per
+ * slice. On a document of a thousand pages, 40 ms slices spent more time repeating it than
+ * laying out new blocks; at this size the document opens in under half the time, and the
+ * muted pages still get a frame several times a second.
+ */
+const OPENING_SLICE_MS = 120;
 
 /** What the slices need from the surface that is opening. */
 export interface OpeningSlicesHost {
