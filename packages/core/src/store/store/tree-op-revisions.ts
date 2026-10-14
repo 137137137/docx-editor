@@ -62,6 +62,7 @@ import {
   withDeletedTextRestored,
   type Resolution,
 } from './revision-rebuild-helpers.ts';
+import { holdsMoveNode } from './revision-container-presence.ts';
 import {
   REVISION_PROPERTY_CONTAINERS,
   preservedRevisionProperty,
@@ -393,7 +394,8 @@ export function namedMoveRanges(root: OoxmlNode): Map<string, MoveRange> {
         const enclosing = open[open.length - 1];
         if (enclosing !== undefined) bucketFor(enclosing.name).wrappers.push(child);
       }
-      visit(child);
+      // Only markers and move wrappers change the result; skip subtrees without one.
+      if (holdsMoveNode(child)) visit(child);
     }
   };
   visit(root);

@@ -23,7 +23,30 @@ export function commentBodyModelText(comment: CommentRecord): string {
   return commentBodyTextOf(comment, false);
 }
 
+/**
+ * Text per comment block, per reading. Comment blocks are immutable nodes of the comments part,
+ * so a rail that lists every comment on each update reads each block once.
+ */
+const blockTexts = {
+  display: new WeakMap<OoxmlNode, string>(),
+  model: new WeakMap<OoxmlNode, string>(),
+};
+
 function commentBodyTextOf(comment: CommentRecord, display: boolean): string {
+  const memo = display ? blockTexts.display : blockTexts.model;
+  let text = '';
+  for (const block of comment.blocks) {
+    let own = memo.get(block);
+    if (own === undefined) {
+      own = blockTextOf(block, display);
+      memo.set(block, own);
+    }
+    text += own;
+  }
+  return text;
+}
+
+function blockTextOf(block: OoxmlNode, display: boolean): string {
   const parts: string[] = [];
   const visit = (node: OoxmlNode): void => {
     if (node.kind === 'textValue') {
@@ -42,7 +65,7 @@ function commentBodyTextOf(comment: CommentRecord, display: boolean): string {
     }
     for (const child of node.children) visit(child);
   };
-  for (const block of comment.blocks) visit(block);
+  visit(block);
   return parts.join('');
 }
 
