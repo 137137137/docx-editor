@@ -68,6 +68,12 @@ The matrix reports editing, rendering, and round-trip support separately. A feat
 
 Raised and lowered text contributes to automatic and minimum line heights. This includes inherited `w:position` values combined with subscript or superscript. Exact line spacing retains its authored height.
 
+#### Equation source formatting
+
+Equations retain their canonical Office Math source when you save the document. Literal text and normal text project within fractions, radicals, scripts, and other supported structures. Upper and lower bars without control properties (`m:ctrlPr`) also project as math.
+
+Compact equation replacement is disabled when it cannot preserve run formatting or bars. You can remove the equation and edit ordinary text beside it. This restriction applies to the equation, not the document. Unsupported source properties retain the text fallback and remain unchanged on save.
+
 ### Paragraphs and styles
 
 <FeatureMatrix category="paragraphs" />

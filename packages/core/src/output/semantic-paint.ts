@@ -829,7 +829,9 @@ function paintSpan(
       element.dataset.end = String(span.range.end);
     }
     applyRunFaceStyle(element, faceStyle, ctx);
-    mountEquationGeometry(document, element, span.equation, ctx.scale);
+    mountEquationGeometry(document, element, span.equation, ctx.scale, (run, style) =>
+      applyRunFaceStyle(run, style, ctx)
+    );
     applyRevisionPresentation(element, span, ctx);
     return element;
   }

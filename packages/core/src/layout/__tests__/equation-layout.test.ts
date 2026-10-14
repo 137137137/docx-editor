@@ -179,10 +179,24 @@ describe('atomic equation paragraph layout', () => {
     expect(multiple.box.height).toBeLessThan(single.box.height * 1.5);
   });
 
+  test('publishes a supported bar decoration through paragraph layout', () => {
+    const span = equationSpan(
+      '<w:p><m:oMath><m:bar><m:barPr><m:pos m:val="top"/></m:barPr>' +
+        '<m:e><m:r><m:t>N</m:t></m:r></m:e></m:bar></m:oMath></w:p>'
+    );
+    const geometry = span.equation?.geometry;
+    expect(geometry?.kind).toBe('bar');
+    if (geometry?.kind !== 'bar') throw new Error('missing bar decoration');
+    expect(geometry.body.kind).toBe('text');
+    expect(geometry.bar.y + geometry.bar.height).toBeLessThan(geometry.body.box.y);
+    expect(geometry.box.width).toBe(geometry.body.box.width);
+    expect(span.equation?.fallbackText).toBe('N');
+  });
+
   test('publishes bounded fallback text geometry for unsupported OMML', () => {
     const span = equationSpan(
-      '<w:p><m:oMath><m:bar><m:e><m:r><m:t>safe fallback</m:t></m:r>' +
-        '</m:e></m:bar></m:oMath></w:p>'
+      '<w:p><m:oMath><m:groupChr><m:e><m:r><m:t>safe fallback</m:t></m:r>' +
+        '</m:e></m:groupChr></m:oMath></w:p>'
     );
     expect(span.equation).toMatchObject({
       fallbackText: 'safe fallback',

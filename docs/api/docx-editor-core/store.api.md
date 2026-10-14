@@ -1325,8 +1325,19 @@ export type EquationExpression = {
     readonly items: readonly EquationExpression[];
     readonly kind: 'row';
 } | {
+    readonly format?: {
+        readonly bold?: boolean;
+        readonly fontFamily?: string;
+        readonly italic?: boolean;
+        readonly literal?: boolean;
+        readonly normalText?: boolean;
+    };
     readonly kind: 'text';
     readonly value: string;
+} | {
+    readonly body: EquationExpression;
+    readonly kind: 'bar';
+    readonly position: 'top' | 'bottom';
 } | {
     readonly denominator: EquationExpression;
     readonly kind: 'fraction';
