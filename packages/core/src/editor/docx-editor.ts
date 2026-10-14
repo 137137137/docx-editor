@@ -1087,9 +1087,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         // HarfBuzz can only shape faces whose bytes reached its resource snapshot. A run may
         // still name a locally installed browser face (Helvetica is the common macOS case):
         // paint resolves that face through CSS, so falling back to the deterministic monospace
-        // grid here makes every later caret drift farther from the glyphs. Resolve the fallback
-        // through the same browser canvas + alias stack the unshaped surface uses. Headless
-        // environments still receive the fixed measurer from this resolver.
+        // grid here makes caret geometry drift. Use the same browser canvas and alias stack;
+        // headless environments still receive the fixed measurer from this resolver.
         const fallbackResolution = resolveDefaultSurfaceMeasurer(scaleOf(), {
           context: container ? tryCreateBrowserCanvasContext(container.ownerDocument) : null,
           ...(embeddedFaces ? { fontAlias: embeddedFaces.alias } : {}),
@@ -1099,7 +1098,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
           fonts,
           fallbackResolution,
           scaleOf(),
-          ++fontMeasurementEpoch
+          ++fontMeasurementEpoch,
+          (error) => !destroyed && seq === loadSeq && reportFontError(error)
         );
         shapedMeasurer = measurement.measurer;
         shapedProducer = measurement.producer;
