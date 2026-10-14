@@ -729,13 +729,18 @@ export interface FontErrorReporting {
   readonly config: { readonly onFontError?: (error: EditorFontError) => void };
   readonly events: {
     readonly hasErrorHandlers: () => boolean;
-    readonly emitError: (error: EditorError) => void;
+    readonly emitError: (error: EditorError, isCurrent?: () => boolean) => void;
   };
   readonly diagnostics: EditorDiagnostics;
 }
 
 /** Reports one font failure to the host's handler, the `error` event and the diagnostics. */
-export function reportEditorFontError(error: EditorFontError, host: FontErrorReporting): void {
+export function reportEditorFontError(
+  error: EditorFontError,
+  host: FontErrorReporting,
+  isCurrent: () => boolean = () => true
+): void {
+  if (!isCurrent()) return;
   // A shaper that never loaded is not a per-face degradation: NOTHING measures correctly,
   // and the fault is the host's build rather than the document's content. Said out loud
   // exactly once, and only when nobody is listening — a host that reports it in its own
@@ -756,6 +761,7 @@ export function reportEditorFontError(error: EditorFontError, host: FontErrorRep
   } catch {
     /* the host's reporting problem, not the document's */
   }
-  host.events.emitError(error);
-  host.diagnostics.fontFailed(shaperNeverLoaded ? 'wasmUnavailable' : error.code);
+  if (!isCurrent()) return;
+  host.events.emitError(error, isCurrent);
+  if (isCurrent()) host.diagnostics.fontFailed(shaperNeverLoaded ? 'wasmUnavailable' : error.code);
 }
