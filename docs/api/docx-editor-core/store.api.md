@@ -2594,6 +2594,7 @@ export interface OmmlEquationProjection {
     readonly expression: EquationExpression;
     // (undocumented)
     readonly fallbackText: string;
+    readonly fontSizePt?: number;
     // (undocumented)
     readonly sourceNodeId: OoxmlNodeId;
     // (undocumented)
