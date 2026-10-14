@@ -61,6 +61,8 @@ The failure reasons are `networkError`, `httpError`, `hashMismatch`, `overLimit`
 
 Use `createFontSource` when you already hold bytes from a file input, bundle, or application storage. It accepts a face descriptor and returns either a source or a typed failure. It also accepts `faceIndex`, an application `id`, and `maxFontBytes` where specified by its types.
 
+Browser painting uses the selected collection `faceIndex`, like text shaping. The first face uses the complete admitted collection, including its signature. Other faces use a standalone copy that preserves every selected table, including `DSIG`. Collection-header signatures do not block selecting a face. Each selected face has a separate private browser alias. Registration does not verify signatures or establish their validity after extraction. Invalid faces receive no alias. Font admission and shaping execution limits still apply.
+
 A `FontResolver` receives requested `families`, `defaultFamily`, an optional cancellation `signal`, and optional `resolvedFaces`. Use `resolvedFaces` to avoid loading faces supplied by an earlier origin. Return a configuration, fragment, or `undefined` when the resolver covers none of the requested fonts. The editor calls the resolver after loading a document and when editing requests another family.
 
 Use an application-owned family lookup to select remote assets. Do not turn document font names directly into network URLs. A network-backed resolver makes document opening fetch the assets your application approves.
