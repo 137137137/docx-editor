@@ -74,6 +74,7 @@ const STAGES = closed<FailureStage>({
   command: true,
   'review-item': true,
   automation: true,
+  save: true,
 });
 const CHANGE_KINDS = closed<ReviewChangeKind>({
   insert: true,
@@ -108,6 +109,9 @@ interface KindSchema {
   readonly numbers: Readonly<Record<string, Carried>>;
 }
 
+/** A session's `active` and `end` phases carry its activity. */
+const summary: Carried = (event) => event.phase === 'active' || event.phase === 'end';
+
 /**
  * What each kind carries. A known numeric field on an event that does not carry it is removed
  * and the event is kept, so a newer engine that adds a field does not lose its events on an
@@ -135,6 +139,18 @@ const KINDS = {
   },
   'collab.participants': { numbers: { count: true } },
   performance: { codes: 'performance', numbers: { windowMs: true } },
+  // Saved and failed saves both report how long the call took.
+  'document.save': { codes: 'save', numbers: { durationMs: true } },
+  // A start carries nothing; a window summary and the end carry the activity.
+  session: {
+    numbers: {
+      durationMs: summary,
+      activeMs: summary,
+      inputEdits: summary,
+      commandEdits: summary,
+      automationEdits: summary,
+    },
+  },
 } satisfies Record<EditorDiagnostic['kind'], KindSchema>;
 const KIND_SCHEMAS: Readonly<Record<string, KindSchema>> = KINDS;
 
@@ -142,7 +158,8 @@ const KIND_SCHEMAS: Readonly<Record<string, KindSchema>> = KINDS;
 const ENUMS: Readonly<Record<string, ReadonlySet<string> | RegExp>> = {
   kind: new Set(Object.keys(KINDS)),
   code: CODES,
-  outcome: new Set(['opened', 'rejected']),
+  outcome: new Set(['opened', 'saved', 'rejected']),
+  phase: new Set(['start', 'active', 'end']),
   origin: new Set(['command', 'input', 'automation']),
   // A built-in command type such as `insertTable`; a host's own command is never named.
   command: new Set(diagnosticCommands()),
@@ -215,6 +232,10 @@ const NUMBERS: Readonly<Record<string, Range>> = {
   repeated: { min: 1, max: MAX_COUNT, integer: true },
   connectMs: SPAN,
   windowMs: SPAN,
+  activeMs: SPAN,
+  inputEdits: COUNT,
+  commandEdits: COUNT,
+  automationEdits: COUNT,
 };
 
 /** Every event carries these. */
