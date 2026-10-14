@@ -260,6 +260,8 @@ Changes to numbering and document properties update field text and table paginat
 
 Merges that enter or leave the measured group retain ordinary row placement. Active floating content also uses ordinary row placement when it changes the available width.
 
+Fixed-height horizontal cells display the part of a line that starts inside their content box. A taller line does not enlarge the row. Text below the box stays in the document and does not continue on another page.
+
 Vertical cell merges that cover the same rows share those rows without adding their heights twice. In fixed-height rows, a merged cell whose content fits the complete span displays all of it. If the content does not fit, the first row of the merge clips it.
 
 ### Fields and paragraph spacing
