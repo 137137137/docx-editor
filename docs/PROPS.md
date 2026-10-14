@@ -34,6 +34,7 @@ Staged React/Vue prop divergences are enforced by `bun run check:editor-contract
 | `colorMode` | `'light' \| 'dark' \| 'system'` | React, Vue | Color mode for editor chrome. |
 | `rulers` | `boolean` | React, Vue | Toggles the packaged rulers. |
 | `modules` | `readonly EditorModule[]` | React, Vue | Feature modules applied at mount. |
+| `contentLockPolicy` | `ContentLockPolicy` | React, Vue | Lets users format content-locked controls while their text stays protected. Read once, at creation. |
 | `onFontError` | `(error: EditorFontError) => void` | React, Vue | Reports typed font-resolution failures. |
 
 ### React root chrome props

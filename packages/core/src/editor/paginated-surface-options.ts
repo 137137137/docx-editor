@@ -16,6 +16,7 @@ import type {
 import type { EquationActivation } from './surface-equations.ts';
 import type { HyperlinkActivation } from './surface-navigation.ts';
 import type { TextMeasurer } from '@docx-editor.dev/core/layout';
+import type { ContentLockPolicy } from '../store/package/ooxml-edit.ts';
 import type { PaginatedSurfaceState, SurfaceEditingMode } from './paginated-surface-contract.ts';
 
 /**
@@ -100,6 +101,12 @@ export interface PaginatedSurfaceOptions {
    * built on it stays inert.
    */
   readonly reviewModel?: ReviewModuleContribution;
+  /**
+   * Opt-in relaxation of `w:lock` for run-property writes: `contentLocked` / `sdtContentLocked`
+   * controls can be restyled (toolbar, shortcuts, automation `setFont`) but not retyped.
+   * Absent, they refuse both, as ECMA-376 / Word do.
+   */
+  readonly contentLockPolicy?: ContentLockPolicy;
   /**
    * The family a run with no authored font is reported as by `formatting()` AND painted
    * in — the face the measurer falls back to. Absent, such a run reports

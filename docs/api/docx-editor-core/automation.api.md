@@ -1362,6 +1362,11 @@ export function byteSizeBucket(bytes: number): ByteSizeBucket;
 export type CollaborationDiagnosticCode = `collab.${CollaborationFailureCode}`;
 
 // @public
+export interface ContentLockPolicy {
+    readonly allowFormattingInLockedContent?: boolean;
+}
+
+// @public
 export type CountBucket = '0' | '1' | '2-9' | '10-99' | '100-999' | '1000+';
 
 // @public
@@ -1536,6 +1541,7 @@ export const SERVER_AUTOMATION_CAPABILITIES: AutomationCapabilities;
 // @public
 export interface ServerAutomationHostOptions {
     readonly collaborationModel?: CollaborationModuleContribution;
+    readonly contentLockPolicy?: ContentLockPolicy;
     readonly limits?: OoxmlPackageLimits;
     readonly pagination?: AutomationPaginationProvider;
 }

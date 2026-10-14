@@ -25,7 +25,8 @@
       "zoomMode",
       "revisionMarkup",
       "reviewDisplayMode",
-      "fieldResults"
+      "fieldResults",
+      "contentLockPolicy"
     ],
     "deferredInVue": {},
     "reactCallbacksAsVueEmits": {

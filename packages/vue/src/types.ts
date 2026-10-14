@@ -1,4 +1,5 @@
 import type {
+  ContentLockPolicy,
   FieldResultsMode,
   FontShapingOptions,
   RevisionMarkupOptions,
@@ -80,6 +81,13 @@ export interface DocxEditorProps {
    * with a collaboration module.
    */
   fieldResults?: FieldResultsMode;
+  /**
+   * Opt-in relaxation of content-control locks. With `allowFormattingInLockedContent: true`,
+   * readers can format `contentLocked` and `sdtContentLocked` controls while their text stays
+   * protected. Read once, when the editor is created: a later change in value is ignored,
+   * with a development warning.
+   */
+  contentLockPolicy?: ContentLockPolicy;
 
   /**
    * BCP-47 locale for regional date input and engine-generated labels. Defaults to en-US.

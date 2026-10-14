@@ -294,6 +294,7 @@
       "propsAddedInReact": [
         "author",
         "children",
+        "contentLockPolicy",
         "document",
         "fieldResults",
         "fontShaping",
@@ -510,6 +511,7 @@
         "author",
         "change",
         "children",
+        "contentLockPolicy",
         "document",
         "editorRef",
         "emit",

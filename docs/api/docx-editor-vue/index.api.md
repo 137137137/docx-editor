@@ -35,6 +35,7 @@ import { ContentControlListNavigation } from '@docx-editor.dev/core/editor';
 import { ContentControlSummary } from '@docx-editor.dev/core';
 import { ContentControlType } from '@docx-editor.dev/core';
 import { ContentControlWidgetSession } from '@docx-editor.dev/core/editor';
+import { ContentLockPolicy } from '@docx-editor.dev/core/editor';
 import { createDocumentRefresh } from '@docx-editor.dev/core/editor';
 import { createFontSource } from '@docx-editor.dev/core/editor';
 import { CSSProperties } from 'vue';
@@ -3743,6 +3744,7 @@ export interface DocxEditorProps {
     class?: string;
     // (undocumented)
     colorMode?: 'light' | 'dark' | 'system';
+    contentLockPolicy?: ContentLockPolicy;
     // (undocumented)
     contextMenu?: boolean | DocxEditorContextMenuProps;
     // (undocumented)
@@ -3920,6 +3922,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: StringConstructor;
     };
+    contentLockPolicy: {
+        default: undefined;
+        type: PropType<ContentLockPolicy>;
+    };
     document: {
         default: undefined;
         type: PropType<DocumentSource>;
@@ -3983,6 +3989,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: StringConstructor;
     };
+    contentLockPolicy: {
+        default: undefined;
+        type: PropType<ContentLockPolicy>;
+    };
     document: {
         default: undefined;
         type: PropType<DocumentSource>;
@@ -4041,6 +4051,7 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
     onRevisionMarkupChange?: ((_settings: ResolvedRevisionMarkup) => any) | undefined;
 }>, {
     author: string;
+    contentLockPolicy: ContentLockPolicy;
     document: DocumentSource;
     fieldResults: FieldResultsMode;
     fontShaping: _docx_editor_dev_core.FontShapingOptions | undefined;
@@ -4072,6 +4083,7 @@ export interface DocxEditorRootProps {
     author?: string;
     // (undocumented)
     children?: DocxEditorChildren;
+    contentLockPolicy?: ContentLockPolicy;
     // (undocumented)
     document?: DocumentSource;
     fieldResults?: FieldResultsMode;

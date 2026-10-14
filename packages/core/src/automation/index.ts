@@ -102,6 +102,8 @@ export {
   type ServerAutomationHostRejection,
   type ServerAutomationHostResult,
 } from './server-host.ts';
+// `ServerAutomationHostOptions.contentLockPolicy` takes it.
+export type { ContentLockPolicy } from '../store/package/ooxml-edit.ts';
 
 export {
   createAutomationPaginationProvider,

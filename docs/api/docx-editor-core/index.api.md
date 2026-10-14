@@ -962,6 +962,11 @@ export interface ContentControlSummary {
 export type ContentControlType = 'richText' | 'plainText' | 'checkbox' | 'dropdown' | 'comboBox' | 'date' | 'picture' | 'buildingBlockGallery' | 'repeatingSection';
 
 // @public
+export interface ContentLockPolicy {
+    readonly allowFormattingInLockedContent?: boolean;
+}
+
+// @public
 export type CountBucket = '0' | '1' | '2-9' | '10-99' | '100-999' | '1000+';
 
 // @public
@@ -1431,6 +1436,7 @@ export interface DocxEditorConfig {
     // (undocumented)
     author?: string;
     container?: HTMLElement;
+    contentLockPolicy?: ContentLockPolicy;
     document?: DocumentSource;
     fieldResults?: FieldResultsMode;
     fonts?: FontConfiguration | FontConfigurationFragment | FontResolver;

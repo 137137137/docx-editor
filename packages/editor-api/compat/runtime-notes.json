@@ -645,7 +645,7 @@
   },
   "Word.ContentControl#cannotEdit": {
     "status": "partial",
-    "notes": "Writes one lock axis without requiring a prior load. Assignments on the same proxy coalesce and preserve the other axis. Effective ancestor locks and bound controls remain enforced; this is not a protection bypass."
+    "notes": "Writes one lock axis without requiring a prior load. Assignments on the same proxy coalesce and preserve the other axis. Effective ancestor locks and bound controls remain enforced; this is not a protection bypass. A browser runtime over an editor created with contentLockPolicy.allowFormattingInLockedContent lets untracked font writes pass a content lock; text writes and tracked font writes still refuse. The server runtime does not take this option and refuses both, as Word does."
   },
   "Word.ContentControl#cannotDelete": {
     "status": "partial",
