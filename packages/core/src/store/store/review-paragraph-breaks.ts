@@ -9,6 +9,21 @@ import {
 } from './review-items.ts';
 import { sameEditingMoment } from './tree-op-tracked-adjacency.ts';
 import { isInertMarker } from './revision-marker-content.ts';
+import { keepsSubtreeMemo } from '../package/subtree-memo-policy.ts';
+
+/** Entries only for nodes `keepsSubtreeMemo` admits; leaf-only nodes answer from children. */
+const paragraphBelowCache = new WeakMap<OoxmlNode, boolean>();
+/** Whether a paragraph sits strictly below `node`, as in a text box inside a paragraph. */
+function holdsParagraphBelow(node: OoxmlNode): boolean {
+  if (node.kind === 'textValue') return false;
+  const cached = paragraphBelowCache.get(node);
+  if (cached !== undefined) return cached;
+  const result = node.children.some(
+    (child) => child.kind === 'paragraph' || holdsParagraphBelow(child)
+  );
+  if (keepsSubtreeMemo(node)) paragraphBelowCache.set(node, result);
+  return result;
+}
 
 export function mergeParagraphBreakEdits(
   items: readonly ReviewRevisionItem[],
@@ -29,7 +44,8 @@ export function mergeParagraphBreakEdits(
         if (previous !== null) following.set(previous, child.id);
         previous = child.id;
       } else if (!isInertMarker(child)) previous = null;
-      visit(child, depth + 1);
+      // A subtree with no paragraph below it adds no sibling pairs.
+      if (holdsParagraphBelow(child)) visit(child, depth + 1);
     }
   };
   visit(part.root, 0);
