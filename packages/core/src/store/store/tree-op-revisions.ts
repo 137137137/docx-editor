@@ -754,7 +754,11 @@ function rebuildNode(node: OoxmlNode, plan: RebuildPlan): OoxmlNode[] {
     }
   }
 
-  return [{ ...node, children: rebuildChildren(node.children, plan) } as OoxmlElement];
+  // An untouched subtree keeps its identity, so layout and digest caches still hit.
+  const children = rebuildChildren(node.children, plan);
+  const same =
+    children.length === node.children.length && children.every((c, i) => c === node.children[i]);
+  return [same ? node : ({ ...node, children } as OoxmlElement)];
 }
 
 export type RevisionOpAction = 'accept' | 'reject';
