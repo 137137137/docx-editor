@@ -1539,10 +1539,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     return surface?.activeReviewKey() ?? null;
   }
 
-  /**
-   * The queue plus geometry, re-derived per call and cheap because the session memoizes the
-   * queue itself per revision.
-   */
+  /** The queue plus geometry, per call; the session memoizes the queue per revision. */
   function reviewPlacements(query?: ReviewItemQuery): readonly ReviewItemPlacement[] {
     if (!reviewEnabled) return [];
     // Kind exclusion and default replacement pairing; see `review-replacement-pairs.ts`.
@@ -1565,10 +1562,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       const home = furnitureHomeOf(item);
       return home === null ? 1 : home.kind === 'header' ? 0 : 2;
     };
+    const geometries = items.map((item) => (anchors ? reviewItemGeometry(item, anchors) : null));
+    const locked = reviewChangesLocked(surface);
     const ranked = items.map((item, position) => ({
       item,
       position,
-      pageIndex: anchors ? (reviewItemGeometry(item, anchors)?.pageIndex ?? null) : null,
+      pageIndex: geometries[position]?.pageIndex ?? null,
       group: groupOf(item),
     }));
     ranked.sort((a, b) => {
@@ -1578,9 +1577,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       if (a.group !== b.group) return a.group - b.group;
       return a.position - b.position;
     });
-    return ranked.map(({ item }): ReviewItemPlacement => {
+    return ranked.map(({ item, position }): ReviewItemPlacement => {
       const key = reviewItemKey(item);
-      const geometry = anchors ? reviewItemGeometry(item, anchors) : null;
+      const geometry = geometries[position];
       const shared = {
         key,
         id: item.id,
@@ -1622,7 +1621,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
           text: withDisplayedHyphens(item.text),
           ...(item.replacedText ? { replacedText: withDisplayedHyphens(item.replacedText) } : {}),
           replyIds: item.replyIds,
-          readOnly: item.readOnly || reviewChangesLocked(surface),
+          readOnly: item.readOnly || locked,
           item,
         };
       }

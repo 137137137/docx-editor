@@ -1105,9 +1105,11 @@ export function openTreeSessionFromPackage(
           ];
           reviewContentCache = {
             revision,
+            // The memoized anchor check first: it answers by path after an edit, where the
+            // site list is rebuilt for the whole story.
             present: stories.some(
               (part) =>
-                collectRevisionSites(part).length > 0 || storyCarriesCommentAnchor(part.root)
+                storyCarriesCommentAnchor(part.root) || collectRevisionSites(part).length > 0
             ),
           };
         }
