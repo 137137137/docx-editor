@@ -376,7 +376,9 @@ function* layoutInModeSteps(
       },
       laid.layout
     );
-    const finalized = finalizePageFieldProjection(annotated);
+    const finalized = finalizePageFieldProjection(annotated, {
+      provisional: opts.bodyBlockLimit !== undefined,
+    });
     carryLayoutReadCaches(laid.layout, finalized);
     // The notes pass mints overflow sheets from this layout; publish what index they land at.
     registerOverflowPageShell(finalized, (_sectionAnchorIndex, documentPageIndex, box) =>

@@ -425,6 +425,8 @@ export function layoutMultiSectionDocument(
   layoutSection: LayoutSectionFn
 ): SemanticLayout {
   const { session, ...rest } = options;
+  // A prefix pass of a sliced open: page fields finalize again when the full pass runs.
+  const provisional = options.bodyBlockLimit !== undefined;
   const multi = ensureMultiState(session, multiSectionKeys(sections, options));
   // One retention pass over the UNION of every section's live keys. Retaining inside each
   // section's pass evicted every other section's entries — the multi-section break cache
@@ -761,7 +763,7 @@ export function layoutMultiSectionDocument(
         : {}),
     });
     retainOnce();
-    const finalized = finalizePageFieldProjection({ revision, pages: laid.pages });
+    const finalized = finalizePageFieldProjection({ revision, pages: laid.pages }, { provisional });
     registerOverflowPageShell(finalized, (_sectionAnchorIndex, documentPageIndex, box) =>
       laid.overflowShellAt(documentPageIndex, box)
     );
@@ -784,7 +786,7 @@ export function layoutMultiSectionDocument(
     return finalized;
   }
 
-  const freshlyFinalized = finalizePageFieldProjection({ revision, pages });
+  const freshlyFinalized = finalizePageFieldProjection({ revision, pages }, { provisional });
   let finalized = freshlyFinalized;
   const pageRefToken = pageRefAssignmentToken(pages);
 
@@ -812,7 +814,8 @@ export function layoutMultiSectionDocument(
     multi.spans = newSpans;
     multi.previousRemapped = remappedAll;
     multi.previousFinalized = finalized;
-    multi.previousPageCount = finalized.pages.length;
+    // A provisional page may still show an earlier page count; never restore it as final.
+    multi.previousPageCount = provisional ? -1 : finalized.pages.length;
     multi.previousPageRefToken = pageRefToken;
   }
 

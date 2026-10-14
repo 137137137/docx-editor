@@ -245,6 +245,80 @@ describe('a large open laid out in slices', () => {
     });
   }
 
+  /** Sections whose footer shows `Page N of M` through PAGE and NUMPAGES fields. */
+  function pageFooterDocx(sectionCount: number): Uint8Array {
+    const FOOTER_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer';
+    const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const sectPr = `<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/></w:sectPr>`;
+    const parts: string[] = [];
+    for (let section = 0; section < sectionCount; section += 1) {
+      for (let index = 0; index < 120; index += 1) {
+        parts.push(paragraph(`Section ${section} paragraph ${index}`));
+      }
+      if (section < sectionCount - 1) parts.push(`<w:p><w:pPr>${sectPr}</w:pPr></w:p>`);
+    }
+    const field = (instr: string) =>
+      `<w:fldSimple w:instr=" ${instr} "><w:r><w:t>1</w:t></w:r></w:fldSimple>`;
+    return zipSync({
+      '[Content_Types].xml': strToU8(
+        `<Types xmlns="${CT}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+          '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>'
+      ),
+      '_rels/.rels': strToU8(
+        `<Relationships xmlns="${REL}"><Relationship Id="rId1" Type="${OD}" Target="word/document.xml"/></Relationships>`
+      ),
+      'word/_rels/document.xml.rels': strToU8(
+        `<Relationships xmlns="${REL}"><Relationship Id="rIdF" Type="${FOOTER_REL}" Target="footer1.xml"/></Relationships>`
+      ),
+      'word/footer1.xml': strToU8(
+        `<w:ftr xmlns:w="${W}"><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>${field('PAGE')}` +
+          `<w:r><w:t xml:space="preserve"> of </w:t></w:r>${field('NUMPAGES')}</w:p></w:ftr>`
+      ),
+      'word/document.xml': strToU8(
+        `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${parts.join('')}${sectPr}</w:body></w:document>`
+      ),
+    });
+  }
+
+  function footerTexts(layout: SemanticLayout): string[] {
+    return layout.pages.map((page) =>
+      (page.footer?.fragments ?? [])
+        .flatMap((fragment) =>
+          fragment.kind === 'paragraph'
+            ? fragment.lines.flatMap((line) => line.spans.map((span) => span.text))
+            : []
+        )
+        .join('')
+    );
+  }
+
+  for (const sectionCount of [1, 3]) {
+    test(`page fields show the final page count after the slices (${sectionCount} sections)`, () => {
+      const bytes = pageFooterDocx(sectionCount);
+      const surface = slicedMount(bytes);
+      try {
+        let slices = 0;
+        while (!continueProgressiveOpen(surface, 0)) slices += 1;
+        expect(slices).toBeGreaterThanOrEqual(1);
+        const texts = footerTexts(surface.layout());
+        const total = texts.length;
+        expect(total).toBeGreaterThan(4);
+        expect(texts).toEqual(texts.map((_, index) => `Page ${index + 1} of ${total}`));
+        const container = document.createElement('div');
+        const unsliced = mountPaginatedSurface(container, bytes);
+        if (!unsliced.ok) throw new Error(unsliced.reason);
+        try {
+          expect(footerTexts(unsliced.surface.layout())).toEqual(texts);
+        } finally {
+          unsliced.surface.destroy();
+        }
+      } finally {
+        surface.destroy();
+      }
+    }, 60_000);
+  }
+
   test('a section the slices completed is not laid out again when the next one starts', () => {
     const bytes = breakSectionsDocx();
     const surface = slicedMount(bytes);

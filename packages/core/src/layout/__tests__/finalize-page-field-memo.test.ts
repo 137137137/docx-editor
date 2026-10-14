@@ -210,6 +210,31 @@ describe('finalizePageFieldProjection memo', () => {
     expect(footerText(shrunk, total - 1)).toBe(`Page ${total} of ${total}`);
   });
 
+  test('a provisional finalize keeps finalized pages; the next full finalize re-projects', () => {
+    const base = lay(partOf(filler(20) + tightSectPr), 1);
+    const total = base.pages.length;
+    const unfinalized = unfinalizedLayoutOf(base, fieldFooterRecord(footerPart()));
+    // A prefix of the open finalizes its first pages under a smaller count.
+    const prefix = finalizePageFieldProjection(
+      { revision: 1, pages: unfinalized.pages.slice(0, 2) },
+      { provisional: true }
+    );
+    expect(footerText(prefix, 0)).toBe('Page 1 of 2');
+
+    // The next prefix adds pages: the earlier ones keep their record, the new ones project.
+    const grown = finalizePageFieldProjection(unfinalized, { provisional: true });
+    expect(grown.pages[0]).toBe(prefix.pages[0]);
+    expect(grown.pages[1]).toBe(prefix.pages[1]);
+    expect(footerText(grown, total - 1)).toBe(`Page ${total} of ${total}`);
+
+    // The full pass that ends the open corrects every page that kept an earlier count.
+    const full = finalizePageFieldProjection(unfinalized);
+    for (let index = 0; index < total; index += 1) {
+      expect(footerText(full, index)).toBe(`Page ${index + 1} of ${total}`);
+    }
+    expect(full.pages[total - 1]).toBe(grown.pages[total - 1]);
+  });
+
   test('through the pipeline: a page-count edit updates NUMPAGES on an unchanged sheet', () => {
     // Two sections, because that is the path where reused sheets still carry projectors at
     // finalize time: the multi-section publish re-finalizes every pass, so a memo entry taken

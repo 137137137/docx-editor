@@ -718,10 +718,20 @@ const finalizedPageMemos = new WeakMap<
  * context — {@link PageFieldSource} when present (section restart + SECTIONPAGES + fmt), else the
  * physical 1-based index and the whole document as one section (empty-`pgNumType` behaviour).
  * Pages and stories with no page field are returned by identity.
+ *
+ * A `provisional` pass (one prefix of a sliced open) keeps a page it already finalized, even
+ * when the page count or the PAGEREF assignments have moved since. Every prefix adds pages, so
+ * without this each prefix re-projected the furniture of every earlier page, and a long
+ * document paid for its footers once per slice. The full pass that ends the open is not
+ * provisional: its count differs from every stale memo, so each page is projected once more.
  */
-export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLayout {
+export function finalizePageFieldProjection(
+  layout: SemanticLayout,
+  options?: { readonly provisional?: boolean }
+): SemanticLayout {
   const pageCount = layout.pages.length;
   if (pageCount === 0) return layout;
+  const provisional = options?.provisional === true;
 
   // PAGEREF values are a function of the WHOLE pagination, not of the page they paint on, so
   // the assignment token joins the per-page memo key: a page reused by identity while its
@@ -732,7 +742,10 @@ export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLay
   let changed = false;
   const pages = layout.pages.map((page) => {
     const memo = finalizedPageMemos.get(page);
-    if (memo && memo.pageCount === pageCount && memo.pageRefToken === pageRefToken) {
+    if (
+      memo &&
+      (provisional || (memo.pageCount === pageCount && memo.pageRefToken === pageRefToken))
+    ) {
       if (memo.result !== page) changed = true;
       return memo.result;
     }
