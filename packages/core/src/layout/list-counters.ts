@@ -101,6 +101,30 @@ function lvlRestartTriggerIlvl(targetIlvl: number, lvlRestart: number | undefine
   return triggerIlvl;
 }
 
+/** The counter values of one bag at one point of its walk. */
+export interface ListCounterSnapshot {
+  readonly counters: ReadonlyMap<string, readonly number[]>;
+  readonly initialized: ReadonlyMap<string, readonly boolean[]>;
+}
+
+const counterSnapshots = new WeakMap<
+  ListCounterState,
+  { save(): ListCounterSnapshot; load(snapshot: ListCounterSnapshot): void }
+>();
+
+/** @internal The values `state` holds now, for a later walk to resume from. */
+export function saveListCounters(state: ListCounterState): ListCounterSnapshot {
+  return counterSnapshots.get(state)!.save();
+}
+
+/** @internal Put `state` back to `snapshot`, taken from a bag over the same numbering. */
+export function loadListCounters(state: ListCounterState, snapshot: ListCounterSnapshot): void {
+  counterSnapshots.get(state)!.load(snapshot);
+}
+
+const copyArrays = <T>(source: ReadonlyMap<string, readonly T[]>): Map<string, T[]> =>
+  new Map([...source].map(([id, values]) => [id, values.slice()]));
+
 /**
  * Create a fresh counter bag for one story (body, or one header/footer part).
  */
@@ -131,7 +155,7 @@ export function createListCounterState(index: NumberingIndex): ListCounterState 
     return { counters, initialized, starts };
   };
 
-  return {
+  const state: ListCounterState = {
     advance(numId, ilvl) {
       if (ilvl < 0 || ilvl > 8) return null;
       if (numId.length === 0 || numId.length > 64) return null;
@@ -196,6 +220,17 @@ export function createListCounterState(index: NumberingIndex): ListCounterState 
       return advance;
     },
   };
+  counterSnapshots.set(state, {
+    save: () => ({ counters: copyArrays(byNumId), initialized: copyArrays(initializedByNumId) }),
+    load(snapshot) {
+      byNumId.clear();
+      for (const [id, values] of copyArrays(snapshot.counters)) byNumId.set(id, values);
+      initializedByNumId.clear();
+      for (const [id, values] of copyArrays(snapshot.initialized))
+        initializedByNumId.set(id, values);
+    },
+  });
+  return state;
 }
 
 /** Substitution-ready counter vectors, keyed on the advance results that produced them. */

@@ -1,6 +1,6 @@
 import { registerListGeometry, rememberListItemShape } from './list-marker-reuse.ts';
 import { walkStoryParagraphs } from './story-paragraph-walk.ts';
-import { readTwipsMeasure } from '@docx-editor.dev/core/store';
+import { mergeListIndent } from './list-indent-merge.ts';
 import { styleSeparatorMembersOf } from './style-separator-group.ts';
 import { markerMeasureToken } from './list-marker-measure-key.ts';
 import {
@@ -10,20 +10,21 @@ import {
 } from './numbering-paragraph-properties.ts';
 // Resolve numbering into marker text, indentation, and font inputs for one story walk.
 
-import { paragraphIsRtl } from './rtl-paragraph.ts';
 import type { OoxmlElement, OoxmlNode } from '@docx-editor.dev/core/store';
 import type { OoxmlProperty } from '../store/store/tree-op-types.ts';
 import { framedTokenJoin } from './layout-cache.ts';
 import {
   createListCounterState,
   expandCountersOf,
+  loadListCounters,
   numberLevelsOf,
+  saveListCounters,
   type FullContextNumberSource,
+  type ListCounterSnapshot,
 } from './list-counters.ts';
 import { resolvePictureBullet, type ResolvedPictureBullet } from './numbering-picture-bullet.ts';
 import {
   EMPTY_NUMBERING_INDEX,
-  MAX_LEVEL_INDENT_PT,
   resolveNumberingStyleLinks,
   type ListMarkerAlign,
   type ListSuffix,
@@ -41,7 +42,7 @@ import { mapSymbolPuaText, mapSymbolBulletText } from './symbol-encoding.ts';
 import { markerSymbolFontAvailability } from './marker-symbol-font.ts';
 import type { TextMeasurer } from './semantic-records.ts';
 import { resolveRunStyle, type ResolvedRunStyle } from './run-style.ts';
-import { paragraphIndent, propertiesOf } from './paragraph-flow.ts';
+import { propertiesOf } from './paragraph-flow.ts';
 import { numberingLevelTiers } from './numbering-level-tier.ts';
 import { DEPENDENCY_KEY_IDS } from '../store/registry/frozen-ids.ts';
 import type { LayoutScope } from './layout-scheduler.ts';
@@ -293,138 +294,7 @@ export function withNumberingStyleLinks(
   return linked;
 }
 
-/** Bound a file-derived indent both ways — negative is legal, unbounded is not. */
-function clampIndentPt(pt: number): number {
-  if (!Number.isFinite(pt)) return 0;
-  if (pt > MAX_LEVEL_INDENT_PT) return MAX_LEVEL_INDENT_PT;
-  if (pt < -MAX_LEVEL_INDENT_PT) return -MAX_LEVEL_INDENT_PT;
-  return pt;
-}
-
-/** The first-line slot as one `w:ind` states it, or null when it states neither spelling. */
-function firstLineOffsetOf(
-  props: readonly OoxmlProperty[]
-): { hanging: number; firstLine: number } | null {
-  let found: { hanging: number; firstLine: number } | null = null;
-  for (const property of props) {
-    if (property.localName !== 'ind') continue;
-    const h = property.attributes?.hanging;
-    const f = property.attributes?.firstLine;
-    // Mutually exclusive (§17.3.1.10, §17.3.1.12): one signed first-line offset, two spellings,
-    // so an `w:ind` stating either replaces both. `w:firstLine` is read SIGNED because Word
-    // keeps a negative value as a hang. A bare `w:left` states neither and leaves them alone.
-    if (h === undefined && f === undefined) continue;
-    const hanging = readTwipsMeasure(h);
-    const firstLine = readTwipsMeasure(f);
-    found = {
-      hanging: hanging !== null && hanging >= 0 ? clampIndentPt(hanging / 20) : 0,
-      firstLine: firstLine !== null ? clampIndentPt(firstLine / 20) : 0,
-    };
-  }
-  return found;
-}
-
-/** Whether any `w:ind` in the list states the leading indent (`w:left` or `w:start`). */
-function statesLeading(props: readonly OoxmlProperty[]): boolean {
-  return props.some(
-    (property) =>
-      property.localName === 'ind' &&
-      (property.attributes?.left !== undefined || property.attributes?.start !== undefined)
-  );
-}
-
-/** Whether any `w:ind` in the list states the trailing indent (`w:right` or `w:end`). */
-function statesTrailing(props: readonly OoxmlProperty[]): boolean {
-  return props.some(
-    (property) =>
-      property.localName === 'ind' &&
-      (property.attributes?.right !== undefined || property.attributes?.end !== undefined)
-  );
-}
-
-/** Whether any `w:ind` in the list states the physical left side in this direction. */
-function statesLeft(props: readonly OoxmlProperty[], rtl: boolean): boolean {
-  return rtl ? statesTrailing(props) : statesLeading(props);
-}
-
-function statesRight(props: readonly OoxmlProperty[], rtl: boolean): boolean {
-  return rtl ? statesLeading(props) : statesTrailing(props);
-}
-
-/**
- * The effective indent of a list paragraph: `inherited`, then the numbering LEVEL, then
- * `direct`, per attribute.
- *
- * A level's `w:pPr/w:ind` applies per attribute between the two tiers, and the ordering
- * matters on real documents. A converted agreement numbers its `(a)` items with a level
- * stating `left=1512 hanging=738` under a `ListParagraph` style stating
- * `left=775 hanging=624`, and states only `hanging="737"` on the paragraph itself. Reading
- * the flattened cascade as "the paragraph's indent" gave the STYLE's 775 to a level that had
- * overridden it, so every lettered sub-item hung a full indent step to the left of where
- * Word puts it.
- *
- * `inherited` is what the level outranks and `direct` is what outranks it. When the
- * paragraph's own `w:pPr` states a `w:numPr`, these are the style chain (after the document
- * defaults) and that `w:pPr`. Otherwise the level sits directly below the nearest style that
- * states a `w:numPr`: that style, the styles based on it and the paragraph's own `w:pPr` go
- * in `direct`, and the defaults and that style's bases go in `inherited`.
- */
-export function mergeListIndent(
-  levelIndent: NumberingLevelIndent,
-  inherited: readonly OoxmlProperty[],
-  direct: readonly OoxmlProperty[] = []
-): NumberingLevelIndent {
-  const rtl = paragraphIsRtl([...inherited, ...direct]);
-  const direction: OoxmlProperty = { localName: 'bidi', attributes: { val: rtl ? '1' : '0' } };
-  // A level's `left`/`right` are its leading and trailing indents (`w:left` or `w:start`,
-  // `w:right` or `w:end`); a right-to-left paragraph puts the leading one on the right.
-  if (rtl) {
-    levelIndent = {
-      ...levelIndent,
-      left: levelIndent.right,
-      right: levelIndent.left,
-      ...(levelIndent.stated
-        ? {
-            stated: {
-              ...levelIndent.stated,
-              left: levelIndent.stated.right,
-              right: levelIndent.stated.left,
-            },
-          }
-        : {}),
-    };
-  }
-  // A level built by hand (a unit test, not a file) carries no presence record; it then
-  // states nothing and the style still wins, which is the behaviour those callers had.
-  const levelStates = levelIndent.stated ?? {
-    left: false,
-    right: false,
-    firstLineOffset: false,
-  };
-  const inheritedIndent = paragraphIndent([...inherited, direction]);
-  const directIndent = paragraphIndent([...direct, direction]);
-  const levelOffset = { hanging: levelIndent.hanging, firstLine: levelIndent.firstLine };
-
-  const left = statesLeft(direct, rtl)
-    ? directIndent.left
-    : levelStates.left
-      ? levelIndent.left
-      : statesLeft(inherited, rtl)
-        ? inheritedIndent.left
-        : levelIndent.left;
-  const right = statesRight(direct, rtl)
-    ? directIndent.right
-    : levelStates.right
-      ? levelIndent.right
-      : statesRight(inherited, rtl)
-        ? inheritedIndent.right
-        : levelIndent.right;
-  const firstLineOffset =
-    firstLineOffsetOf(direct) ??
-    (levelStates.firstLineOffset ? levelOffset : (firstLineOffsetOf(inherited) ?? levelOffset));
-
-  return { left, right, ...firstLineOffset };
-}
+export { mergeListIndent } from './list-indent-merge.ts';
 
 /**
  * Collect paragraphs of a block list in document order, descending into tables.
@@ -508,14 +378,60 @@ export function resolveStoryListItems(
   styleCascade: StyleCascadeTable | undefined,
   isFontAvailable?: (family: string) => boolean
 ): ReadonlyMap<string, ResolvedListItem> {
-  const map = new Map<string, ResolvedListItem>();
-  if (index.nums.size === 0) return map;
+  if (index.nums.size === 0) return new Map();
+  return resolveListSequence(walkStoryParagraphs(blocks), index, styleCascade, isFontAvailable)
+    .items;
+}
 
+/** Numbered paragraphs between two saved counter states of a {@link ListSequenceResolve}. */
+const LIST_RESUME_STRIDE = 256;
+
+/** One list walk, with the counter state saved every {@link LIST_RESUME_STRIDE} paragraphs. */
+interface ListSequenceResolve {
+  readonly items: ReadonlyMap<string, ResolvedListItem>;
+  /** `states[k]` is the counter state before paragraph `k * LIST_RESUME_STRIDE`. */
+  readonly states: readonly ListCounterSnapshot[];
+}
+
+/**
+ * The list walk over `paragraphs` in story order. With `resume`, the walk starts from the last
+ * saved state at or before paragraph `from`, and takes the items before it from the previous
+ * walk: a number depends only on the paragraphs before it, and those are the same.
+ */
+function resolveListSequence(
+  paragraphs: readonly OoxmlElement[],
+  index: NumberingIndex,
+  styleCascade: StyleCascadeTable | undefined,
+  isFontAvailable: ((family: string) => boolean) | undefined,
+  resume?: { readonly from: number; readonly previous: ListSequenceResolve }
+): ListSequenceResolve {
+  const map = new Map<string, ResolvedListItem>();
   // A definition that delegates through `w:numStyleLink` has no levels of its own; resolving
   // the link here is what keeps those paragraphs from losing their markers entirely.
   const linked = withNumberingStyleLinks(index, styleCascade);
   const counters = createListCounterState(linked);
-  for (const paragraph of walkStoryParagraphs(blocks)) {
+  const states: ListCounterSnapshot[] = [];
+  let start = 0;
+  if (resume) {
+    const checkpoint = Math.min(
+      Math.floor(resume.from / LIST_RESUME_STRIDE),
+      resume.previous.states.length - 1
+    );
+    if (checkpoint > 0) {
+      start = checkpoint * LIST_RESUME_STRIDE;
+      states.push(...resume.previous.states.slice(0, checkpoint + 1));
+      loadListCounters(counters, resume.previous.states[checkpoint]!);
+      for (let position = 0; position < start; position += 1) {
+        const id = paragraphs[position]!.id;
+        const item = resume.previous.items.get(id);
+        if (item) map.set(id, item);
+      }
+    }
+  }
+  for (let position = start; position < paragraphs.length; position += 1) {
+    if (position % LIST_RESUME_STRIDE === 0 && states.length === position / LIST_RESUME_STRIDE)
+      states.push(saveListCounters(counters));
+    const paragraph = paragraphs[position]!;
     const prelude = paragraphListPrelude(paragraph, styleCascade);
     const numPr = prelude.numPr;
     if (!numPr) continue;
@@ -623,7 +539,7 @@ export function resolveStoryListItems(
     });
     map.set(paragraph.id, item);
   }
-  return map;
+  return { items: map, states };
 }
 
 interface ResolvedListItemsMemoEntry {
@@ -861,22 +777,28 @@ interface LastStoryResolve {
   readonly blocks: readonly OoxmlElement[];
   readonly numberedByBlock: readonly (readonly OoxmlElement[])[];
   readonly listItems: ReadonlyMap<string, ResolvedListItem>;
+  /** The walk behind `listItems` and the numbered paragraphs it walked, for a resume. */
+  readonly walk?: {
+    readonly paragraphs: readonly OoxmlElement[];
+    readonly resolve: ListSequenceResolve;
+  };
 }
 const lastStoryResolvesByAnchor = new WeakMap<OoxmlElement, LastStoryResolve>();
 const lastStoryResolvesBySession = new WeakMap<LayoutSession, LastStoryResolve>();
 
+function sameNumberedParagraph(paragraph: OoxmlElement, previous: OoxmlElement | undefined) {
+  if (!previous || paragraph.id !== previous.id) return false;
+  const properties = paragraph.children.find((child) => child.kind === 'paragraphProperties');
+  const previousProperties = previous.children.find(
+    (child) => child.kind === 'paragraphProperties'
+  );
+  return properties === previousProperties;
+}
+
 function sameNumberingSequence(a: readonly OoxmlElement[], b: readonly OoxmlElement[]): boolean {
   return (
     a.length === b.length &&
-    a.every((paragraph, index) => {
-      const previous = b[index];
-      if (!previous || paragraph.id !== previous.id) return false;
-      const properties = paragraph.children.find((child) => child.kind === 'paragraphProperties');
-      const previousProperties = previous.children.find(
-        (child) => child.kind === 'paragraphProperties'
-      );
-      return properties === previousProperties;
-    })
+    a.every((paragraph, index) => sameNumberedParagraph(paragraph, b[index]))
   );
 }
 
@@ -936,8 +858,41 @@ function resolveStoryListItemsStable(
     }
     return last.listItems;
   }
-  const listItems = resolveStoryListItems(blocks, linkedIndex, styleCascade, isFontAvailable);
-  const next = { rawIndex, styleCascade, isFontAvailable, blocks, numberedByBlock, listItems };
+  // Resume from the first numbered paragraph that changed: an Enter in a long numbered
+  // document otherwise renumbered every list item before it as well.
+  const paragraphs = numberedByBlock.flat();
+  const previous =
+    last?.walk &&
+    last.rawIndex === rawIndex &&
+    last.styleCascade === styleCascade &&
+    last.isFontAvailable === isFontAvailable
+      ? last.walk
+      : undefined;
+  let from = 0;
+  while (
+    previous &&
+    from < paragraphs.length &&
+    sameNumberedParagraph(paragraphs[from]!, previous.paragraphs[from])
+  )
+    from += 1;
+  const resolve = resolveListSequence(
+    paragraphs,
+    linkedIndex,
+    styleCascade,
+    isFontAvailable,
+    previous ? { from, previous: previous.resolve } : undefined
+  );
+  const listItems = resolve.items;
+  const walk = { paragraphs, resolve };
+  const next = {
+    rawIndex,
+    styleCascade,
+    isFontAvailable,
+    blocks,
+    numberedByBlock,
+    listItems,
+    walk,
+  };
   if (memoOwner) lastStoryResolvesBySession.set(memoOwner, next);
   else {
     if (first) lastStoryResolvesByAnchor.set(first, next);
