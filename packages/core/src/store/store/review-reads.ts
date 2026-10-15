@@ -28,6 +28,7 @@ import {
 import { locateSites } from './review-site-locations.ts';
 import { createRecentRootCache } from './recent-root-cache.ts';
 import { withStableCards } from './review-item-identity.ts';
+import { rememberRevisionRoot, unchangedRevisionItems } from './review-items-reuse.ts';
 import { deepParagraphOrderOfPart } from './review-paragraph-order.ts';
 // The vocabulary this derivation speaks — the item shapes and their pure helpers — lives in
 // `review-items.ts`, where the binding and layout lanes can reach it too.
@@ -117,13 +118,26 @@ function revisionItemsOfWith(
     // The name rides along because the items embed it (`ranges[*].partName`): a root is
     // the cache key, and serving one part's items to another part that shares the root
     // under a different name would stamp every range with the wrong part.
-    if (cached && cached.name === part.name) return cached.items;
+    if (cached && cached.name === part.name) {
+      rememberRevisionRoot(part);
+      return cached.items;
+    }
+    const unchanged = unchangedRevisionItems(part, (root) => {
+      const previous = revisionItemsCache.get(root);
+      return previous?.name === part.name ? previous.items : undefined;
+    });
+    if (unchanged) {
+      revisionItemsCache.set(part.root, { name: part.name, items: unchanged });
+      rememberRevisionRoot(part);
+      return unchanged;
+    }
   }
   const computed = computeRevisionItemsOf(part, dependencies);
   const items =
     cacheable && dependencies.retainRevisionItems ? withStableCards(part.name, computed) : computed;
   if (cacheable && dependencies.retainRevisionItems) {
     revisionItemsCache.set(part.root, { name: part.name, items });
+    rememberRevisionRoot(part);
   }
   return items;
 }

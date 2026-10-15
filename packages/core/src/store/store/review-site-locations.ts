@@ -110,16 +110,14 @@ function locateWithin(
 }
 
 /**
- * `previous` (the index of `previousRoot`) moved to `root`, or null when the two roots differ
- * in more than some body blocks. The blocks outside the changed middle of the body are the
- * same objects, so their entries are the same; the changed blocks leave and enter whole.
+ * The body blocks that left and arrived between two versions of a story root, or null when
+ * the roots differ outside their body, or in more than {@link MAX_PATCHED_BLOCKS} blocks.
+ * Every other block is the same object in both.
  */
-function patchedLocations(
+export function changedBodyBlocks(
   previousRoot: OoxmlNode,
-  previous: ReadonlyMap<string, SiteLocation>,
-  root: OoxmlNode,
-  retainAcrossReads: boolean
-): Map<string, SiteLocation> | null {
+  root: OoxmlNode
+): { readonly removed: readonly OoxmlNode[]; readonly added: readonly OoxmlNode[] } | null {
   if (previousRoot.kind === 'textValue' || root.kind === 'textValue') return null;
   const before = previousRoot.children;
   const after = root.children;
@@ -148,23 +146,45 @@ function patchedLocations(
     oldEnd -= 1;
     newEnd -= 1;
   }
-  // Several edits since the last index sit apart, so the middle can be long while few blocks
-  // in it changed. Keys are unique to their block, so which blocks left and which arrived is
-  // all that matters, not where.
+  // Several edits since the last read sit apart, so the middle can be long while few blocks
+  // in it changed. Which blocks left and which arrived is all a caller needs, not where.
   const oldMiddle = new Set(oldBlocks.slice(start, oldEnd));
   const newMiddle = new Set(newBlocks.slice(start, newEnd));
   const removed = [...oldMiddle].filter((block) => !newMiddle.has(block));
   const added = [...newMiddle].filter((block) => !oldMiddle.has(block));
   if (removed.length + added.length > MAX_PATCHED_BLOCKS) return null;
+  return { removed, added };
+}
+
+/**
+ * `previous` (the index of `previousRoot`) moved to `root`, or null when the two roots differ
+ * in more than some body blocks. Keys are unique to their block, so the changed blocks leave
+ * and enter whole.
+ */
+function patchedLocations(
+  previousRoot: OoxmlNode,
+  previous: ReadonlyMap<string, SiteLocation>,
+  root: OoxmlNode,
+  retainAcrossReads: boolean
+): Map<string, SiteLocation> | null {
+  const changed = changedBodyBlocks(previousRoot, root);
+  if (!changed) return null;
   const located = new Map(previous);
   // Root depth 0, body 1, its blocks 2: the depth guard counts the same as a full walk.
-  for (const block of removed) {
+  for (const block of changed.removed) {
     const gone = new Map<string, SiteLocation>();
     locateWithin(block, 2, gone, retainAcrossReads);
     for (const key of gone.keys()) located.delete(key);
   }
-  for (const block of added) locateWithin(block, 2, located, retainAcrossReads);
+  for (const block of changed.added) locateWithin(block, 2, located, retainAcrossReads);
   return located;
+}
+
+/** The index already built for `part`'s root, without building one. */
+export function locatedSitesIfKnown(
+  part: OoxmlPart
+): ReadonlyMap<string, SiteLocation> | undefined {
+  return locatedSitesCaches[currentFieldResultsMode()].get(part.root);
 }
 
 function walkLocations(
