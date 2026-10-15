@@ -72,6 +72,7 @@ import {
   anchorFromRevisionElement,
   balloonBox,
   remeasureBalloonAnchor,
+  markOpenBalloonSites,
   balloonServesRevisionKind,
   findPaintedRevisionElement,
   matchBalloonReviewItem,
@@ -607,6 +608,28 @@ export const ReviewBalloon = markPart(
             win.cancelAnimationFrame(frame);
             observer?.disconnect();
           });
+        },
+        { flush: 'post' }
+      );
+
+      // The sites of the open change carry a mark the stylesheet tints, again after each
+      // repaint.
+      watch(
+        [
+          () => anchor.value?.revisionId,
+          () => anchor.value?.author,
+          () => anchor.value?.date,
+          () => anchor.value?.formattingKind,
+          layoutTick,
+        ],
+        (_next, _previous, onCleanup) => {
+          const current = anchor.value;
+          if (!current) return;
+          const host = instance?.proxy?.$el as HTMLElement | undefined;
+          const railEl = host?.closest('.docx-review') as HTMLElement | null;
+          const scroller = (railEl?.closest('.docx-editor__scroll-container') ??
+            railEl?.offsetParent) as HTMLElement | null;
+          if (scroller) onCleanup(markOpenBalloonSites(scroller, current));
         },
         { flush: 'post' }
       );

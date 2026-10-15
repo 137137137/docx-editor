@@ -147,6 +147,27 @@ export function remeasureBalloonAnchor(
 }
 
 /**
+ * Mark every painted site of the change an open balloon decides, so the page shows which text
+ * the card is about. A paragraph-property change paints no characters of its own, so the
+ * stylesheet tints its paragraph from this mark; a paragraph across pages has a site per page.
+ * Answers a function that removes the marks.
+ */
+export function markOpenBalloonSites(scroller: HTMLElement, anchor: BalloonAnchor): () => void {
+  const marked: HTMLElement[] = [];
+  for (const node of scroller.querySelectorAll('[data-revision-id]')) {
+    if (!isHTMLElementNode(node) || node.dataset.revisionId !== anchor.revisionId) continue;
+    if ((node.dataset.reviewAuthor ?? '') !== anchor.author) continue;
+    if (node.dataset.formattingKind !== anchor.formattingKind) continue;
+    if (anchor.date !== undefined && node.dataset.revisionDate !== anchor.date) continue;
+    node.dataset.reviewBalloonOpen = '';
+    marked.push(node);
+  }
+  return () => {
+    for (const node of marked) delete node.dataset.reviewBalloonOpen;
+  };
+}
+
+/**
  * Whether the page balloon serves this revision kind. Format and structural changes always
  * have it. With `revisionsIn: 'balloons'` every tracked change does, because the rail lists
  * comments only.
