@@ -619,3 +619,35 @@ describe('joining paragraphs moves the mark, not just the section break', () => 
     expect(xml(joined.part)).toContain('<w:del');
   });
 });
+
+describe('untouched content keeps its identity', () => {
+  test('resolving one change shares every paragraph, table and run it did not touch', () => {
+    const table =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+      `<w:tr><w:tc><w:p>${run('cell')}</w:p></w:tc></w:tr></w:tbl>`;
+    const part = load(
+      `<w:p>${run('before')}</w:p>${table}` +
+        `<w:p>${run('keep ')}${wrap('ins', QA, run('new'))}${run(' tail')}</w:p>` +
+        `<w:p>${run('after')}${wrap('del', DEV, delRun('gone'))}</w:p>`
+    );
+    const body = part.root.children[0]!;
+    if (body.kind === 'textValue') throw new Error('expected a body');
+    for (const action of [accept, reject]) {
+      const next = apply(part, action(QA));
+      const nextBody = next.root.children[0]!;
+      if (nextBody.kind === 'textValue') throw new Error('expected a body');
+      // The first paragraph, the table, and the paragraph holding the other author's change.
+      expect(nextBody.children[0]).toBe(body.children[0]);
+      expect(nextBody.children[1]).toBe(body.children[1]);
+      expect(nextBody.children[3]).toBe(body.children[3]);
+      // The resolved paragraph is new, but its untouched leading run is shared.
+      const resolved = nextBody.children[2]!;
+      const original = body.children[2]!;
+      if (resolved.kind === 'textValue' || original.kind === 'textValue') {
+        throw new Error('expected paragraphs');
+      }
+      expect(resolved).not.toBe(original);
+      expect(resolved.children[0]).toBe(original.children[0]);
+    }
+  });
+});

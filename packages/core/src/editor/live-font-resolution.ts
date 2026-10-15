@@ -44,9 +44,11 @@ export function createLiveFontResolution(
     if (initial) current = { generation: state.generation, requested: new Set(), running: false };
     const active = current!;
     if (active.running || (!initial && !state.dynamic)) return;
-    const families = state.dynamic
-      ? state.families().filter((family) => !active.requested.has(family.toLowerCase()))
-      : [];
+    // A fixed configuration asks nothing of a resolver, but the document's substitution plan
+    // still needs its families: without them no family the configuration lacks falls back.
+    const families = state
+      .families()
+      .filter((family) => !active.requested.has(family.toLowerCase()));
     if (!initial && families.length === 0) return;
     for (const family of families) active.requested.add(family.toLowerCase());
     active.running = true;

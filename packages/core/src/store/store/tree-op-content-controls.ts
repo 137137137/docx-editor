@@ -66,6 +66,7 @@ import {
   type ParagraphOffsetIndex,
 } from './tree-op-segments.ts';
 import { scopedRevisionRoot } from './tree-op-revision-scope.ts';
+import { holdsRevisionContainer, REVISION_LOCAL_NAMES } from './revision-container-presence.ts';
 import { attributionTargets } from './revision-author-change.ts';
 import { revisionStructuralReach, type RevisionOpAction } from './tree-op-revisions.ts';
 import type {
@@ -899,6 +900,7 @@ function resolveRevisionReach(
   let seen = 0;
   const walk = (node: OoxmlNode, controls: readonly OoxmlNode[]): void => {
     if (node.kind === 'textValue' || seen > MAX_REVISION_NODES) return;
+    if (!holdsRevisionContainer(node)) return;
     if (isRevisionNode(node, revision, localName, siteNodeIdSet)) {
       seen += 1;
       if (controls.length === 0) unprotected.push(node.id);
@@ -972,25 +974,6 @@ function resolveRevisionReach(
 
 /** Bounds the revision scan the way every other file-driven walk in this module is bounded. */
 const MAX_REVISION_NODES = 50_000;
-
-/** Revision containers whose resolution rewrites the content they wrap. */
-const REVISION_LOCAL_NAMES: ReadonlySet<string> = new Set([
-  'ins',
-  'del',
-  'moveFrom',
-  'moveTo',
-  'rPrChange',
-  'pPrChange',
-  'tblPrChange',
-  'tblPrExChange',
-  'trPrChange',
-  'tcPrChange',
-  'sectPrChange',
-  'tblGridChange',
-  'cellIns',
-  'cellDel',
-  'cellMerge',
-]);
 
 function isRevisionNode(
   node: OoxmlNode,

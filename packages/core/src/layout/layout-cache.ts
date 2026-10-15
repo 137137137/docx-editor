@@ -626,7 +626,10 @@ export interface ParagraphLayoutCacheBudget {
  */
 export const DEFAULT_PARAGRAPH_CACHE_BUDGET: ParagraphLayoutCacheBudget = Object.freeze({
   softBytes: 16 * 1024 * 1024,
-  hardBytes: 128 * 1024 * 1024,
+  // The estimate runs several times the retained heap. At 128 MiB a 1,400-page document's
+  // working set no longer fit, so each footnote-reserve round broke thousands of evicted
+  // paragraphs again; keeping that document whole cost under 20 MB of real heap.
+  hardBytes: 512 * 1024 * 1024,
 });
 
 /**

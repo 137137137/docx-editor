@@ -106,6 +106,24 @@ export interface RevisionFilter {
   readonly cacheKey: string;
 }
 
+/**
+ * Whether a filter changes which revisions a projection keeps.
+ *
+ * The editor always hands layout a filter, because the filter also carries viewer settings
+ * such as revision markup. One that hides no author and excludes no change keeps every
+ * revision, so an All Markup projection takes the same path as no filter at all. A
+ * projection reads markup settings through `revisionMarkup` itself, never through this test.
+ */
+export function revisionFilterSelects(filter: RevisionFilter | undefined): boolean {
+  return (
+    filter !== undefined &&
+    (filter.hiddenAuthors.size > 0 ||
+      filter.includes !== undefined ||
+      filter.includesNode !== undefined ||
+      filter.excludedNodeMode !== undefined)
+  );
+}
+
 /** The plain-resolved policy with nobody hidden, for a review view that filters no one. */
 const PLAIN_RESOLVED_FILTER: RevisionAuthorFilter = Object.freeze({
   hiddenAuthors: Object.freeze(new Set<string>()) as ReadonlySet<string>,
@@ -409,7 +427,8 @@ export function revisionsVisible(
   mode: RevisionDisplayMode,
   authorFilter?: RevisionAuthorFilter
 ): boolean {
-  if (revisions.length === 0 || (mode === 'all-markup' && !authorFilter)) return true;
+  if (revisions.length === 0 || (mode === 'all-markup' && !revisionFilterSelects(authorFilter)))
+    return true;
   for (const revision of revisions) {
     const revisionMode = authorFilter ? revisionProjectionMode(authorFilter, revision, mode) : mode;
     if (revisionMode === 'all-markup') continue;
@@ -433,7 +452,7 @@ export function projectedRevisions(
   mode: RevisionDisplayMode,
   authorFilter?: RevisionAuthorFilter
 ): readonly RevisionAttribution[] | null {
-  if (!authorFilter && mode === 'all-markup') return revisions;
+  if (mode === 'all-markup' && !revisionFilterSelects(authorFilter)) return revisions;
   if (!revisionsVisible(revisions, mode, authorFilter)) return null;
   // A review view that resolves shows the document as accepting (or rejecting) every change
   // would leave it: content it keeps is ordinary text, so it carries no markup to paint.

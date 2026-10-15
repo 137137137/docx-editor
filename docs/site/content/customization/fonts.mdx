@@ -156,6 +156,27 @@ const fonts = useFonts(packagedFonts(), googleFonts({ allow: ['Lato', 'Arvo', 'P
 
 The toolbar font picker applies the selected family to selected text. Google Fonts download when the editor needs their font bytes.
 
+## Render Chinese, Japanese, and Korean text
+
+Documents often name East Asian fonts such as SimSun or MS Mincho, which most hosts do not have. The `@docx-editor.dev/fonts-cjk` package supplies Noto Sans CJK JP for them. Its `cjkFonts()` resolver points every face of those families at that font, including their localized names.
+
+The font file is about 16 MB. The resolver downloads it from where your bundler emits it, and only when a document names one of these families. No request goes to a third party.
+
+Put `cjkFonts()` after the origins whose fonts you prefer:
+
+```tsx
+import { useFonts } from '@docx-editor.dev/react';
+import { packagedFonts } from '@docx-editor.dev/fonts';
+import { googleFonts } from '@docx-editor.dev/fonts/google';
+import { cjkFonts } from '@docx-editor.dev/fonts-cjk/browser';
+
+export function useDocumentFonts() {
+  return useFonts(packagedFonts(), googleFonts(), cjkFonts());
+}
+```
+
+The font has one weight and one style. Substituting it can change glyph forms, line breaks, and page counts. The `CJK_SUBSTITUTED_FAMILIES` and `LOCALIZED_CJK_FAMILIES` exports list the families it covers. Use the `onFailure` option to report a failed download; the document then opens without the font.
+
 ## React and Vue reference
 
 Pass your DOCX bytes and loaded fonts to this component. The preview uses a fictional contract.

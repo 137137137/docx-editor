@@ -16,6 +16,7 @@ import type { RevisionSite } from './tree-op-revisions.ts';
 import { textUnder } from './review-text.ts';
 import { groupTableFormatting } from './review-table-format-groups.ts';
 import { groupAdjacentRunFormatting } from './review-run-format-groups.ts';
+import { keepsSubtreeMemo } from '../package/subtree-memo-policy.ts';
 
 type Direction = 'ins' | 'del';
 interface RowGroup {
@@ -30,6 +31,18 @@ const isW = (node: OoxmlNode, name: string): boolean =>
   node.kind !== 'textValue' && node.namespaceUri === WML_NAMESPACE_URI && node.localName === name;
 const attribute = (node: OoxmlElement, name: string) =>
   node.attributes.find((a) => a.namespaceUri === WML_NAMESPACE_URI && a.localName === name)?.value;
+
+/** Entries only for nodes `keepsSubtreeMemo` admits; leaf-only nodes answer from children. */
+const tableStructureCache = new WeakMap<OoxmlNode, boolean>();
+/** Whether a `w:tbl` or `w:tr` sits at or below `node`. The row walks skip every other subtree. */
+function holdsTableStructure(node: OoxmlNode): boolean {
+  if (node.kind === 'textValue') return false;
+  const cached = tableStructureCache.get(node);
+  if (cached !== undefined) return cached;
+  const result = isW(node, 'tbl') || isW(node, 'tr') || node.children.some(holdsTableStructure);
+  if (keepsSubtreeMemo(node)) tableStructureCache.set(node, result);
+  return result;
+}
 
 // Word-created nested rows include tracked cell paragraph marks. Those marks
 // distinguish a complete row decision from a standalone nested row-end marker.
@@ -126,7 +139,7 @@ function groupRowRevisions(
     for (const child of node.children) collect(child, group);
   };
   const walk = (node: OoxmlNode, tableDepth = 0): void => {
-    if (node.kind === 'textValue') return;
+    if (node.kind === 'textValue' || !holdsTableStructure(node)) return;
     if (isW(node, 'tr') && tableDepth > 1) {
       const properties = node.children.find((child) => isW(child, 'trPr'));
       if (properties && properties.kind !== 'textValue') {
@@ -186,6 +199,9 @@ function groupRowRevisions(
   const trackedOuterRows = new Set(groups.flatMap((group) => group.rows.map((row) => row.id)));
   const nestedFlow = (node: OoxmlNode, tableDepth = 0, inTrackedOuterRow = false): void => {
     if (node.kind === 'textValue') return;
+    // Only a nested row sets `pending`, so a subtree with no table changes nothing unless a
+    // row-end marker is already waiting for the text after it.
+    if (pending === undefined && !holdsTableStructure(node)) return;
     if (completeNestedRows.has(node.id)) pending = undefined;
     const depth = tableDepth + (isW(node, 'tbl') ? 1 : 0);
     // A row-end marker cannot jump over unchanged content to claim a later edit.

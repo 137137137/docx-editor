@@ -3,6 +3,7 @@ import type { OoxmlElement, OoxmlNode } from './ooxml-tree.ts';
 import { WML_NAMESPACE_URI } from './ooxml-shared.ts';
 import { resolveRelationship } from './relationships.ts';
 import { fontFamilyName } from './font-family-name.ts';
+import { fontTableFamilyClass, type FontFamilyClass } from './font-family-class.ts';
 
 const FONT_TABLE_REL =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable';
@@ -22,8 +23,8 @@ function wordAttribute(node: OoxmlElement, name: string): string | undefined {
   )?.value;
 }
 
-/** Read whole alternate names without changing the canonical font table. */
-export function fontTableAlternates(pkg: OoxmlPackage): ReadonlyMap<string, string> {
+/** The font table's root element, when the package has one. */
+function fontTableRoot(pkg: OoxmlPackage): OoxmlElement | undefined {
   const relationship = (pkg.relationships.get(pkg.mainDocumentPart) ?? []).find(
     (record) => record.type === FONT_TABLE_REL
   );
@@ -33,8 +34,41 @@ export function fontTableAlternates(pkg: OoxmlPackage): ReadonlyMap<string, stri
       ? pkg.parts.get(resolved.target.partName)
       : undefined;
   const root = (part ?? pkg.parts.get('/word/fontTable.xml'))?.root;
+  return root && wordElement(root, 'fonts') ? root : undefined;
+}
+
+/** The value of `w:<name> w:val` inside a `w:font` entry. */
+function entryValue(font: OoxmlElement, name: string): string | undefined {
+  const node = font.children.find((child) => wordElement(child, name));
+  return node && node.kind !== 'textValue' ? wordAttribute(node, 'val') : undefined;
+}
+
+/**
+ * The class each font table entry records (`w:family`, `w:pitch`), keyed by lower-cased family.
+ * Entries that record none are absent.
+ */
+export function fontTableClasses(pkg: OoxmlPackage): ReadonlyMap<string, FontFamilyClass> {
+  const root = fontTableRoot(pkg);
+  const classes = new Map<string, FontFamilyClass>();
+  if (!root) return classes;
+  let inspected = 0;
+  for (const font of root.children) {
+    if (!wordElement(font, 'font')) continue;
+    if (++inspected > MAX_FONT_TABLE_NAMES) break;
+    const family = fontFamilyName(wordAttribute(font, 'name'));
+    if (!family) continue;
+    const kind = fontTableFamilyClass(entryValue(font, 'family'), entryValue(font, 'pitch'));
+    const key = family.trim().toLowerCase();
+    if (kind && !classes.has(key)) classes.set(key, kind);
+  }
+  return classes;
+}
+
+/** Read whole alternate names without changing the canonical font table. */
+export function fontTableAlternates(pkg: OoxmlPackage): ReadonlyMap<string, string> {
+  const root = fontTableRoot(pkg);
   const alternatives = new Map<string, string>();
-  if (!root || !wordElement(root, 'fonts')) return alternatives;
+  if (!root) return alternatives;
   let inspected = 0;
   for (const font of root.children) {
     if (!wordElement(font, 'font')) continue;

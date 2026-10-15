@@ -92,11 +92,7 @@ export default defineConfig(async (): Promise<UserConfig> => {
   // `dist/` (same code path a `npm install` consumer gets). Used by the parity
   // build so community members see the real installed experience.
   const usePublished = process.env.USE_PUBLISHED_PACKAGES === 'true';
-  const plugins: Plugin[] = [
-    ...react(),
-    canonicalFixturePlugin(),
-    pdfExportPlugin(),
-  ];
+  const plugins: Plugin[] = [...react(), canonicalFixturePlugin(), pdfExportPlugin()];
 
   const css: UserConfig['css'] = {
     postcss: {
@@ -197,6 +193,10 @@ export default defineConfig(async (): Promise<UserConfig> => {
             {
               find: '@docx-editor.dev/pro',
               replacement: path.join(monorepoRoot, 'packages/pro/src/index.ts'),
+            },
+            {
+              find: '@docx-editor.dev/fonts-cjk/browser',
+              replacement: path.join(monorepoRoot, 'packages/fonts-cjk/src/browser.ts'),
             },
             {
               find: '@docx-editor.dev/fonts/google',

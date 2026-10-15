@@ -10,10 +10,7 @@ import {
   bodyParagraphOptionFlow,
   bodyParagraphPlacementFlow,
 } from './body-paragraph-flow.ts';
-import {
-  layoutWithCharacterHeaders,
-  layoutWithCharacterHeadersSteps,
-} from './character-header-layout.ts';
+import { layoutWithCharacterHeadersSteps } from './character-header-layout.ts';
 import { contextualParagraphSpacing, flowNeighbourStyle } from './contextual-paragraph-spacing.ts';
 import { resolveParagraphFrame } from './paragraph-drop-cap.ts';
 import {
@@ -184,8 +181,7 @@ import { marginInset } from './page-body-margins.ts';
 import { columnSeparatorBoxes, resolveSectionColumns } from './section-columns.ts';
 import {
   inheritNotesLayoutInput,
-  layoutSemanticDocumentWithNotes,
-  notesReserveContextKey,
+  layoutSemanticDocumentWithNotesSteps,
 } from './note-pagination.ts';
 import { closingSpaceAfterPt } from './note-area-fit.ts';
 import { passProducerOf } from './pass-producer.ts';
@@ -207,12 +203,13 @@ import { limitBodyBlocks } from './body-block-limit.ts';
 import { refTokenForTableBlock } from './field-ref.ts';
 import { createListFirstLineMetrics, markerLineStart, publishListMarker } from './list-marker.ts';
 import { FlowCheckpointOwner, flowCheckpointsMatch } from './flow-checkpoint.ts';
+import { sectionReserveResume } from './note-reserve-resume.ts';
 import type { FlowCheckpoint, LayoutSession } from './layout-session.ts';
-import { furnitureForSection, layoutMultiSectionDocument } from './multi-section-layout.ts';
+import { furnitureForSection, layoutMultiSectionDocumentSteps } from './multi-section-layout.ts';
 import { hostedStoryFlowDeps, layoutTextboxStory } from './textbox-story-layout.ts';
 import { inlineDrawingFlow } from './inline-textbox-flow.ts';
 import { convergeExclusionLayout } from './exclusion-layout-steps.ts';
-import { withInterimLayout } from './interim-layout.ts';
+import { withInterimLayout, withRelabeledProgress } from './interim-layout.ts';
 import { layoutWithFurnitureRetry } from './furniture-retry-layout.ts';
 import { drainLayoutSteps, stepsInFieldResultsMode, type LayoutSteps } from './layout-steps.ts';
 import { preparedBlocks } from './prepared-block-memo.ts';
@@ -290,6 +287,9 @@ function* layoutInModeSteps(
     storyBlocks(part, displayMode, authorFilter, options.styleCascade, options.numberingIndex),
     options
   );
+  // A prefix that cuts nothing IS the document: its page fields and footnote search are final.
+  if (options.bodyBlockLimit !== undefined && blocks.length === allBlocks.length)
+    options = { ...options, bodyBlockLimit: undefined };
   const sections = enumerateDocumentSectionsFromBlocks(part, blocks).sections;
   // Wrapper-only metadata (alias/tag/lock/…) lives outside flattened paragraph nodes. Fold a
   // fingerprint into the producer so incremental identity reuse cannot keep stale boundaries.
@@ -330,11 +330,20 @@ function* layoutInModeSteps(
   const refFields = resolveBodyRefFields(part, blocks, sections, optionsWithLists);
   const optionsForBody = refFields === null ? optionsWithLists : { ...optionsWithLists, refFields };
 
-  const runBody = (opts: SemanticLayoutOptions): SemanticLayout =>
-    drainLayoutSteps(runBodySteps(opts));
   function* runBodySteps(opts: SemanticLayoutOptions): LayoutSteps<SemanticLayout> {
     if (sections.length > 1) {
-      return layoutMultiSectionDocument(blocks, sections, revision, opts, layoutBlocksWithGeometry);
+      // Reports document pages as each section completes them, labelled as a single section's.
+      return yield* withRelabeledProgress(
+        layoutMultiSectionDocumentSteps(
+          blocks,
+          sections,
+          revision,
+          opts,
+          layoutBlocksWithGeometrySteps
+        ),
+        optionsWithLists.listItems,
+        options.measurer
+      );
     }
 
     const section = sections[0];
@@ -376,7 +385,9 @@ function* layoutInModeSteps(
       },
       laid.layout
     );
-    const finalized = finalizePageFieldProjection(annotated);
+    const finalized = finalizePageFieldProjection(annotated, {
+      provisional: opts.bodyBlockLimit !== undefined,
+    });
     carryLayoutReadCaches(laid.layout, finalized);
     // The notes pass mints overflow sheets from this layout; publish what index they land at.
     registerOverflowPageShell(finalized, (_sectionAnchorIndex, documentPageIndex, box) =>
@@ -431,8 +442,8 @@ function* layoutInModeSteps(
     refFields ? { ...options, refFields } : options
   );
   return finish(
-    layoutWithCharacterHeaders(part, optionsForBody, (opts) =>
-      layoutSemanticDocumentWithNotes(part, sections, opts, notesInput, runBody)
+    yield* layoutWithCharacterHeadersSteps(part, optionsForBody, (opts) =>
+      layoutSemanticDocumentWithNotesSteps(part, sections, opts, notesInput, runBodySteps)
     )
   );
 }
@@ -554,13 +565,6 @@ function* layoutBlocksPass(
   );
   const leadingBreakGroups = createLeadingBreakGroups(options, bodyPageFieldContext);
 
-  // Only the reserve entries THIS pass can read belong in its context key. The pass reads
-  // reserves at `pageIndexStart` plus consecutive local page slots as it opens pages, so a
-  // bound of "the page count the previous pass produced, plus one" covers every slot an
-  // input-identical replay can touch — and keeps a reserve on another section's pages from
-  // invalidating this one. A fresh session has no such bound and folds every entry from
-  // `pageIndexStart` on (conservative, one full pass).
-  const reserveKeyBound = session?.previous ? session.previous.pages.length + 1 : Infinity;
   const columnRegionBottom = options.columnRegionBottom;
   const continuedInsets = options.continuedPageInsets;
   // Local page 0 of a continued section IS the host sheet: its text wraps around the host's
@@ -590,9 +594,14 @@ function* layoutBlocksPass(
     sectionPageBorders: options.sectionPageBorders,
     sectionMarkCollapses: options.sectionMarkCollapses,
   });
-  const context = contextFor(
-    notesReserveContextKey(pageBottomReserves, pageIndexStart, reserveKeyBound)
+  // Only the reserve entries THIS pass can read belong in its context key.
+  const reserveResume = sectionReserveResume(
+    session,
+    contextFor,
+    pageBottomReserves,
+    pageIndexStart
   );
+  const context = reserveResume.context;
   const startPageParity = pageIndexStart & 1;
   /** Set when this pass places an anchored drawing whose geometry reads page parity. */
   let usedPageParity = false;
@@ -1083,7 +1092,7 @@ function* layoutBlocksPass(
   const comparable =
     previous !== null &&
     session !== undefined &&
-    session.context === context &&
+    (session.context === context || reserveResume.moved !== undefined) &&
     session.producer === producer &&
     (!session.parityDependent || session.startPageParity === startPageParity);
   const resumable = columns.count === 1 && comparable;
@@ -1095,6 +1104,7 @@ function* layoutBlocksPass(
     while (firstChanged < limit && flowKeys[firstChanged] === session.keys[firstChanged]) {
       firstChanged += 1;
     }
+    firstChanged = reserveResume.resumeLimit(session.checkpoints, firstChanged);
   }
 
   /**
@@ -1434,7 +1444,12 @@ function* layoutBlocksPass(
     prepass,
     inputsEqual: prepassInputsValid,
     rowInputsEqual: autofitInputsEqual,
-    eligible: resumable && !furnitureHasWrap && !options.drawingExclusionZonesByPage?.size,
+    // Returns the other pages as they were, so never when a page's reserve moved.
+    eligible:
+      resumable &&
+      reserveResume.moved === undefined &&
+      !furnitureHasWrap &&
+      !options.drawingExclusionZonesByPage?.size,
     firstChanged,
     commonSuffix,
     deps: tableDeps,
@@ -1606,7 +1621,8 @@ function* layoutBlocksPass(
     appliedSkipByLineIndex: ReadonlyMap<number, number>
   ): readonly ExclusionZone[] => {
     const pageZones = pageExclusionZonesForEntry(entry, entryIndex);
-    if (!options.inlineDrawingLayout) return pageZones;
+    if (!options.inlineDrawingLayout || lineIndex <= fragmentFirstLine) return pageZones;
+    if (drawingModelOffsetsInParagraph(entry.paragraph).size === 0) return pageZones;
     return drawingZonesAtLinePlacement({
       paragraph: entry.paragraph,
       paragraphId: entry.paragraph.id,
@@ -1867,7 +1883,8 @@ function* layoutBlocksPass(
     // into line once the page it disturbed has been completed.
     if (resumable && commonSuffix > 0 && index >= prepared.length - commonSuffix) {
       const mark = session.checkpoints[index + (session.keys.length - prepared.length)];
-      if (mark && flowCheckpointsMatch(mark, checkpoints[index]!)) {
+      const tailHolds = mark && reserveResume.tailHolds(mark, pages.length);
+      if (mark && tailHolds && flowCheckpointsMatch(mark, checkpoints[index]!)) {
         // The in-page flow matches. At delta 0 the previous pages are appended by identity;
         // at a nonzero delta the tail is identical content `delta` sheets away and is reused
         // through `remapPage`, gated by `convergenceTailShiftAllowed`.
@@ -2608,7 +2625,8 @@ function* layoutBlocksPass(
       const penX = columnX - (rtl ? firstLineOffset : 0);
       const placedSpans = pendingLine.spans.map((span) => ({
         ...span,
-        range: { ...span.range, paragraphId },
+        // The broken range already names this paragraph unless a shared break was reused.
+        range: span.range.paragraphId === paragraphId ? span.range : { ...span.range, paragraphId },
         box: { ...span.box, x: span.box.x + penX, y: cursorY },
       }));
       // Word aligns inside the passage a float leaves the line, not the page margins.
@@ -2802,16 +2820,7 @@ function* layoutBlocksPass(
         ]
       : checkpoints;
     session.keys = flowKeys;
-    // Re-sliced with the page count THIS pass produced: a pass that grew past the start-time
-    // bound read reserve slots the start-time key never folded, and the next comparison must
-    // see them. An input-identical replay produces the same count, so its start-time bound
-    // (previous count + 1) rebuilds this exact string. When the counts agree the start-time
-    // string IS that string — reuse it by identity so the next pass's context check is a
-    // pointer compare, not a rebuild plus memcmp.
-    session.context =
-      pages.length + 1 === reserveKeyBound
-        ? context
-        : contextFor(notesReserveContextKey(pageBottomReserves, pageIndexStart, pages.length + 1));
+    reserveResume.publish(session, pages.length);
     session.producer = producer;
     // Sticky whenever any part of the previous layout was reused: a resumed pass never
     // re-places the prefix and a converged pass never re-places the tail, so their
@@ -2844,14 +2853,6 @@ function* layoutBlocksPass(
     endsOpenPage,
     overflowShellAt,
   };
-}
-
-function layoutBlocksWithGeometry(
-  bodies: readonly OoxmlElement[],
-  revision: number,
-  options: BlockLayoutOptions
-): BlockLayoutResult {
-  return drainLayoutSteps(layoutBlocksWithGeometrySteps(bodies, revision, options));
 }
 
 function layoutBlocksWithGeometrySteps(

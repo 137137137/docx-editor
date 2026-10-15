@@ -705,10 +705,43 @@ export function carryStrippedPageFieldProjection(
  * field — and then threw 555 of those fresh records away when the previous finalized
  * identities were restored. Same idiom as `publishedPageMemos` in `multi-section-layout.ts`.
  */
-const finalizedPageMemos = new WeakMap<
-  PageRecord,
-  { pageCount: number; pageRefToken: string; result: PageRecord }
->();
+const finalizedPageMemos = new WeakMap<PageRecord, FinalizedPageMemo[]>();
+
+interface FinalizedPageMemo {
+  readonly pageCount: number;
+  readonly pageRefToken: string;
+  readonly result: PageRecord;
+}
+
+/**
+ * Finalized answers kept per page. A footnote reserve search lays the body out several times
+ * for one edit, and its page count can alternate between rounds; with one answer per page,
+ * each round projected every sheet's furniture again under a count it had already seen.
+ */
+const FINALIZED_PER_PAGE = 3;
+
+function finalizedMemoOf(
+  page: PageRecord,
+  provisional: boolean,
+  pageCount: number,
+  pageRefToken: string
+): FinalizedPageMemo | undefined {
+  const memos = finalizedPageMemos.get(page);
+  if (!memos) return undefined;
+  // A provisional pass keeps whatever this page was last finalized as.
+  if (provisional) return memos[memos.length - 1];
+  return memos.find((memo) => memo.pageCount === pageCount && memo.pageRefToken === pageRefToken);
+}
+
+function rememberFinalized(page: PageRecord, memo: FinalizedPageMemo): void {
+  const memos = finalizedPageMemos.get(page);
+  if (!memos) {
+    finalizedPageMemos.set(page, [memo]);
+    return;
+  }
+  if (memos.length >= FINALIZED_PER_PAGE) memos.shift();
+  memos.push(memo);
+}
 
 /**
  * Project allowlisted PAGE/NUMPAGES/SECTIONPAGES once the document page count is known.
@@ -718,10 +751,23 @@ const finalizedPageMemos = new WeakMap<
  * context — {@link PageFieldSource} when present (section restart + SECTIONPAGES + fmt), else the
  * physical 1-based index and the whole document as one section (empty-`pgNumType` behaviour).
  * Pages and stories with no page field are returned by identity.
+ *
+ * A `provisional` pass (one prefix of a sliced open) keeps a page it already finalized, even
+ * when the page count or the PAGEREF assignments have moved since. Every prefix adds pages, so
+ * without this each prefix re-projected the furniture of every earlier page, and a long
+ * document paid for its footers once per slice. The full pass that ends the open is not
+ * provisional: its count differs from every stale memo, so each page is projected once more.
  */
-export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLayout {
+export function finalizePageFieldProjection(
+  layout: SemanticLayout,
+  options?: { readonly provisional?: boolean }
+): SemanticLayout {
   const pageCount = layout.pages.length;
   if (pageCount === 0) return layout;
+  const provisional = options?.provisional === true;
+  // A provisional pass leaves furniture unprojected, so its memo must never pass for a final
+  // one: the full finalize that ends an open has to project every sheet it kept.
+  const memoCount = provisional ? -1 : pageCount;
 
   // PAGEREF values are a function of the WHOLE pagination, not of the page they paint on, so
   // the assignment token joins the per-page memo key: a page reused by identity while its
@@ -731,8 +777,8 @@ export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLay
 
   let changed = false;
   const pages = layout.pages.map((page) => {
-    const memo = finalizedPageMemos.get(page);
-    if (memo && memo.pageCount === pageCount && memo.pageRefToken === pageRefToken) {
+    const memo = finalizedMemoOf(page, provisional, pageCount, pageRefToken);
+    if (memo) {
       if (memo.result !== page) changed = true;
       return memo.result;
     }
@@ -747,7 +793,11 @@ export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLay
     const project = (
       story: HeaderFooterStoryRecord | undefined
     ): HeaderFooterStoryRecord | undefined => {
-      if (!story) return story;
+      // A provisional pass (a growing prefix of an opening document) keeps the furniture it
+      // laid out under its own page context. Projecting it again under each prefix's page
+      // count laid every footer of the document out once per prefix, and the opening layout's
+      // final pass projects every page under the real count anyway.
+      if (!story || provisional) return story;
       let projector = story.pageFieldProjector;
       let dy = 0;
       if (!projector) {
@@ -793,7 +843,7 @@ export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLay
     // carries a `pageFieldProjector`. A story kept by identity because its RETAINED
     // projection context still holds is already published text under this exact context.
     if (header === page.header && footer === page.footer && fragments === page.fragments) {
-      finalizedPageMemos.set(page, { pageCount, pageRefToken, result: page });
+      rememberFinalized(page, { pageCount: memoCount, pageRefToken, result: page });
       return page;
     }
     if (fragments !== page.fragments) changed = true;
@@ -803,7 +853,7 @@ export function finalizePageFieldProjection(layout: SemanticLayout): SemanticLay
       ...(footer !== undefined ? { footer } : {}),
       ...(fragments !== page.fragments ? { fragments } : {}),
     };
-    finalizedPageMemos.set(page, { pageCount, pageRefToken, result });
+    rememberFinalized(page, { pageCount: memoCount, pageRefToken, result });
     return result;
   });
 

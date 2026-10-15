@@ -51,6 +51,7 @@ import type { TextMeasurer } from './semantic-records.ts';
 import { glyphSizeFactorOf, type ResolvedRunStyle } from './run-style.ts';
 import { createFixedMeasurer } from './fixed-measurer.ts';
 import { segmentGraphemes } from './grapheme.ts';
+import { fontFamilyClassFromName } from '../store/package/font-family-class.ts';
 
 /**
  * The stack used when a run names no font (or names one the sink refuses).
@@ -60,6 +61,27 @@ import { segmentGraphemes } from './grapheme.ts';
  * advance; this is the Word-like Latin fallback the canvas path measures against.
  */
 export const DEFAULT_CANVAS_FONT_STACK = 'Calibri, Carlito, Helvetica, Arial, sans-serif';
+
+const SERIF_FALLBACK_STACK = '"Times New Roman", "Liberation Serif", Tinos, serif';
+const MONO_FALLBACK_STACK = '"Courier New", "Liberation Mono", Cousine, monospace';
+
+/**
+ * The stack a declared family falls through to when no face for it is installed: one of the
+ * family's own class when its name states one ("… Serif", "… Mono"), else `base`. A missing
+ * serif family set in the sans-serif default changed the look of every line it drew. Paint
+ * and the canvas measurer both build their stack here, so they keep falling back to the same
+ * face. The class decides alone, not `base`: paint never sees a host's own base, so a
+ * classed family taking that base in one path and the class stack in the other would draw
+ * with a face the layout did not measure.
+ */
+export function fallbackStackForFamily(
+  family: string | null,
+  base: string = DEFAULT_CANVAS_FONT_STACK
+): string {
+  if (!family) return base;
+  const kind = fontFamilyClassFromName(family);
+  return kind === 'serif' ? SERIF_FALLBACK_STACK : kind === 'mono' ? MONO_FALLBACK_STACK : base;
+}
 
 /**
  * Declared family (case-folded) → the METRIC-COMPATIBLE face this stack falls through to
@@ -281,10 +303,11 @@ export function tryCreateCanvasMeasurer(options: CanvasMeasurerOptions = {}): Te
     const declared = style.fontFamily && FONT_NAME.test(style.fontFamily) ? style.fontFamily : null;
     const aliased = declared ? fontAlias?.(declared) : undefined;
     const alias = aliased && FONT_NAME.test(aliased) ? aliased : null;
+    const stack = fallbackStackForFamily(declared, fallbackFamily);
     const family = declared
       ? alias
-        ? `"${alias}", "${declared}", ${fallbackFamily}`
-        : `"${declared}", ${fallbackFamily}`
+        ? `"${alias}", "${declared}", ${stack}`
+        : `"${declared}", ${stack}`
       : fallbackFamily;
     const weight = style.bold ? 'bold' : 'normal';
     const slant = style.italic ? 'italic' : 'normal';

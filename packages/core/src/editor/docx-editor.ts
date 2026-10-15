@@ -2,7 +2,6 @@ import { createEditorEvents } from './editor-events.ts';
 import { createEditorDiagnostics, reportEditorFontError } from './editor-diagnostics.ts';
 import { surfaceFieldResultsScope } from './field-results-scope.ts';
 import { createRevisionMarkupState } from './revision-markup-state.ts';
-import { withDisplayedHyphens } from '../store/package/hyphen-text.ts';
 import { queryEditorDocument, watermarkOf } from './docx-editor-query.ts';
 import { previewAllows, refreshWriteBlocked, writeBlockReason } from './refresh-write-guard.ts';
 import type { PaginatedSurfaceRuntimeOptions } from './surface-runtime-options.ts';
@@ -15,7 +14,6 @@ import { createLiveFontResolution, liveFontFamilies } from './live-font-resoluti
 import { composeFontOrigins, defineFontResolver } from './font-resolver.ts';
 import {
   createReviewCommands,
-  dateOfReviewItem as dateOfItem,
   reviewActivationRefusal,
   reviewModelOption,
 } from './docx-editor-review-commands.ts';
@@ -29,6 +27,7 @@ import { createEditorScrolling } from './docx-editor-scroll.ts';
 import { createAnchorNavigation } from './docx-editor-anchor-navigation.ts';
 import { createTextHighlights } from './text-highlights.ts';
 import { createReviewItemsAt } from './review-items-at.ts';
+import { reviewItemPlacement } from './review-placement-cache.ts';
 import {
   findReviewPlacement,
   keyUnderQuery,
@@ -42,8 +41,6 @@ import {
 import { createDocumentProtectionCommands } from './docx-editor-protection.ts';
 import {
   anchorLineY,
-  commentBodyText,
-  commentInitials,
   firstReviewRange,
   reviewItemGeometry,
   reviewItemKey,
@@ -181,6 +178,7 @@ import {
   documentFontResolutionRequest,
   admittedDocumentSubstitutions,
   applyDocumentFontSubstitutions,
+  fallbacksForMissingFamilies,
 } from '../layout/document-font-substitution.ts';
 import {
   boundedExplicitFontSources,
@@ -218,7 +216,7 @@ import {
   suggestingModeRefusal,
 } from './opening-editing-mode.ts';
 import { createRevisionStyleState, EMPTY_AUTHOR_SLOTS } from './revision-style-state.ts';
-import { initialsOfAuthor, normalizeEditorAuthor } from './docx-editor-author.ts';
+import { normalizeEditorAuthor } from './docx-editor-author.ts';
 import {
   createDocxEditorHostConfigState,
   liveHostConfigSetters,
@@ -875,6 +873,13 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         families,
         fontConfiguration()
       );
+      // Installed families keep their own face; only missing ones fall back. Without a canvas
+      // to probe with (headless), nothing counts as installed.
+      const canProbe =
+        !!container && tryCreateBrowserCanvasContext(container.ownerDocument) !== null;
+      const fallbacks = canProbe
+        ? fallbacksForMissingFamilies(documentFonts.fallbacks, probeLocalFont)
+        : documentFonts.fallbacks;
       const raw =
         typeof configured !== 'function'
           ? configured
@@ -934,7 +939,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
           { epoch: seq, ...explicit, sources: initialExplicitSources },
           fromDocument
         ),
-        documentFonts
+        documentFonts,
+        fallbacks
       );
       // Nothing to shape: the fixed measurer stays. An app that DID supply a
       // configuration deserves to hear that it contributed no usable source (every
@@ -1013,7 +1019,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
               { epoch: seq, ...explicit, sources: explicitSurvivors },
               { sources: embeddedSurvivors }
             ),
-            documentFonts
+            documentFonts,
+            fallbacks
           );
           if (fonts.sources.length === 0) return bailToFixed(superseded);
           shaping = await createLayoutShaping(fonts, undefined, fontShaping);
@@ -1033,7 +1040,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
                 { epoch: seq, ...explicit, sources: admittedExplicit },
                 { sources: admittedEmbedded }
               ),
-              documentFonts
+              documentFonts,
+              fallbacks
             );
             if (fonts.sources.length === 0) return bailToFixed(rejected);
             shaping = await createLayoutShaping(fonts, undefined, fontShaping);
@@ -1540,10 +1548,18 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     return surface?.activeReviewKey() ?? null;
   }
 
-  /**
-   * The queue plus geometry, re-derived per call and cheap because the session memoizes the
-   * queue itself per revision.
-   */
+  /** Per narrowed queue, weakly: the rail's and the commands' queries keep separate ranks. */
+  const rankings = new WeakMap<
+    readonly ReviewItem[],
+    {
+      readonly anchors: Map<string, ReviewParagraphAnchor> | null;
+      readonly revision: number;
+      readonly geometries: readonly ({ readonly pageIndex: number; readonly y: number } | null)[];
+      readonly order: readonly number[];
+    }
+  >();
+
+  /** The queue plus geometry, per call; the session memoizes the queue per revision. */
   function reviewPlacements(query?: ReviewItemQuery): readonly ReviewItemPlacement[] {
     if (!reviewEnabled) return [];
     // Kind exclusion and default replacement pairing; see `review-replacement-pairs.ts`.
@@ -1566,78 +1582,41 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       const home = furnitureHomeOf(item);
       return home === null ? 1 : home.kind === 'header' ? 0 : 2;
     };
-    const ranked = items.map((item, position) => ({
-      item,
-      position,
-      pageIndex: anchors ? (reviewItemGeometry(item, anchors)?.pageIndex ?? null) : null,
-      group: groupOf(item),
-    }));
-    ranked.sort((a, b) => {
-      const aPage = a.pageIndex ?? Number.MAX_SAFE_INTEGER;
-      const bPage = b.pageIndex ?? Number.MAX_SAFE_INTEGER;
-      if (aPage !== bPage) return aPage - bPage;
-      if (a.group !== b.group) return a.group - b.group;
-      return a.position - b.position;
-    });
-    return ranked.map(({ item }): ReviewItemPlacement => {
-      const key = reviewItemKey(item);
-      const geometry = anchors ? reviewItemGeometry(item, anchors) : null;
-      const shared = {
-        key,
-        id: item.id,
-        ...(dateOfItem(item) !== undefined ? { date: dateOfItem(item)! } : {}),
-        // Derived from the two facts activation itself checks, so the flag and the verb
-        // cannot disagree. Not from `geometry`, which is null for a whole page that has not
-        // been laid out yet — an item is addressable long before it has a Y.
+    // Geometry and rank depend on the queue, the layout, and the package alone; a commit's
+    // several reads (rail, commands, highlights) share them instead of sorting every card.
+    const revision = surface?.session.packageRevision() ?? -1;
+    let ranking = rankings.get(items);
+    if (!ranking || ranking.anchors !== anchors || ranking.revision !== revision) {
+      const geometries = items.map((item) => (anchors ? reviewItemGeometry(item, anchors) : null));
+      const ranked = items.map((item, position) => ({
+        position,
+        pageIndex: geometries[position]?.pageIndex ?? null,
+        group: groupOf(item),
+      }));
+      ranked.sort((a, b) => {
+        const aPage = a.pageIndex ?? Number.MAX_SAFE_INTEGER;
+        const bPage = b.pageIndex ?? Number.MAX_SAFE_INTEGER;
+        if (aPage !== bPage) return aPage - bPage;
+        if (a.group !== b.group) return a.group - b.group;
+        return a.position - b.position;
+      });
+      ranking = { anchors, revision, geometries, order: ranked.map((entry) => entry.position) };
+      rankings.set(items, ranking);
+    }
+    const { geometries, order } = ranking;
+    const locked = reviewChangesLocked(surface);
+    return order.map((position) => {
+      const item = items[position]!;
+      return reviewItemPlacement(item, {
+        anchorY: geometries[position]?.y ?? null,
+        pageIndex: geometries[position]?.pageIndex ?? null,
         // A paired replacement opens through its deletion, so both halves must be openable.
         activatable: reviewItemWithHalves(item).every(reviewItemActivatable),
-        anchorY: geometry?.y ?? null,
-        pageIndex: geometry?.pageIndex ?? null,
-        // A pair is active when either half is; an open replacement makes both halves active.
-        isActive: reviewItemWithHalves(item).some((part) => activeKeys.has(reviewItemKey(part))),
-      };
-      if (item.kind === 'comment') {
-        return {
-          ...shared,
-          kind: 'comment',
-          author: item.comment.author,
-          initials: commentInitials(item.comment),
-          text: commentBodyText(item.comment),
-          resolved: item.resolved,
-          ...(item.parentId !== undefined ? { parentId: item.parentId } : {}),
-          ...(item.parentRevisionId !== undefined
-            ? { parentRevisionId: item.parentRevisionId }
-            : {}),
-          replyIds: item.replyIds,
-          readOnly: false,
-          item,
-        };
-      }
-      if (item.kind === 'revision') {
-        return {
-          ...shared,
-          kind: 'revision',
-          revisionKind: item.revisionKind,
-          author: item.author,
-          initials: initialsOfAuthor(item.author),
-          text: withDisplayedHyphens(item.text),
-          ...(item.replacedText ? { replacedText: withDisplayedHyphens(item.replacedText) } : {}),
-          replyIds: item.replyIds,
-          readOnly: item.readOnly || reviewChangesLocked(surface),
-          item,
-        };
-      }
-      // A custom card is informational: nothing to accept, reject, or reply to.
-      return {
-        ...shared,
-        kind: 'custom',
-        author: '',
-        initials: '',
-        text: item.detail ?? item.text,
-        replyIds: [],
-        readOnly: true,
-        item,
-      };
+        isActive:
+          activeKeys.size > 0 &&
+          reviewItemWithHalves(item).some((part) => activeKeys.has(reviewItemKey(part))),
+        locked,
+      });
     });
   }
 

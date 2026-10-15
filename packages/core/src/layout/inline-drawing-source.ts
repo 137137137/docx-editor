@@ -858,10 +858,11 @@ export function createInlineDrawingLayoutBundle(
     },
     drawingTokenForParagraph(paragraph: OoxmlNode, ownerPartName: string) {
       const slot = slotFor(ownerPartName, options.session);
-      // Slot mint belongs in the token: a package swap recreates the slot and
-      // drops handle tracking, and a token that only names resource state would
-      // reuse cached line records whose ready handles the new registry cannot mint.
-      return `${pictureBullets.epoch()}|${slotMintBySlot.get(slot) ?? 0}|${slot.drawingTokenForParagraph(paragraph)}`;
+      const token = slot.drawingTokenForParagraph(paragraph);
+      // The slot mint keeps cached lines from holding handles a recreated slot cannot mint.
+      // A paragraph without drawings holds none, so a package swap keeps its key.
+      if (token === '') return `${pictureBullets.epoch()}|`;
+      return `${pictureBullets.epoch()}|${slotMintBySlot.get(slot) ?? 0}|${token}`;
     },
     pendingResourceCount() {
       // Picture bullets settle on the same loop drawings do: a caller that waits for

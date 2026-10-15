@@ -7,6 +7,7 @@
 import type { LayoutSession } from './layout-session.ts';
 
 const bodyBlockCounts = new WeakMap<LayoutSession, number>();
+const bodyBlockLists = new WeakMap<LayoutSession, readonly unknown[]>();
 
 /**
  * `all` cut to `bodyBlockLimit`, recording the uncut count on the session. List numbering
@@ -17,7 +18,10 @@ export function limitBodyBlocks<T>(
   all: readonly T[],
   options: { readonly bodyBlockLimit?: number; readonly session?: LayoutSession }
 ): { readonly blocks: readonly T[]; readonly all: readonly T[] } {
-  if (options.session) bodyBlockCounts.set(options.session, all.length);
+  if (options.session) {
+    bodyBlockCounts.set(options.session, all.length);
+    bodyBlockLists.set(options.session, all);
+  }
   const limit = options.bodyBlockLimit;
   return { blocks: limit === undefined || limit >= all.length ? all : all.slice(0, limit), all };
 }
@@ -25,4 +29,9 @@ export function limitBodyBlocks<T>(
 /** The body block count the last pass on `session` saw, or undefined before any pass. */
 export function bodyBlockCountOf(session: LayoutSession): number | undefined {
   return bodyBlockCounts.get(session);
+}
+
+/** The body blocks the last pass on `session` cut its prefix from, or undefined before any. */
+export function bodyBlocksOf(session: LayoutSession): readonly unknown[] | undefined {
+  return bodyBlockLists.get(session);
 }

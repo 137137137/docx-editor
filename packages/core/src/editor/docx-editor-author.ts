@@ -4,13 +4,23 @@ export function normalizeEditorAuthor(author: string | undefined): string | unde
 }
 
 /** Initials from a name, for a revision — `CT_TrackChange` carries no `@w:initials`. */
+/** Initials per author name: a review rail asks once per card, for the same few authors. */
+const initialsByAuthor = new Map<string, string>();
+
 export function initialsOfAuthor(author: string): string {
+  const known = initialsByAuthor.get(author);
+  if (known !== undefined) return known;
   const words = author.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '?';
-  return words
-    .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
-    .join('');
+  const initials =
+    words.length === 0
+      ? '?'
+      : words
+          .slice(0, 2)
+          .map((word) => word[0]!.toUpperCase())
+          .join('');
+  // Bounded: a document names few authors, and a hostile one gains nothing past this.
+  if (initialsByAuthor.size < 256) initialsByAuthor.set(author, initials);
+  return initials;
 }
 
 /** Surface refusals whose missing-author precondition a configured author resolves. */

@@ -57,10 +57,11 @@ import {
 import { registerSurfaceMeasurement } from './surface-measurement.ts';
 import { startOpeningSlices } from './surface-progressive-open.ts';
 import { createDeferredLayout } from './surface-deferred-layout.ts';
+import { createCanonicalLayout } from './surface-canonical-layout.ts';
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
 import { createReviewOrderIndex } from './surface-review-order.ts';
-import { litReviewKeys } from './review-replacement-pairs.ts';
-import { bodyBlockCountOf } from '../layout/body-block-limit.ts';
+import { litReviewKeys, reviewItemsByKey } from './review-replacement-pairs.ts';
+import { bodyBlockCountOf, bodyBlocksOf } from '../layout/body-block-limit.ts';
 import {
   createContentControlWidgetSessions,
   contentControlValueOps,
@@ -154,6 +155,7 @@ import {
   type SemanticSelection,
 } from '@docx-editor.dev/core/layout';
 import { attachListResolveChangeEvidence } from '../layout/list-resolve.ts';
+import { rangesOnPages } from '../layout/selection-rects.ts';
 import { refreshSurfaceRefFieldResults } from './surface-ref-field-refresh.ts';
 import { type RevisionAuthorFilter } from '../layout/revision-projection.ts';
 import { createRevisionAuthorVisibility } from './revision-author-visibility.ts';
@@ -404,7 +406,7 @@ export function mountPaginatedSurface(
   let measurer = options.measurer ?? defaults!.measurer;
   // Incremental layout machinery — without these every keystroke re-lays out the document.
   const layoutCache = createParagraphLayoutCache<never>();
-  const layoutSession = createLayoutSession();
+  let layoutSession = createLayoutSession();
   function producerIdentity(): string {
     if (options.measurer) return options.producer ?? 'host-measurer';
     return `${options.producer ?? defaults?.producer ?? 'fixed-measurer'}@scale:${scale}`;
@@ -1025,6 +1027,7 @@ export function mountPaginatedSurface(
     readonly authorFilter?: RevisionAuthorFilter;
     readonly layoutSession: ReturnType<typeof createLayoutSession>;
     readonly furnitureSource: ReturnType<typeof createCurrentFurnitureSource>;
+    readonly live?: boolean; // Lays out as the live session does, not for a save.
   }
 
   /**
@@ -1430,7 +1433,7 @@ export function mountPaginatedSurface(
       // The layout context key already folds the mode in (`|rev:<mode>`), so a surface
       // constructed `proposed` never shares cached pages with an `all-markup` one.
       displayMode: revisionDisplayMode(),
-      showFieldCodes: context ? false : showFieldCodes,
+      showFieldCodes: context && !context.live ? false : showFieldCodes,
       fieldResults: fieldScope.mode,
       revisionAuthorFilter: activeAuthorFilter,
       bodyBlockLimit,
@@ -1744,7 +1747,30 @@ export function mountPaginatedSurface(
     // another editor sharing the store — still reaches the screen. Otherwise the painted
     // pages keep showing a revision the model has already left.
     renderPublishedLayout();
+    canonicalLayout.request();
   }
+  // Footnote reserves as a one-pass layout finds them; see `surface-canonical-layout.ts`.
+  const canonicalLayout = createCanonicalLayout({
+    now,
+    schedule: (run, delayMs) =>
+      timers.clearTimeout.bind(null, timers.setTimeout(fieldScope.wrap(run), delayMs)),
+    revision: () => session.packageRevision(),
+    live: () => layoutSession,
+    current: () => currentLayout,
+    busy: () => deferredLayout.pending() || openingBlockLimit !== null,
+    pass: (revision, fresh) =>
+      layoutDocumentSteps(revision, undefined, {
+        authorFilter: revisionFilter(),
+        layoutSession: fresh,
+        furnitureSource,
+        live: true,
+      }),
+    createSession: createLayoutSession,
+    adopt: (fresh, layout) => {
+      layoutSession = fresh;
+      publishLayout(layout);
+    },
+  });
 
   // A settled image resource must reach the screen on its own — nothing else may ever
   // touch the document (a letterhead the user only reads). The flush is queued, not
@@ -3557,21 +3583,6 @@ export function mountPaginatedSurface(
     return window_;
   }
 
-  /** Paragraph id to the page it starts on, built once per layout. */
-  const paragraphPageCache = new WeakMap<SemanticLayout, Map<string, number>>();
-  function paragraphPagesOf(layout: SemanticLayout): Map<string, number> {
-    const cached = paragraphPageCache.get(layout);
-    if (cached) return cached;
-    const index = new Map<string, number>();
-    for (const page of layout.pages) {
-      for (const fragment of paragraphFragmentsOf(page)) {
-        if (!index.has(fragment.paragraphId)) index.set(fragment.paragraphId, page.index);
-      }
-    }
-    paragraphPageCache.set(layout, index);
-    return index;
-  }
-
   function commentRects(): readonly (OverlayRect & { key: string })[] {
     const revision = session.revision();
     // When the scroller is unknown — before mount, in a hidden container, in a host that is
@@ -3586,22 +3597,11 @@ export function mountPaginatedSurface(
     ) {
       return commentRectCache.rects;
     }
-    /** Skip an item that cannot be on screen, before measuring anything about it. */
-    const onScreen = (from: string, to: string): boolean => {
-      if (!pages) return true;
-      // EITHER end. Testing only the start dropped the band for a comment spanning pages
-      // 1–5 the moment page 1 scrolled away, so the highlight vanished from the middle of
-      // its own range. `keyedRangeRects` clips to the visible pages anyway; this is only a
-      // pre-filter, and a false keep costs one range's measurement.
-      const paragraphPages = paragraphPagesOf(currentLayout);
-      const start = paragraphPages.get(from);
-      const end = paragraphPages.get(to);
-      if (start === undefined || end === undefined) return true;
-      for (let page = Math.min(start, end); page <= Math.max(start, end); page += 1) {
-        if (pages.has(page)) return true;
-      }
-      return false;
-    };
+    // Skip an item that cannot be on screen, before measuring anything about it. The WHOLE
+    // range, not its start: testing only the start dropped the band for a comment spanning
+    // pages 1–5 the moment page 1 scrolled away. `keyedRangeRects` clips to the visible pages
+    // anyway; this is only a pre-filter, and a false keep costs one range's measurement.
+    const onScreen = pages ? rangesOnPages(currentLayout, pages) : () => true;
     const ranges: KeyedRange[] = [];
     for (const item of visibleReviewItems()) {
       if (item.kind === 'comment') {
@@ -3869,8 +3869,7 @@ export function mountPaginatedSurface(
     }
     // Once per paint, not once per rect: a decision spanning many lines asked the same
     // question for every one of them.
-    const byKey = new Map<string, ReviewItem>();
-    for (const item of visibleReviewItems()) byKey.set(reviewItemKey(item), item);
+    const byKey = reviewItemsByKey(visibleReviewItems());
     const bands: OverlayRect[] = [];
     for (const rect of commentRects()) {
       const className = bandClassFor(rect.key, activeKeys, byKey);
@@ -5723,6 +5722,7 @@ export function mountPaginatedSurface(
       if (destroyed) return;
       destroyed = true;
       deferredLayout.cancel();
+      canonicalLayout.cancel();
       // Typed-but-unflushed text lands before teardown, so a detach-then-save
       // flow keeps the last keystrokes — all the way to a paint and its state
       // report: the final commit's `onChange` used to come from the synchronous
@@ -6268,6 +6268,7 @@ export function mountPaginatedSurface(
       limit: () => openingBlockLimit,
       setLimit: (limit) => (openingBlockLimit = limit),
       bodyBlockCount: () => bodyBlockCountOf(layoutSession),
+      bodyBlock: (index) => bodyBlocksOf(layoutSession)?.[index],
       prefixPass: (limit) =>
         layoutDocumentSteps(session.packageRevision(), undefined, undefined, limit),
       finish: fieldScope.wrap(() => {

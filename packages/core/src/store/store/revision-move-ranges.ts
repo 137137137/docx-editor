@@ -1,5 +1,6 @@
 import { WML_NAMESPACE_URI, type OoxmlElement, type OoxmlNode } from '../package/ooxml-tree.ts';
 import { keepsSubtreeMemo } from '../package/subtree-memo-policy.ts';
+import { isOrHoldsMoveNode } from './revision-container-presence.ts';
 import type { RevisionSite } from './tree-op-revisions.ts';
 
 const attr = (node: OoxmlElement, name: string) =>
@@ -67,7 +68,8 @@ export function ordinaryMoveRanges(root: OoxmlNode): readonly OrdinaryMoveRange[
     } else if (node.kind === 'revisionMoveFrom' || node.kind === 'revisionMoveTo') {
       for (const range of open) wrapperNames.add(range.name);
     }
-    for (const child of node.children) scanWrappers(child);
+    // Only markers and move wrappers change the scan; skip subtrees without one.
+    for (const child of node.children) if (isOrHoldsMoveNode(child)) scanWrappers(child);
   };
   if (containsRange(root)) scanWrappers(root);
   // Initially support the paragraph-local run sequences verified with Word. Other

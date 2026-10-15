@@ -57,6 +57,13 @@ import { isContentRevisionKind } from '../package/ooxml-shared.ts';
 import { mergeRevisionParagraphs, tableParagraphMergeTarget } from './revision-paragraph-merge.ts';
 import { DEPENDENCY_KEY_IDS } from '../registry/frozen-ids.ts';
 import {
+  rebuildReach,
+  resolutionOf,
+  withDeletedTextRestored,
+  type Resolution,
+} from './revision-rebuild-helpers.ts';
+import { holdsMoveNode } from './revision-container-presence.ts';
+import {
   REVISION_PROPERTY_CONTAINERS,
   preservedRevisionProperty,
   validRevisionPropertyRecord,
@@ -69,7 +76,6 @@ import type { RevisionAddress } from './tree-op-types.ts';
 import type { TreeOpEffect, TreeOpRejection } from './tree-op-validate.ts';
 
 /** What resolving does to one wrapper. */
-type Resolution = 'unwrap' | 'remove' | 'restore';
 
 /** The shared property-history vocabulary prevents read/write classification drift. */
 const PROPERTY_CHANGE_NAMES: ReadonlySet<string> = new Set(REVISION_PROPERTY_CONTAINERS.keys());
@@ -388,7 +394,8 @@ export function namedMoveRanges(root: OoxmlNode): Map<string, MoveRange> {
         const enclosing = open[open.length - 1];
         if (enclosing !== undefined) bucketFor(enclosing.name).wrappers.push(child);
       }
-      visit(child);
+      // Only markers and move wrappers change the result; skip subtrees without one.
+      if (holdsMoveNode(child)) visit(child);
     }
   };
   visit(root);
@@ -523,55 +530,6 @@ export function revisionStructuralReach(
   return reach;
 }
 
-/** How one wrapper resolves, given the action. */
-function resolutionOf(node: OoxmlElement, action: 'accept' | 'reject'): Resolution {
-  switch (node.kind) {
-    case 'revisionInsert':
-    case 'revisionMoveTo':
-      // Accepting keeps the content and drops the wrapper; rejecting takes both.
-      return action === 'accept' ? 'unwrap' : 'remove';
-    case 'revisionDelete':
-    case 'revisionMoveFrom':
-      // Accepting removes the content; rejecting restores it, which also turns `w:delText`
-      // back into `w:t`.
-      return action === 'accept' ? 'remove' : 'restore';
-    default:
-      return 'remove';
-  }
-}
-
-function textElementFrom(node: OoxmlElement): OoxmlElement {
-  return { ...node, kind: 'text', localName: 't' } as OoxmlElement;
-}
-
-/**
- * Undo the deleted forms of run content when a deletion is rejected.
- *
- * `w:delText` is the deleted form of `w:t`, and `w:delInstrText` is the deleted form of
- * `w:instrText` (`EG_RunInnerContent`, §17.3.3.7 / §17.16.23). BOTH have to be inverted.
- * Restoring the text but leaving the instruction in its deleted form outside any `w:del` means
- * Word stops reading it as an instruction: the field's code is silently lost and the field
- * never updates again.
- */
-function withDeletedTextRestored(node: OoxmlNode): OoxmlNode {
-  if (node.kind === 'textValue') return node;
-  const children = node.children.map(withDeletedTextRestored);
-  const rebuilt = children.some((child, index) => child !== node.children[index])
-    ? ({ ...node, children } as OoxmlElement)
-    : node;
-  if (rebuilt.kind === 'deletedText') return textElementFrom(rebuilt);
-  // `w:delInstrText` has no typed kind — it is layout-inert either way — so it is matched by
-  // name and renamed in place.
-  if (
-    rebuilt.kind === 'generic' &&
-    rebuilt.namespaceUri === WML_NAMESPACE_URI &&
-    rebuilt.localName === 'delInstrText'
-  ) {
-    return { ...rebuilt, localName: 'instrText' } as OoxmlElement;
-  }
-  return rebuilt;
-}
-
 interface RebuildPlan {
   /** Wrapper node id → what to do with it. */
   readonly actions: ReadonlyMap<string, Resolution>;
@@ -594,6 +552,8 @@ interface RebuildPlan {
   readonly mergeCells: ReadonlyMap<string, OoxmlElement>;
   readonly mint: () => string;
   readonly tables: ReadonlySet<string>;
+  /** The nodes on a path to a target; every other subtree is kept as it is. */
+  readonly reach: ReadonlySet<string>;
 }
 
 /**
@@ -609,6 +569,10 @@ function rebuildChildren(children: readonly OoxmlNode[], plan: RebuildPlan): Oox
   /** Content of paragraphs whose mark was resolved away, waiting for the paragraph after. */
 
   for (const child of children) {
+    if (child.kind !== 'textValue' && !plan.reach.has(child.id)) {
+      out.push(child);
+      continue;
+    }
     const relocated = plan.relocate.get(child.id);
     if (relocated) {
       const removeStructures = new Set(plan.removeStructures);
@@ -754,7 +718,11 @@ function rebuildNode(node: OoxmlNode, plan: RebuildPlan): OoxmlNode[] {
     }
   }
 
-  return [{ ...node, children: rebuildChildren(node.children, plan) } as OoxmlElement];
+  // An untouched subtree keeps its identity, so layout and digest caches still hit.
+  const children = rebuildChildren(node.children, plan);
+  const same =
+    children.length === node.children.length && children.every((c, i) => c === node.children[i]);
+  return [same ? node : ({ ...node, children } as OoxmlElement)];
 }
 
 export type RevisionOpAction = 'accept' | 'reject';
@@ -967,6 +935,16 @@ export function resolveRevisions(
     mergeCells,
     tables,
     mint: createNodeIdAllocator(part),
+    reach: rebuildReach(part, [
+      ...actions.keys(),
+      ...movePlan.relocate.keys(),
+      ...dropMarks,
+      ...restoreProperties,
+      ...mergeForward,
+      ...removeStructures,
+      ...mergeCells.keys(),
+      ...tables,
+    ]),
   };
   const rebuilt = rebuild(part.root, plan);
   const root = rebuilt[0];

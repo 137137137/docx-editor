@@ -91,6 +91,35 @@ const face = (
 ): FontRequest => ({ family, weight, style });
 
 /**
+ * East Asian families the packaged CJK face stands in for. `@docx-editor.dev/fonts-cjk` keeps
+ * the same list for the editor; a test holds the two equal.
+ */
+export const CJK_SUBSTITUTED_FAMILIES: readonly string[] = [
+  'MS Gothic',
+  'MS PGothic',
+  'MS UI Gothic',
+  'MS Mincho',
+  'MS PMincho',
+  'Meiryo',
+  'Yu Gothic',
+  'Yu Mincho',
+  'SimSun',
+  'NSimSun',
+  'SimHei',
+  'FangSong',
+  'KaiTi',
+  'DengXian',
+  'Microsoft YaHei',
+  'Microsoft JhengHei',
+  'MingLiU',
+  'PMingLiU',
+  'Batang',
+  'Gulim',
+  'Dotum',
+  'Malgun Gothic',
+];
+
+/**
  * Word families whose text a packaged face can carry when the family itself is absent.
  *
  * Helvetica is the one metric match here (Arial was drawn to its widths, and Liberation Sans
@@ -103,38 +132,13 @@ const substitutes: Record<string, string> = {
   Georgia: 'Liberation Serif',
   Verdana: 'Liberation Sans',
   Helvetica: 'Liberation Sans',
-  ...Object.fromEntries(
-    [
-      'MS Gothic',
-      'MS PGothic',
-      'MS UI Gothic',
-      'MS Mincho',
-      'MS PMincho',
-      'Meiryo',
-      'Yu Gothic',
-      'Yu Mincho',
-      'SimSun',
-      'NSimSun',
-      'SimHei',
-      'FangSong',
-      'KaiTi',
-      'DengXian',
-      'Microsoft YaHei',
-      'Microsoft JhengHei',
-      'MingLiU',
-      'PMingLiU',
-      'Batang',
-      'Gulim',
-      'Dotum',
-      'Malgun Gothic',
-    ].map((family) => [family, CJK_FAMILY])
-  ),
+  ...Object.fromEntries(CJK_SUBSTITUTED_FAMILIES.map((family) => [family, CJK_FAMILY])),
 };
 /**
  * The localized names Word writes for its East Asian faces, in the language of the Word
  * that saved the document. Word treats each as the same font; so does this resolver.
  */
-const localizedFamilies: Record<string, string> = {
+export const localizedFamilies: Record<string, string> = {
   宋体: 'SimSun',
   新宋体: 'NSimSun',
   黑体: 'SimHei',

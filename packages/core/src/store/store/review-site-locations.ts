@@ -8,6 +8,7 @@ import { currentFieldResultsMode, FieldResultsModeMemo } from '../package/field-
 import type { OoxmlNode, OoxmlParagraphNode, OoxmlPart } from '../package/ooxml-tree.ts';
 import { paragraphOffsetIndex, transientParagraphOffsetIndex } from './tree-op-segments.ts';
 import { createRecentRootCache } from './recent-root-cache.ts';
+import { setLatestPerPart } from './latest-per-part.ts';
 
 /** The `w:p` a node sits inside, and the model offset it starts at within that paragraph. */
 export interface SiteLocation {
@@ -49,62 +50,201 @@ function locateSitesWithPolicy(
     ? locatedSitesCaches[currentFieldResultsMode()].get(part.root)
     : undefined;
   if (merged) return merged;
+  const mode = currentFieldResultsMode();
+  // An edit replaces the root, the body and the blocks it touched; every other block is the
+  // same object. Patching the previous index for those blocks replaces a walk of every
+  // paragraph per edit.
+  const lastKey = `${mode}\u0000${part.name}`;
+  const previousRoot = retainAcrossReads ? lastLocatedRoots.get(lastKey)?.deref() : undefined;
+  const previous = previousRoot ? locatedSitesCaches[mode].get(previousRoot) : undefined;
+  const located =
+    (previousRoot &&
+      previous &&
+      patchedLocations(previousRoot, previous, part.root, retainAcrossReads)) ||
+    fullLocations(part.root, retainAcrossReads);
+  if (retainAcrossReads) {
+    locatedSitesCaches[mode].set(part.root, located);
+    setLatestPerPart(lastLocatedRoots, lastKey, new WeakRef(part.root));
+  }
+  return located;
+}
+
+/**
+ * `WeakRef` is ES2021 and the workspace tsconfigs pin `lib` at ES2020, so the global is
+ * declared here, as `recent-root-cache.ts` does.
+ */
+interface RootWeakRef {
+  deref(): OoxmlNode | undefined;
+}
+declare const WeakRef: new (target: OoxmlNode) => RootWeakRef;
+
+/**
+ * The root each story part last indexed per mode, weakly: a closed document leaves nothing
+ * here but a dead reference per part name. Per part, because one derivation indexes the body,
+ * then every header, footer and note part; a shared slot always held the last one of those.
+ */
+const lastLocatedRoots = new Map<string, RootWeakRef>();
+
+/** Blocks changed past this many are indexed from scratch. */
+const MAX_PATCHED_BLOCKS = 256;
+
+function fullLocations(root: OoxmlNode, retainAcrossReads: boolean): Map<string, SiteLocation> {
   const located = new Map<string, SiteLocation>();
-  const walkParagraph = (paragraph: OoxmlParagraphNode): void => {
+  locateWithin(root, 0, located, retainAcrossReads);
+  return located;
+}
+
+/**
+ * Every location under `node`: its paragraph offsets first, then its row anchors over them.
+ *
+ * Both passes only ever write keys of nodes inside `node`, so running them per block gives
+ * the same entries as running each over the whole story.
+ */
+function locateWithin(
+  node: OoxmlNode,
+  depth: number,
+  located: Map<string, SiteLocation>,
+  retainAcrossReads: boolean
+): void {
+  walkLocations(node, depth, located, retainAcrossReads);
+  anchorTrackedRows(node, depth, located, retainAcrossReads);
+}
+
+/**
+ * The body blocks that left and arrived between two versions of a story root, or null when
+ * the roots differ outside their body, or in more than {@link MAX_PATCHED_BLOCKS} blocks.
+ * Every other block is the same object in both.
+ */
+export function changedBodyBlocks(
+  previousRoot: OoxmlNode,
+  root: OoxmlNode
+): { readonly removed: readonly OoxmlNode[]; readonly added: readonly OoxmlNode[] } | null {
+  if (previousRoot.kind === 'textValue' || root.kind === 'textValue') return null;
+  const before = previousRoot.children;
+  const after = root.children;
+  if (before.length !== after.length) return null;
+  let bodyIndex = -1;
+  for (let index = 0; index < after.length; index += 1) {
+    const a = before[index]!;
+    const b = after[index]!;
+    if (a === b) continue;
+    if (bodyIndex >= 0 || a.kind !== 'body' || b.kind !== 'body' || a.id !== b.id) return null;
+    bodyIndex = index;
+  }
+  if (bodyIndex < 0) return null;
+  const oldBlocks = (before[bodyIndex] as Exclude<OoxmlNode, { kind: 'textValue' }>).children;
+  const newBlocks = (after[bodyIndex] as Exclude<OoxmlNode, { kind: 'textValue' }>).children;
+  let start = 0;
+  while (
+    start < oldBlocks.length &&
+    start < newBlocks.length &&
+    oldBlocks[start] === newBlocks[start]
+  )
+    start += 1;
+  let oldEnd = oldBlocks.length;
+  let newEnd = newBlocks.length;
+  while (oldEnd > start && newEnd > start && oldBlocks[oldEnd - 1] === newBlocks[newEnd - 1]) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  // Several edits since the last read sit apart, so the middle can be long while few blocks
+  // in it changed. Which blocks left and which arrived is all a caller needs, not where.
+  const oldMiddle = new Set(oldBlocks.slice(start, oldEnd));
+  const newMiddle = new Set(newBlocks.slice(start, newEnd));
+  const removed = [...oldMiddle].filter((block) => !newMiddle.has(block));
+  const added = [...newMiddle].filter((block) => !oldMiddle.has(block));
+  if (removed.length + added.length > MAX_PATCHED_BLOCKS) return null;
+  return { removed, added };
+}
+
+/**
+ * `previous` (the index of `previousRoot`) moved to `root`, or null when the two roots differ
+ * in more than some body blocks. Keys are unique to their block, so the changed blocks leave
+ * and enter whole.
+ */
+function patchedLocations(
+  previousRoot: OoxmlNode,
+  previous: ReadonlyMap<string, SiteLocation>,
+  root: OoxmlNode,
+  retainAcrossReads: boolean
+): Map<string, SiteLocation> | null {
+  const changed = changedBodyBlocks(previousRoot, root);
+  if (!changed) return null;
+  const located = new Map(previous);
+  // Root depth 0, body 1, its blocks 2: the depth guard counts the same as a full walk.
+  for (const block of changed.removed) {
+    const gone = new Map<string, SiteLocation>();
+    locateWithin(block, 2, gone, retainAcrossReads);
+    for (const key of gone.keys()) located.delete(key);
+  }
+  for (const block of changed.added) locateWithin(block, 2, located, retainAcrossReads);
+  return located;
+}
+
+/** The index already built for `part`'s root, without building one. */
+export function locatedSitesIfKnown(
+  part: OoxmlPart
+): ReadonlyMap<string, SiteLocation> | undefined {
+  return locatedSitesCaches[currentFieldResultsMode()].get(part.root);
+}
+
+function walkLocations(
+  node: OoxmlNode,
+  depth: number,
+  located: Map<string, SiteLocation>,
+  retainAcrossReads: boolean
+): void {
+  if (node.kind === 'textValue' || depth > 64) return;
+  if (node.kind === 'paragraph') {
     // Paragraph-local by construction: every offset here is measured inside this paragraph,
     // so an unchanged paragraph's answer is still true and is reused rather than re-walked.
     // A keystroke otherwise re-derived the location of every node in the document.
-    const memo = retainAcrossReads ? paragraphLocationsCache.get(paragraph) : undefined;
-    if (memo) {
-      for (const [id, location] of memo) located.set(id, location);
-      return;
+    let memo = retainAcrossReads ? paragraphLocationsCache.get(node) : undefined;
+    if (!memo) {
+      const own = new Map<string, SiteLocation>();
+      locateInParagraph(node, own, retainAcrossReads);
+      if (retainAcrossReads) paragraphLocationsCache.set(node, own);
+      memo = own;
     }
-    const own = new Map<string, SiteLocation>();
-    locateInParagraph(paragraph, own, retainAcrossReads);
-    if (retainAcrossReads) paragraphLocationsCache.set(paragraph, own);
-    for (const [id, location] of own) located.set(id, location);
-  };
-  const walk = (node: OoxmlNode, depth: number): void => {
-    if (node.kind === 'textValue' || depth > 64) return;
-    if (node.kind === 'paragraph') {
-      walkParagraph(node);
-      return;
-    }
-    for (const child of node.children) walk(child, depth + 1);
-  };
-  walk(part.root, 0);
+    for (const [id, location] of memo) located.set(id, location);
+    return;
+  }
+  for (const child of node.children) walkLocations(child, depth + 1, located, retainAcrossReads);
+}
 
-  const anchorTrackedRows = (node: OoxmlNode, depth: number): void => {
-    if (node.kind === 'textValue' || depth > 64) return;
-    // A paragraph CAN hold table rows — a textbox in a run holds block content, tables
-    // included — so paragraph subtrees are walked, not pruned. Memoized per paragraph
-    // like the location walk above: the ordinary paragraph with no textbox costs one
-    // cached empty answer instead of a descent through every run.
-    if (node.kind === 'paragraph') {
-      let entries = retainAcrossReads ? paragraphRowAnchorsCache.get(node) : undefined;
-      if (!entries) {
-        const own: (readonly [string, SiteLocation])[] = [];
-        collectRowAnchorEntries(node, 0, own, retainAcrossReads);
-        entries = own;
-        if (retainAcrossReads) paragraphRowAnchorsCache.set(node, entries);
-      }
-      for (const [markerId, location] of entries) located.set(markerId, location);
-      return;
+function anchorTrackedRows(
+  node: OoxmlNode,
+  depth: number,
+  located: Map<string, SiteLocation>,
+  retainAcrossReads: boolean
+): void {
+  if (node.kind === 'textValue' || depth > 64) return;
+  // A paragraph CAN hold table rows — a textbox in a run holds block content, tables
+  // included — so paragraph subtrees are walked, not pruned. Memoized per paragraph
+  // like the location walk above: the ordinary paragraph with no textbox costs one
+  // cached empty answer instead of a descent through every run.
+  if (node.kind === 'paragraph') {
+    let entries = retainAcrossReads ? paragraphRowAnchorsCache.get(node) : undefined;
+    if (!entries) {
+      const own: (readonly [string, SiteLocation])[] = [];
+      collectRowAnchorEntries(node, 0, own, retainAcrossReads);
+      entries = own;
+      if (retainAcrossReads) paragraphRowAnchorsCache.set(node, entries);
     }
-    if (node.kind === 'table' || node.kind === 'tableRow' || node.kind === 'tableCell') {
-      // Anchor each property's decision in its own table, row, or cell subtree.
-      let entries = retainAcrossReads ? rowMarkerAnchorsCache.get(node) : undefined;
-      if (!entries) {
-        entries = computeRowMarkerAnchors(node);
-        if (retainAcrossReads) rowMarkerAnchorsCache.set(node, entries);
-      }
-      for (const [markerId, location] of entries) located.set(markerId, location);
+    for (const [markerId, location] of entries) located.set(markerId, location);
+    return;
+  }
+  if (node.kind === 'table' || node.kind === 'tableRow' || node.kind === 'tableCell') {
+    // Anchor each property's decision in its own table, row, or cell subtree.
+    let entries = retainAcrossReads ? rowMarkerAnchorsCache.get(node) : undefined;
+    if (!entries) {
+      entries = computeRowMarkerAnchors(node);
+      if (retainAcrossReads) rowMarkerAnchorsCache.set(node, entries);
     }
-    for (const child of node.children) anchorTrackedRows(child, depth + 1);
-  };
-  anchorTrackedRows(part.root, 0);
-  if (retainAcrossReads) locatedSitesCaches[currentFieldResultsMode()].set(part.root, located);
-  return located;
+    for (const [markerId, location] of entries) located.set(markerId, location);
+  }
+  for (const child of node.children)
+    anchorTrackedRows(child, depth + 1, located, retainAcrossReads);
 }
 
 /**

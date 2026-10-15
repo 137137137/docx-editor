@@ -99,20 +99,32 @@ export function fitsWithSpaceShrink(
     measurer
   );
   const needed = lineWidth + visible + followingWidth - available;
-  const budget = spans.slice(first).reduce((sum, span) => sum + capacity(span, measurer), 0);
-  if (needed <= 0 || needed > budget + 0.001) return false;
-  const spaceWidth = budget * 4;
+  if (needed <= 0) return false;
   // The alternative line stops before the overflowing word, so only the spans ahead
   // of it carry its stretch, and the space in front of it is the one that hangs.
-  const before = spans.slice(first, Math.max(first, Math.min(wordStart, spans.length)));
+  // One capacity per span serves the budget, the hanging space and the spaces ahead of the
+  // word, each summed in span order; reading every span again measured each word again.
+  const beforeEnd = Math.max(first, Math.min(wordStart, spans.length));
+  const capacities: number[] = [];
+  let budget = 0;
+  for (let index = first; index < spans.length; index += 1) {
+    const slot = capacity(spans[index]!, measurer);
+    capacities.push(slot);
+    budget += slot;
+  }
+  if (needed > budget + 0.001) return false;
+  const spaceWidth = budget * 4;
   // Every space after the last word hangs there: a run of spaces as well as the word's own.
   let terminalSpace = 0;
-  for (let index = before.length - 1; index >= 0; index -= 1) {
-    terminalSpace += capacity(before[index]!, measurer) * 4;
-    if (!/^ +$/.test(before[index]!.text)) break;
+  for (let index = beforeEnd - 1; index >= first; index -= 1) {
+    terminalSpace += capacities[index - first]! * 4;
+    if (!/^ +$/.test(spans[index]!.text)) break;
   }
-  const existingSpaces =
-    before.reduce((sum, span) => sum + capacity(span, measurer) * 4, 0) - terminalSpace;
+  let beforeSpaces = 0;
+  for (let index = first; index < beforeEnd; index += 1) {
+    beforeSpaces += capacities[index - first]! * 4;
+  }
+  const existingSpaces = beforeSpaces - terminalSpace;
   if (existingSpaces <= 0) return false;
   const expansion = 1 + Math.max(0, available - wordStartWidth + terminalSpace) / existingSpaces;
   // Shrinking a space costs twice as much as stretching one: the word joins the line

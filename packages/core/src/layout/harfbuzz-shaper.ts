@@ -12,6 +12,7 @@ import {
   createShapingEnvironment,
   fixedPoint,
   MAX_SHAPING_CONTEXT,
+  markFacePreservingShaper,
   type GlyphOutline,
   type ShapeInput,
   type ShapedCluster,
@@ -473,6 +474,8 @@ class ProductionHarfBuzzTextShaper implements HarfBuzzTextShaper {
   #buffer: HarfBuzzBuffer | undefined;
 
   constructor(harfBuzz: HarfBuzzModule, options: HarfBuzzTextShaperOptions) {
+    // It refuses a fallback order, so every run it shapes is in the environment's face.
+    markFacePreservingShaper(this);
     this.#harfBuzz = harfBuzz;
     this.#maxFontBytes = assertPositiveLimit(
       options.maxFontBytes ?? DEFAULT_MAX_FONT_BYTES,

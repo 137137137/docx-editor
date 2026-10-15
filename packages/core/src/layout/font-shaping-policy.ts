@@ -4,7 +4,12 @@ import {
   LAYOUT_HARFBUZZ_SHAPER_POLICY,
   type LayoutHarfBuzzShaperPolicy,
 } from './layout-shaper-policy.ts';
-import type { ShapeInput, TextShaper } from './shaped-run.ts';
+import {
+  markFacePreservingShaper,
+  preservesShapingFace,
+  type ShapeInput,
+  type TextShaper,
+} from './shaped-run.ts';
 
 /** Host-selected execution limits, separate from font admission limits. @public */
 export interface FontShapingOptions {
@@ -35,7 +40,7 @@ export function withFontShapingPolicy(
   ownsShaper = false
 ): TextShaper & { dispose(): void } {
   let disposed = false;
-  return Object.freeze({
+  const wrapped = Object.freeze({
     shape(input: ShapeInput) {
       if (disposed) throw new HarfBuzzShapingError('disposed');
       const font = input.environment.font;
@@ -54,4 +59,6 @@ export function withFontShapingPolicy(
       if (ownsShaper) (shaper as TextShaper & { dispose?: () => void }).dispose?.();
     },
   });
+  // It only refuses input; the runs it returns are the wrapped shaper's.
+  return preservesShapingFace(shaper) ? markFacePreservingShaper(wrapped) : wrapped;
 }

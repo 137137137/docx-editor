@@ -57,6 +57,11 @@ export async function checkFormattingPageBalloons(
   expect(container.querySelector('[data-testid="review-balloon-card"]')?.textContent).toContain(
     'Centered'
   );
+  // The open balloon marks its paragraph, which the stylesheet tints.
+  const marked = () => [...container.querySelectorAll('[data-review-balloon-open]')];
+  expect(marked().some((element) => element.classList.contains('docx-paragraph-fragment'))).toBe(
+    true
+  );
   const clickedParagraphId = editor.surface!.session.paragraphIds()[1]!;
   await change(() =>
     editor.surface!.setSelection({
@@ -73,6 +78,7 @@ export async function checkFormattingPageBalloons(
   });
   expect(container.querySelector('[data-testid="review-balloon"]')).toBeNull();
   expect(editor.getDocumentHandle().revision).toBe(revisionBeforeViewChange);
+  expect(marked()).toHaveLength(0);
   await change(() => {
     editor.exec({ type: 'setReviewDisplayMode', mode: 'all-markup' });
   });

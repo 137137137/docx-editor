@@ -5,6 +5,7 @@ import { collectRenderedFontFamilyCandidates } from '../store/package/rendered-f
 import {
   documentFontSubstitutionPlan,
   applyDocumentFontSubstitutions,
+  hostChainedDocumentFallbacks,
 } from '../layout/document-font-substitution.ts';
 import { symbolFontFamily, validFontFamily } from '../store/package/run-defaults.ts';
 import {
@@ -428,10 +429,9 @@ export async function acquireDocumentExportShaping(
           }
         );
         throwIfAborted(controller.signal);
-        const configuration = applyDocumentFontSubstitutions(
-          composeFontConfiguration(resolved ?? {}),
-          documentFonts
-        );
+        const composed = composeFontConfiguration(resolved ?? {});
+        const configuration = applyDocumentFontSubstitutions(composed, documentFonts);
+        const standIns = hostChainedDocumentFallbacks(composed, configuration, documentFonts);
         if (configuration.sources.length === 0) {
           const report = fontResolutionReport(
             families,
@@ -457,7 +457,8 @@ export async function acquireDocumentExportShaping(
           configuration.defaultFont.family,
           originFailures,
           shaping.resolveFont,
-          embeddedFontDiagnostics.dropped
+          embeddedFontDiagnostics.dropped,
+          standIns
         );
         publishFontResolutionReport(report, options);
         enforceStrictFontPolicy(report, options, options.glyphFallbacks);

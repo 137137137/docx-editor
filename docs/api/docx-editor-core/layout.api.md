@@ -67,6 +67,7 @@ export function attachNotesToLayout(layout: SemanticLayout, allRefs: readonly Pa
     readonly fallbackReasons?: readonly NotePaginationFallbackReason[];
     readonly memo?: unknown;
     readonly paragraphSectionIndex?: ReadonlyMap<string, number>;
+    readonly partial?: boolean;
 }): NotesAttachResult;
 
 // @public
@@ -3706,6 +3707,8 @@ export interface SemanticLayoutOptions {
     readonly notes?: NotesLayoutInput;
     readonly numberingIndex?: NumberingIndex;
     readonly pageBottomReserves?: ReadonlyMap<number, number>;
+    // @internal
+    readonly pageBottomReservesFromPreviousPass?: boolean;
     readonly paragraphLineUnitPt?: number;
     readonly producer?: string;
     readonly projectFieldLink?: FieldLinkProjector;

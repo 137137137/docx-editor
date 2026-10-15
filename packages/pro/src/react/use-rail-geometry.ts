@@ -82,15 +82,20 @@ export function useRailWindow(
     if (!scroller) return undefined;
     const view = hostWindowOf(scroller);
     let frame = 0;
+    const read = () => ({
+      top: scroller.scrollTop - RAIL_OVERSCAN,
+      bottom: scroller.scrollTop + scroller.clientHeight + RAIL_OVERSCAN,
+    });
+    // Read in the scroll event, while layout is clean. By the frame the editor has built the
+    // pages scrolled into view, and reading there forced a layout of the whole document.
+    let pending: { top: number; bottom: number } | null = null;
     const sync = (): void => {
       frame = 0;
-      setWindow((previous) => {
-        const top = scroller.scrollTop - RAIL_OVERSCAN;
-        const bottom = scroller.scrollTop + scroller.clientHeight + RAIL_OVERSCAN;
-        return previous && previous.top === top && previous.bottom === bottom
-          ? previous
-          : { top, bottom };
-      });
+      const next = pending ?? read();
+      pending = null;
+      setWindow((previous) =>
+        previous && previous.top === next.top && previous.bottom === next.bottom ? previous : next
+      );
     };
     // While the reader scrolls, the slots' `top` transition is suppressed (a DOM attribute
     // so no React work happens at scroll frequency). Restacks DURING a scroll come from
@@ -99,6 +104,7 @@ export function useRailWindow(
     // itself moves read as a second, faster scroll layered over the document.
     let settle = 0;
     const onScroll = (): void => {
+      pending = read();
       if (frame === 0) frame = view.requestAnimationFrame(sync);
       rail?.setAttribute('data-scrolling', '');
       view.clearTimeout(settle);

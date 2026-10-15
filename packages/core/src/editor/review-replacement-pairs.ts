@@ -115,6 +115,25 @@ export function narrowReviewItems(
   items: readonly ReviewItem[],
   query: ReviewItemQuery | undefined
 ): readonly ReviewItem[] {
+  // The rail, commands and highlights each narrow the same queue several times per commit.
+  // The answer depends on the queue and these two query fields only.
+  const key = `${pairsReplacementsUnder(query)}|${[...(query?.excludeRevisionKinds ?? [])].sort().join(',')}`;
+  let byQuery = narrowedQueues.get(items);
+  const known = byQuery?.get(key);
+  if (known) return known;
+  const narrowed = narrowUncached(items, query);
+  if (!byQuery) narrowedQueues.set(items, (byQuery = new Map()));
+  byQuery.set(key, narrowed);
+  return narrowed;
+}
+
+/** Narrowed queues per queue, weakly: they go with the queue they were narrowed from. */
+const narrowedQueues = new WeakMap<readonly ReviewItem[], Map<string, readonly ReviewItem[]>>();
+
+function narrowUncached(
+  items: readonly ReviewItem[],
+  query: ReviewItemQuery | undefined
+): readonly ReviewItem[] {
   const excluded = new Set(query?.excludeRevisionKinds ?? []);
   const keep = (item: ReviewItem): boolean =>
     item.kind !== 'revision' || !excluded.has(item.revisionKind);
@@ -261,4 +280,17 @@ export function withRevealPairKey(
     ? event.key
     : keyUnderQuery(placements, event.key, { pairReplacements: true });
   return pairKey !== null && isReplacementPairKey(pairKey) ? { ...event, pairKey } : event;
+}
+
+const keyedQueues = new WeakMap<readonly ReviewItem[], ReadonlyMap<string, ReviewItem>>();
+
+/** Each item by its store key, built once per queue (weakly, so it goes with the queue). */
+export function reviewItemsByKey(items: readonly ReviewItem[]): ReadonlyMap<string, ReviewItem> {
+  let byKey = keyedQueues.get(items);
+  if (!byKey) {
+    const map = new Map<string, ReviewItem>();
+    for (const item of items) map.set(reviewItemKey(item), item);
+    keyedQueues.set(items, (byKey = map));
+  }
+  return byKey;
 }

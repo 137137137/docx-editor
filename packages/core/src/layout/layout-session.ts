@@ -185,7 +185,7 @@ export interface LayoutSession {
   /**
    * Page-bottom footnote reserves from the last published notes layout.
    *
-   * Seeded into the next {@link layoutSemanticDocumentWithNotes} call so the first body
+   * Seeded into the next {@link layoutSemanticDocumentWithNotesSteps} call so the first body
    * pass already matches the reserved context key — without this, every notes document
    * starts empty, mismatches, and throws away the session on reflow.
    */

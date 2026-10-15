@@ -8,6 +8,7 @@ import {
   paragraphMarkRevisionsOf,
   resolvedChangeSites,
   revisionIncluded,
+  revisionFilterSelects,
   revisionProjectionMode,
   type RevisionAttribution,
   type RevisionAuthorFilter,
@@ -73,7 +74,8 @@ export function projectRevisionFormatting(
   filter?: RevisionAuthorFilter,
   depth = 0
 ): OoxmlElement {
-  if ((mode === 'all-markup' && !filter) || depth >= MAX_XML_DEPTH) return node;
+  if ((mode === 'all-markup' && !revisionFilterSelects(filter)) || depth >= MAX_XML_DEPTH)
+    return node;
   // Leaf elements and text containers cannot hold a tracked formatting record.
   // Do not retain a per-view map for every property and text element in a large document.
   if (node.children.every((child) => child.kind === 'textValue')) return node;

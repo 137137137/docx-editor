@@ -34,6 +34,7 @@ import {
   revisionProjectionMode,
   revisionsVisible,
   withRevision,
+  revisionFilterSelects,
   type RevisionAttribution,
   type RevisionAuthorFilter,
   type RevisionDisplayMode,
@@ -233,7 +234,7 @@ export function markRemovedInMode(
   displayMode: RevisionDisplayMode,
   authorFilter?: RevisionAuthorFilter
 ): boolean {
-  if (displayMode === 'all-markup' && !authorFilter) return false;
+  if (displayMode === 'all-markup' && !revisionFilterSelects(authorFilter)) return false;
   for (const revision of paragraphMarkRevisionsOf(paragraph)) {
     const effectiveMode = authorFilter
       ? revisionProjectionMode(authorFilter, revision, displayMode)

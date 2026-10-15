@@ -27,6 +27,8 @@ import {
 } from './comment-reads.ts';
 import { locateSites } from './review-site-locations.ts';
 import { createRecentRootCache } from './recent-root-cache.ts';
+import { withStableCards } from './review-item-identity.ts';
+import { rememberRevisionRoot, unchangedRevisionItems } from './review-items-reuse.ts';
 import { deepParagraphOrderOfPart } from './review-paragraph-order.ts';
 // The vocabulary this derivation speaks — the item shapes and their pure helpers — lives in
 // `review-items.ts`, where the binding and layout lanes can reach it too.
@@ -116,11 +118,26 @@ function revisionItemsOfWith(
     // The name rides along because the items embed it (`ranges[*].partName`): a root is
     // the cache key, and serving one part's items to another part that shares the root
     // under a different name would stamp every range with the wrong part.
-    if (cached && cached.name === part.name) return cached.items;
+    if (cached && cached.name === part.name) {
+      rememberRevisionRoot(part);
+      return cached.items;
+    }
+    const unchanged = unchangedRevisionItems(part, (root) => {
+      const previous = revisionItemsCache.get(root);
+      return previous?.name === part.name ? previous.items : undefined;
+    });
+    if (unchanged) {
+      revisionItemsCache.set(part.root, { name: part.name, items: unchanged });
+      rememberRevisionRoot(part);
+      return unchanged;
+    }
   }
-  const items = computeRevisionItemsOf(part, dependencies);
+  const computed = computeRevisionItemsOf(part, dependencies);
+  const items =
+    cacheable && dependencies.retainRevisionItems ? withStableCards(part.name, computed) : computed;
   if (cacheable && dependencies.retainRevisionItems) {
     revisionItemsCache.set(part.root, { name: part.name, items });
+    rememberRevisionRoot(part);
   }
   return items;
 }
@@ -585,6 +602,13 @@ function normalizeRetainedCommentLinks<T extends LinkableReviewItem>(
   return { ...item, replyIds: retainedReplyIds } as T;
 }
 
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return false;
+  return true;
+}
+
 /** A range as a comparable key, so "exactly these characters" is one lookup. */
 function rangeKey(range: ReviewRange): string {
   return (
@@ -614,13 +638,21 @@ export function linkRevisionReplies<T extends LinkableReviewItem>(items: readonl
   const retainedItems = items.map((item) =>
     normalizeRetainedCommentLinks(item, retainedCommentIds)
   );
-  const revisionBySpan = new Map<string, { readonly id: string; readonly nesting: number }>();
+  // Only a span some comment can claim is ever looked up: keying every revision's range built
+  // a string per change per keystroke on documents with thousands of changes and no answers.
+  const claimableStarts = new Set<string>();
   for (const item of retainedItems) {
+    if (item.kind === 'comment' && item.parentId === undefined && !item.orphaned && item.range)
+      claimableStarts.add(item.range.start.paragraphId);
+  }
+  const revisionBySpan = new Map<string, { readonly id: string; readonly nesting: number }>();
+  for (const item of claimableStarts.size > 0 ? retainedItems : []) {
     if (item.kind !== 'revision') continue;
     for (const range of item.ranges ?? []) {
       if (
-        range.start.paragraphId === range.end.paragraphId &&
-        range.start.offset === range.end.offset
+        !claimableStarts.has(range.start.paragraphId) ||
+        (range.start.paragraphId === range.end.paragraphId &&
+          range.start.offset === range.end.offset)
       ) {
         continue;
       }
@@ -675,7 +707,8 @@ export function linkRevisionReplies<T extends LinkableReviewItem>(items: readonl
   return retainedItems.map((item) => {
     if (item.kind === 'revision') {
       const replies = repliesOf.get(item.id) ?? [];
-      if (replies.length === 0 && (item.replyIds ?? []).length === 0) return item;
+      // Unchanged links keep the item, so every identity-keyed read of it stays warm.
+      if (sameIds(replies, item.replyIds ?? [])) return item;
       return registerRevisionSiteNodeIds(
         { ...item, replyIds: replies },
         revisionSiteNodeIdsOf(item)

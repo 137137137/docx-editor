@@ -18,6 +18,7 @@ import {
   reviewQueueKeptByStructure,
   patchLocalReviewItems,
 } from './review-patch.ts';
+import { createReviewItemsMemo } from './review-items-memo.ts';
 import {
   addPackageComment,
   deletePackageComments,
@@ -616,6 +617,7 @@ export function openTreeSessionFromPackage(
    * The store hangs off the MAIN part in every case: Word only reads one authored there. So the
    * story varies per call and the data owner does not.
    */
+  const reviewItemsMemo = createReviewItemsMemo();
   const customNodePayloadsAcrossStories = (): ReadonlyMap<string, CustomNodePayloadRead> => {
     const owner = bodyStore().part.name;
     const merged = new Map<string, CustomNodePayloadRead>();
@@ -1015,17 +1017,26 @@ export function openTreeSessionFromPackage(
         const commentsExtendedPart = pkg.parts.get(
           commentsExtendedPartNameOf(pkg, store.part.name)
         );
+        const memoInputs = {
+          root: store.part.root,
+          commentsPart,
+          commentsExtendedPart,
+          stylesPart: stylesPartOf(pkg),
+          furnitureParts: furnitureAndNoteParts(),
+          // Resolved HERE because a payload lives in a customXml data part: the derivation
+          // receives story parts, and reaching a package part from one is not something a
+          // capability module can do.
+          customNodePayloads: customNodePayloadsAcrossStories(),
+        };
         const derived = (): readonly ReviewItem[] =>
+          reviewItemsMemo.get(memoInputs) ??
           derive.collectReviewItems({
             storyPart: store.part,
-            furnitureParts: furnitureAndNoteParts(),
-            stylesPart: stylesPartOf(pkg),
+            furnitureParts: memoInputs.furnitureParts,
+            stylesPart: memoInputs.stylesPart,
             commentsPart,
             commentsExtendedPart,
-            // Resolved HERE because a payload lives in a customXml data part: the derivation
-            // receives story parts, and reaching a package part from one is not something a
-            // capability module can do.
-            customNodePayloads: customNodePayloadsAcrossStories(),
+            customNodePayloads: memoInputs.customNodePayloads,
           });
         const inputs = {
           part: store.part,
@@ -1073,6 +1084,7 @@ export function openTreeSessionFromPackage(
           }
         }
 
+        reviewItemsMemo.set(memoInputs, items);
         reviewCache = {
           revisionKey,
           bodyRevision: store.revision,
@@ -1105,9 +1117,11 @@ export function openTreeSessionFromPackage(
           ];
           reviewContentCache = {
             revision,
+            // The memoized anchor check first: it answers by path after an edit, where the
+            // site list is rebuilt for the whole story.
             present: stories.some(
               (part) =>
-                collectRevisionSites(part).length > 0 || storyCarriesCommentAnchor(part.root)
+                storyCarriesCommentAnchor(part.root) || collectRevisionSites(part).length > 0
             ),
           };
         }

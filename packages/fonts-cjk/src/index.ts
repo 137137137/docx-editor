@@ -5,19 +5,19 @@
  * The face is about 16 MB, so it ships in its own package. When this package is installed
  * next to `@docx-editor.dev/docx-to-pdf`, PDF export finds it without configuration.
  *
- * Node.js only: the face is a file beside this module, not a bundled asset.
+ * Node.js only: the face is a file beside this module, not a bundled asset. For the editor in
+ * a browser, use `cjkFonts()` from `@docx-editor.dev/fonts-cjk/browser`.
  *
  * @packageDocumentation
  * @public
  */
 import { pathToFileURL } from 'node:url';
 
-/**
- * Family name of the packaged face.
- *
- * @public
- */
-export const NOTO_SANS_CJK_JP_FAMILY = 'Noto Sans CJK JP';
+export {
+  CJK_SUBSTITUTED_FAMILIES,
+  LOCALIZED_CJK_FAMILIES,
+  NOTO_SANS_CJK_JP_FAMILY,
+} from './families.ts';
 
 /**
  * `file:` URL of the packaged face, `NotoSansCJKjp-Regular.otf`: one weight (400), one style

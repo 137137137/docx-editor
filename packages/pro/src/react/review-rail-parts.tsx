@@ -42,6 +42,7 @@ import {
   anchorFromRevisionElement,
   balloonBox,
   remeasureBalloonAnchor,
+  markOpenBalloonSites,
   balloonServesRevisionKind,
   findPaintedRevisionElement,
   matchBalloonReviewItem,
@@ -543,6 +544,15 @@ export function ReviewBalloon({ className, hidden }: ReviewBalloonProps) {
       observer?.disconnect();
     };
   }, [balloonOpen, zoom, layoutTick]);
+
+  // The sites of the open change carry a mark the stylesheet tints, again after each repaint.
+  useEffect(() => {
+    if (!anchor) return undefined;
+    const rail = rootRef.current?.closest('.docx-review') as HTMLElement | null;
+    const scroller = (rail?.closest('.docx-editor__scroll-container') ??
+      rail?.offsetParent) as HTMLElement | null;
+    return scroller ? markOpenBalloonSites(scroller, anchor) : undefined;
+  }, [anchor, layoutTick]);
 
   // Resolving the decision removes it from the queue; the balloon it was resolved from
   // must not linger over the text the accept just changed. A reply the reader is typing is

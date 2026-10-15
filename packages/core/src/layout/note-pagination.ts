@@ -24,10 +24,6 @@ import {
 } from './note-continuation-notice.ts';
 import type { OoxmlPart } from '@docx-editor.dev/core/store';
 import { fragmentOwnsPosition, fragmentParagraphs } from './line-segments.ts';
-import {
-  collectNoteReferences,
-  collectProjectedNoteReferences,
-} from '../store/package/note-references.ts';
 import type { DocumentSection } from './section-properties.ts';
 import { paragraphSectionIndexOf } from './note-paragraph-section-index.ts';
 import {
@@ -71,6 +67,7 @@ import {
   noteColumnBudgetPt,
   recordFootnoteReserve,
   RESERVE_BOUNDARY_BACKOFF_PT,
+  takeMovedSeedReserves,
 } from './note-reserves.ts';
 export { notesReserveContextKey };
 import {
@@ -105,6 +102,8 @@ import type { PendingLine } from './paragraph-flow.ts';
 import { cascadeRunProperties, type StyleCascadeTable } from './style-cascade.ts';
 import { DEFAULT_RUN_STYLE, resolveRunStyle, type ResolvedRunStyle } from './run-style.ts';
 import { finalizePageFieldProjection } from './field-projection.ts';
+import type { LayoutSteps } from './layout-steps.ts';
+import { withNoteAreasOnProgress, type NotesBodyOptions } from './note-progress.ts';
 import { overflowPageShellAt, type OverflowPageShell } from './page-furniture-insets.ts';
 import { resettleParitySheets } from './page-parity-sheet.ts';
 import {
@@ -112,10 +111,7 @@ import {
   type RevisionAuthorFilter,
   type RevisionDisplayMode,
 } from './revision-projection.ts';
-import {
-  noteReferenceRevisionContextKey,
-  noteReferenceVisible,
-} from './note-reference-visibility.ts';
+import { collectBodyNoteReferences } from './note-reference-visibility.ts';
 import {
   fingerprintHits,
   fingerprintHitsIdentity,
@@ -125,7 +121,7 @@ import {
 export type { PageRefHit } from './note-ref-hit.ts';
 
 /**
- * Bound on reflow attempts for an UNSEEDED document layout pass (cold open).
+ * Bound on reflow attempts for one document layout pass, cold or seeded.
  *
  * Sized for a cold open of a reference-dense document: adoption is a forward fixed-point
  * iteration whose settled prefix extends a few pages per round, so a legal document with a
@@ -135,18 +131,8 @@ export type { PageRefHit } from './note-ref-hit.ts';
  */
 export const MAX_NOTE_REFLOW_ATTEMPTS = 64;
 
-/**
- * Bound on reflow attempts for a SEEDED pass — one whose session carries the reserves a
- * previous pass settled on.
- *
- * A seeded pass starts at (or one edit away from) the fixed point and normally converges
- * in a round or two; a document that still churns after this many rounds continues on the
- * NEXT pass from where this one stopped, so the interactive path never blocks on the cold
- * search's full depth. Every reserve delta invalidates the affected sections' context
- * keys, so an unconverged round is a real relayout of those sections — this cap is what
- * bounds a keystroke's worst-case synchronous layout work.
- */
-const MAX_SEEDED_NOTE_REFLOW_ATTEMPTS = 8;
+/** Adoptions a later pass of the same part may still make after a full search. */
+const SEEDED_NOTE_REFLOW_HEADROOM = 16;
 
 /**
  * Total reserve-map adoptions allowed per BODY-PART identity, across passes.
@@ -161,8 +147,7 @@ const MAX_SEEDED_NOTE_REFLOW_ATTEMPTS = 8;
  * document between the orbit's page counts forever. An edit replaces the part and restarts
  * the search.
  */
-const MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE =
-  MAX_NOTE_REFLOW_ATTEMPTS + 2 * MAX_SEEDED_NOTE_REFLOW_ATTEMPTS;
+const MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE = MAX_NOTE_REFLOW_ATTEMPTS + SEEDED_NOTE_REFLOW_HEADROOM;
 
 /** Cap on total note story fragments attached across the document. */
 export const MAX_NOTE_AREA_FRAGMENTS = 4_096;
@@ -319,6 +304,8 @@ interface NotesPageAttachEntry {
 interface NotesPassMemo {
   /** Body state whose same-page reserve search reached the orphan-refinement phase. */
   orphanPolicyPart?: OoxmlPart;
+  /** The body block limit `orphanPolicyPart` was reached under; see `searchLimit` below. */
+  orphanPolicyLimit?: number;
   hitsFingerprint: string;
   /** {@link fingerprintHitsIdentity} of {@link allHits} — offsets excluded. */
   readonly identityFingerprint: string;
@@ -338,11 +325,12 @@ interface NotesPassMemo {
    */
   settledReserves: {
     readonly part: OoxmlPart;
+    readonly limit: number;
     readonly fingerprint: string;
     readonly reasons: readonly NotePaginationFallbackReason[];
   } | null;
   /** Reserve-map adoptions spent on the current body-part identity (budget above). */
-  reflowSpent: { readonly part: OoxmlPart; adopted: number } | null;
+  reflowSpent: { readonly part: OoxmlPart; readonly limit: number; adopted: number } | null;
   readonly pageAttach: WeakMap<PageRecord, NotesPageAttachEntry>;
   /**
    * PAGE-LOCAL reserve results only (area stack + eviction). The neighbour-reading
@@ -359,12 +347,22 @@ interface NotesPassMemo {
       readonly allowOrphanDeferral: boolean;
       /** Whether the next page opens with a split row's rest ({@link continuedRowId}). */
       readonly nextOpening: string | null;
+      /**
+       * The next page's content box, which decides whether a reference line may move there.
+       * A resumed body pass keeps this page while the next page's reserve, and so its box,
+       * changed.
+       */
+      readonly nextBox: string;
       readonly reserve: number;
       /** The raw note-area height (hold-out's `existingAreaHeight` input). */
       readonly areaHeight: number;
       readonly reasons: readonly NotePaginationFallbackReason[];
     }
   >;
+}
+
+function contentBoxToken(page: PageRecord | undefined): string {
+  return page ? `${page.contentBox.width}x${page.contentBox.height}` : '';
 }
 
 /** Identity fields the fingerprint cannot express; compared against the previous input. */
@@ -2194,6 +2192,7 @@ function computeFootnoteReservesWithPolicy(
         cached.marks === noteMarks &&
         cached.allowOrphanDeferral === allowOrphanDeferral &&
         cached.nextOpening === continuedRowId(nextPage) &&
+        cached.nextBox === contentBoxToken(nextPage) &&
         pageRefsEqual(fnRefs, cached.pageRefs)
       ) {
         for (const reason of cached.reasons) reasons.push(reason);
@@ -2251,6 +2250,7 @@ function computeFootnoteReservesWithPolicy(
       memo.pageReserve.set(page, {
         allowOrphanDeferral,
         nextOpening: continuedRowId(nextPage),
+        nextBox: contentBoxToken(nextPage),
         pageRefs: fnRefs,
         marks: noteMarks,
         reserve: localNeeded,
@@ -2299,9 +2299,16 @@ export function attachNotesToLayout(
      * Opaque at this boundary; the shape is owned by this module.
      */
     readonly memo?: unknown;
+    /**
+     * The pages are a completed prefix of a pass, shown before it ends: attach page-bottom
+     * footnotes only. Section- and document-end notes, continuation sheets and the final marks
+     * wait for the whole document, or they would land at the end of the prefix.
+     */
+    readonly partial?: boolean;
   }
 ): NotesAttachResult {
   const memo = (options?.memo ?? null) as NotesPassMemo | null;
+  const partial = options?.partial === true;
   const reasons: NotePaginationFallbackReason[] = [...(options?.fallbackReasons ?? [])];
   const paragraphSectionIndex = options?.paragraphSectionIndex ?? new Map<string, number>();
   const overflowBudget: NoteOverflowBudget = { remaining: MAX_NOTE_OVERFLOW_PAGES };
@@ -2342,7 +2349,7 @@ export function attachNotesToLayout(
     noteMarks = memo.finalMarks.marks;
   } else {
     noteMarks = buildMarkContext(footnoteSites, endnoteSites, input);
-    if (memo) memo.finalMarks = { sitesFingerprint, marks: noteMarks };
+    if (memo && !partial) memo.finalMarks = { sitesFingerprint, marks: noteMarks };
   }
   // Keyed on the FINAL mark context, whose identity the memo keeps while the sites
   // fingerprint stands, so unchanged notes reuse their story layouts across passes.
@@ -2448,6 +2455,10 @@ export function attachNotesToLayout(
     return attached;
   });
 
+  if (partial) {
+    const shown = reprojectBodyNoteMarks({ ...layout, pages }, noteMarks);
+    return { layout: shown, fallbackReasons: reasons, noteMarks };
+  }
   const pageCountBeforeOverflow = pages.length;
 
   // Drain footnote continuations that outlive the final body page.
@@ -2545,41 +2556,12 @@ export function attachNotesToLayout(
   };
 }
 
-function collectBodyNoteReferences(
-  part: OoxmlPart,
-  displayMode: RevisionDisplayMode,
-  authorFilter?: RevisionAuthorFilter
-): readonly {
-  readonly noteKind: NoteKind;
-  readonly noteId: number;
-  readonly paragraphId: string;
-  readonly atomOffset: number;
-  readonly customMarkFollows: boolean;
-}[] {
-  const unfiltered = displayMode === 'all-markup' && authorFilter === undefined;
-  const hits = unfiltered
-    ? collectNoteReferences(part)
-    : collectProjectedNoteReferences(part, {
-        includeReference: (_node, ancestors) =>
-          noteReferenceVisible(ancestors, displayMode, authorFilter),
-        projectionKey: `${displayMode};${authorFilter?.cacheKey ?? ''}`,
-        ancestryKey: noteReferenceRevisionContextKey,
-      });
-  return hits.map((hit) => ({
-    noteKind: hit.noteKind,
-    noteId: hit.noteId,
-    paragraphId: hit.paragraphId,
-    atomOffset: hit.atomOffset,
-    customMarkFollows: hit.customMarkFollows,
-  }));
-}
-
 // Reserve-map algebra (context key, compact/equal/grow/fingerprint) lives in
 // note-reserves.ts; the context key re-exports below so existing import sites hold.
 
 /**
  * Notes path: provisional marks → body layout → reserve → bounded reflow → attach.
- * `runBody` is the coordinator's body layout pass (single- or multi-section).
+ * `runBodySteps` is the coordinator's body layout pass (single- or multi-section).
  *
  * Convergence requires the body to have been laid out with exactly the reserves still
  * needed. Every pass adopts the freshly computed map (stale entries drop with it); a
@@ -2594,25 +2576,17 @@ function collectBodyNoteReferences(
  * first body pass already carries the prior published reserve set (and its context key).
  * Reflow keeps the session: a changed reserve set changes the layout context, so resume
  * falls through to a full pass without discarding the caller's session write-back.
+ *
+ * Each body run reports the pages it has completed, with their footnote areas, so an edit
+ * can show the pages on screen before the reserve search ends.
  */
-export function layoutSemanticDocumentWithNotes<
-  Opts extends Pick<NotesLayoutInput, 'styleCascade' | 'numberingIndex'> & {
-    noteMarks?: NoteMarkContext;
-    pageBottomReserves?: ReadonlyMap<number, number>;
-    session?: {
-      previous: SemanticLayout | null;
-      multi: unknown;
-      notes: unknown;
-      notePageBottomReserves?: ReadonlyMap<number, number> | null;
-    };
-  },
->(
+export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOptions>(
   part: OoxmlPart,
   sections: readonly DocumentSection[],
   optionsWithLists: Opts,
   notesInput: NotesLayoutInput,
-  runBody: (opts: Opts) => SemanticLayout
-): SemanticLayout {
+  runBodySteps: (opts: Opts) => LayoutSteps<SemanticLayout>
+): LayoutSteps<SemanticLayout> {
   const displayMode =
     (optionsWithLists as { displayMode?: RevisionDisplayMode }).displayMode ??
     DEFAULT_REVISION_DISPLAY_MODE;
@@ -2624,7 +2598,7 @@ export function layoutSemanticDocumentWithNotes<
       optionsWithLists.session.notes = null;
       optionsWithLists.session.notePageBottomReserves = null;
     }
-    return runBody({
+    return yield* runBodySteps({
       ...optionsWithLists,
       noteMarks: undefined,
       pageBottomReserves: undefined,
@@ -2649,23 +2623,52 @@ export function layoutSemanticDocumentWithNotes<
   const notesMemo = notesMemoState.memo;
   const allHits = notesMemoState.allHits;
   const noteMarks = notesMemo?.provisionalMarks ?? provisionalNoteMarks(allHits, notesInput);
+  // Set when a newer edit replaces this pass: the search stops after its current round.
+  let wrappedUp = false;
+  const bodySteps = (opts: Opts): LayoutSteps<SemanticLayout> =>
+    withNoteAreasOnProgress(
+      runBodySteps(opts),
+      (layout) =>
+        attachNotesToLayout(layout, allHits, notesInput, {
+          fallbackReasons: [],
+          paragraphSectionIndex,
+          memo: notesMemo,
+          partial: true,
+        }).layout,
+      () => {
+        wrappedUp = true;
+      }
+    );
   let seeded = optionsWithLists.session?.notePageBottomReserves;
   let usedReserves: ReadonlyMap<number, number> = seeded
     ? compactFootnoteReserves(seeded)
     : new Map();
   let fallbackReasons: NotePaginationFallbackReason[] = [];
-  let bodyLayout: SemanticLayout = runBody({
+  let bodyLayout: SemanticLayout = yield* bodySteps({
     ...optionsWithLists,
     noteMarks,
     pageBottomReserves: usedReserves,
+    ...(seeded ? { pageBottomReservesFromPreviousPass: true } : {}),
   });
+  // The seed at the page indices this pass laid it out at, when sections moved it.
+  const movedSeed = takeMovedSeedReserves(optionsWithLists.session);
+  if (movedSeed) usedReserves = compactFootnoteReserves(movedSeed);
   if (noteBodyGeometryChanged(optionsWithLists.session, bodyLayout, part)) {
     seeded = undefined;
     usedReserves = new Map();
     resetNoteReserveSearch(notesMemo);
-    bodyLayout = runBody({ ...optionsWithLists, noteMarks, pageBottomReserves: usedReserves });
+    bodyLayout = yield* bodySteps({
+      ...optionsWithLists,
+      noteMarks,
+      pageBottomReserves: usedReserves,
+    });
   }
-  let allowOrphanDeferral = notesMemo?.orphanPolicyPart === part;
+  // A progressive open lays out growing prefixes of one part, each its own pagination
+  // problem. Search state is kept per part AND prefix, or a settled prefix answer (and the
+  // budget the prefixes spent) decided the whole document by how its open was sliced.
+  const searchLimit = (optionsWithLists as { bodyBlockLimit?: number }).bodyBlockLimit ?? -1;
+  let allowOrphanDeferral =
+    notesMemo?.orphanPolicyPart === part && notesMemo.orphanPolicyLimit === searchLimit;
   const seedFingerprint = footnoteReservesFingerprint(usedReserves);
   // An unchanged document seeded with the answer it settled on republishes it: the loop
   // below exists to find reserves for a NEW document state, and re-running it on the same
@@ -2674,6 +2677,7 @@ export function layoutSemanticDocumentWithNotes<
     notesMemoState.reused &&
     notesMemo?.settledReserves &&
     notesMemo.settledReserves.part === part &&
+    notesMemo.settledReserves.limit === searchLimit &&
     notesMemo.settledReserves.fingerprint === seedFingerprint
       ? notesMemo.settledReserves
       : null;
@@ -2684,20 +2688,21 @@ export function layoutSemanticDocumentWithNotes<
     // Adoption budget for this body-part identity, carried across session passes so the
     // iteration continues where the previous pass stopped instead of restarting.
     const spent =
-      notesMemo && notesMemo.reflowSpent && notesMemo.reflowSpent.part === part
+      notesMemo &&
+      notesMemo.reflowSpent &&
+      notesMemo.reflowSpent.part === part &&
+      notesMemo.reflowSpent.limit === searchLimit
         ? notesMemo.reflowSpent
-        : { part, adopted: 0 };
+        : { part, limit: searchLimit, adopted: 0 };
     if (notesMemo) notesMemo.reflowSpent = spent;
     let adoptedThisPass = 0;
 
-    // A seeded pass starts at the previous fixed point and answers a keystroke; its
-    // synchronous relayout depth stays at the interactive cap, and an unconverged search
-    // continues on the next pass (same `spent` budget). Only a cold pass pays the full
-    // search depth — and a seed with NO entries is cold in everything but name (the
-    // previous document state simply had no reserves; a paste that introduces a hundred
-    // footnotes deserves the full search, not the keystroke cap).
-    const attemptCap =
-      seeded && usedReserves.size > 0 ? MAX_SEEDED_NOTE_REFLOW_ATTEMPTS : MAX_NOTE_REFLOW_ATTEMPTS;
+    // A seeded pass starts at the previous fixed point and normally converges in a round or
+    // two. It has the full search depth: an edit host shows the pages on screen after the
+    // first round and runs the rest in the background, and a newer edit wraps the search up
+    // after its current round (`wrappedUp`), so the next pass continues it. A search cut short
+    // with no pass after it left the document on an unfinished answer.
+    const attemptCap = MAX_NOTE_REFLOW_ATTEMPTS;
     // Consecutive page-count growth is the runaway signature (an eviction chain minting a
     // near-blank sheet per round on a shape none of the guards recognized); the fingerprint
     // exits never fire on it because every round's map is new. Cut it off early rather
@@ -2709,8 +2714,9 @@ export function layoutSemanticDocumentWithNotes<
     let converged = false;
     let stableReserves: ReadonlyMap<number, number> | null = null;
     let phaseEnvelope: ReadonlyMap<number, number> = usedReserves;
-    const relayout = (reserves: ReadonlyMap<number, number>): SemanticLayout =>
-      runBody({ ...optionsWithLists, noteMarks, pageBottomReserves: reserves });
+    function* relayout(reserves: ReadonlyMap<number, number>): LayoutSteps<SemanticLayout> {
+      return yield* bodySteps({ ...optionsWithLists, noteMarks, pageBottomReserves: reserves });
+    }
     let previousPageCount = bodyLayout.pages.length;
     // Scaled with the document: legitimate cold convergence of a large document can grow
     // the page count for more consecutive rounds than a small one (the settled prefix
@@ -2743,7 +2749,10 @@ export function layoutSemanticDocumentWithNotes<
           strictReserves = usedReserves;
           strictReasons = [...computed.reasons];
           allowOrphanDeferral = true;
-          if (notesMemo) notesMemo.orphanPolicyPart = part;
+          if (notesMemo) {
+            notesMemo.orphanPolicyPart = part;
+            notesMemo.orphanPolicyLimit = searchLimit;
+          }
           appliedFingerprints.clear();
           appliedFingerprints.add(footnoteReservesFingerprint(usedReserves));
           phaseEnvelope = usedReserves;
@@ -2752,7 +2761,7 @@ export function layoutSemanticDocumentWithNotes<
         converged = true;
         break;
       }
-      if (spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE) {
+      if (spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE || wrappedUp) {
         fallbackReasons.push('note-reflow-exhausted');
         break;
       }
@@ -2793,7 +2802,7 @@ export function layoutSemanticDocumentWithNotes<
           fallbackReasons.push('note-reflow-exhausted');
           if (!computed.stable && stableReserves && stableReserves !== usedReserves) {
             usedReserves = stableReserves;
-            bodyLayout = relayout(stableReserves);
+            bodyLayout = yield* relayout(stableReserves);
           }
           break;
         }
@@ -2806,7 +2815,7 @@ export function layoutSemanticDocumentWithNotes<
       adoptedThisPass += 1;
       // Keep the caller's session: reserve changes alter the layout context key, so
       // checkpoints from a different reserve set are not resumed — they are replaced.
-      bodyLayout = relayout(usedReserves);
+      bodyLayout = yield* relayout(usedReserves);
       consecutiveGrowth = bodyLayout.pages.length > previousPageCount ? consecutiveGrowth + 1 : 0;
       previousPageCount = bodyLayout.pages.length;
       if (attempt === attemptCap - 1) {
@@ -2818,12 +2827,12 @@ export function layoutSemanticDocumentWithNotes<
     // Republish the strict one it started from: that map IS converged, and a phase that
     // failed to beat it must not cost the document a layout no pass agreed on. One extra
     // body pass, only here, and only when the maps actually differ.
-    if (!converged && strictReserves) {
+    if (!converged && strictReserves && !wrappedUp) {
       const refinementMoved = !footnoteReservesEqual(strictReserves, usedReserves);
       usedReserves = strictReserves;
       fallbackReasons = [...strictReasons];
       if (refinementMoved) {
-        bodyLayout = relayout(usedReserves);
+        bodyLayout = yield* relayout(usedReserves);
       }
       // Settled for this part identity: the refinement had its budget and did not beat the
       // strict answer, so later passes republish instead of re-spending it. An edit
@@ -2831,6 +2840,7 @@ export function layoutSemanticDocumentWithNotes<
       if (notesMemo) {
         notesMemo.settledReserves = {
           part,
+          limit: searchLimit,
           fingerprint: footnoteReservesFingerprint(usedReserves),
           reasons: [...fallbackReasons],
         };
@@ -2842,10 +2852,12 @@ export function layoutSemanticDocumentWithNotes<
     // the answer so later passes over this part republish instead of re-searching.
     if (
       notesMemo &&
+      !wrappedUp &&
       (adoptedThisPass === 0 || spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE)
     ) {
       notesMemo.settledReserves = {
         part,
+        limit: searchLimit,
         fingerprint: footnoteReservesFingerprint(usedReserves),
         reasons: [...fallbackReasons],
       };

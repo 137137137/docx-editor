@@ -106,3 +106,21 @@ describe('an overlay rectangle carries its review author', () => {
     expect(rect.querySelector('img')).toBeNull();
   });
 });
+
+describe('a repaint keeps unchanged rectangles', () => {
+  test('an identical band keeps its element; a changed one is rebuilt', () => {
+    const layer = document.createElement('div');
+    const band = { ...RECT, className: 'docx-comment-band' };
+    const moved = { ...RECT, y: 20, className: 'docx-comment-band' };
+    paintSelectionOverlay(layer, LAYOUT, [band, moved], { scale: 1 });
+    const [first, second] = [...layer.children];
+    paintSelectionOverlay(layer, LAYOUT, [band, { ...moved, y: 30 }], { scale: 1 });
+    expect(layer.children[0]).toBe(first!);
+    expect(layer.children[1]).not.toBe(second!);
+    expect((layer.children[1] as HTMLElement).style.top).toBe('102px');
+    const active = { ...band, className: 'docx-comment-band docx-comment-band--active' };
+    paintSelectionOverlay(layer, LAYOUT, [active], { scale: 1 });
+    expect(layer.children).toHaveLength(1);
+    expect(layer.children[0]).not.toBe(first!);
+  });
+});

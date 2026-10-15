@@ -180,6 +180,7 @@ export function drawingZonesAtLinePlacement(
   const { pageZones, brokenLines, lineIndex, fragmentFirstLine, appliedSkipByLineIndex } = options;
   if (lineIndex <= fragmentFirstLine) return pageZones;
   const offsets = drawingModelOffsetsInParagraph(options.paragraph);
+  if (offsets.size === 0) return pageZones;
   const anchorLineTopByModelStart = new Map<number, number>();
   let extent = 0;
   for (let index = fragmentFirstLine; index < lineIndex; index++) {

@@ -346,3 +346,127 @@ describe('withResolvedListItems session warm path', () => {
     }
   });
 });
+
+describe('withResolvedListItems session resume', () => {
+  const TWO_LISTS = `
+    <w:abstractNum w:abstractNumId="1">
+      <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+      <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%1.%2)"/></w:lvl>
+    </w:abstractNum>
+    <w:abstractNum w:abstractNumId="2">
+      <w:lvl w:ilvl="0"><w:start w:val="3"/><w:numFmt w:val="upperRoman"/><w:lvlText w:val="%1."/></w:lvl>
+    </w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+    <w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>
+  `;
+  const item = (index: number) => {
+    const numId = index % 7 === 0 ? 2 : 1;
+    const ilvl = numId === 1 && index % 3 === 1 ? 1 : 0;
+    return (
+      `<w:p><w:pPr><w:numPr><w:ilvl w:val="${ilvl}"/><w:numId w:val="${numId}"/></w:numPr></w:pPr>` +
+      `<w:r><w:t>item ${index}</w:t></w:r></w:p>`
+    );
+  };
+
+  function longBody() {
+    // More numbered paragraphs than several resume checkpoints, with plain ones between.
+    const paragraphs = Array.from({ length: 900 }, (_, index) =>
+      index % 11 === 5 ? `<w:p><w:r><w:t>plain ${index}</w:t></w:r></w:p>` : item(index)
+    ).join('');
+    const result = readOoxmlPart(
+      `<w:document xmlns:w="${W}"><w:body>${paragraphs}</w:body></w:document>`,
+      { name: '/word/document.xml', contentType: 'app/xml' }
+    );
+    if (!result.ok) throw new Error(result.reason);
+    return result.part;
+  }
+
+  const shape = (
+    items: ReadonlyMap<string, { markerText: string; ilvl: number; numId: string }>
+  ): string[] =>
+    [...items].map(([id, entry]) => `${id}:${entry.numId}:${entry.ilvl}:${entry.markerText}`);
+
+  test('every edit resumes to the items a fresh resolve gives', () => {
+    const numberingIndex = loadNumbering(TWO_LISTS);
+    const session = createLayoutSession();
+    let part = longBody();
+    withResolvedListItemsForSession({ numberingIndex }, storyBlocks(part), session);
+    const paragraphAt = (index: number): string => {
+      const root = part.root.children[0];
+      if (!root || root.kind === 'textValue') throw new Error('no body');
+      return root.children[index]!.id;
+    };
+    const edits = [
+      () => ({ op: 'splitParagraph' as const, paragraphId: paragraphAt(620), offset: 2 }),
+      () => ({
+        op: 'setParagraphProperties' as const,
+        paragraphId: paragraphAt(300),
+        properties: [
+          {
+            localName: 'numPr',
+            children: [
+              { localName: 'ilvl', attributes: { val: '1' } },
+              { localName: 'numId', attributes: { val: '1' } },
+            ],
+          },
+        ],
+      }),
+      () => ({
+        op: 'joinParagraphs' as const,
+        firstId: paragraphAt(100),
+        secondId: paragraphAt(101),
+      }),
+      () => ({ op: 'splitParagraph' as const, paragraphId: paragraphAt(3), offset: 1 }),
+    ];
+    for (const edit of edits) {
+      const result = applyTreeOp(part, edit() as Parameters<typeof applyTreeOp>[1]);
+      if (!result.ok) throw new Error(result.reason);
+      part = result.part;
+      const resumed = withResolvedListItemsForSession(
+        { numberingIndex },
+        storyBlocks(part),
+        session
+      );
+      const fresh = withResolvedListItems({ numberingIndex }, storyBlocks(part));
+      expect(shape(resumed.listItems!)).toEqual(shape(fresh.listItems!));
+    }
+  });
+
+  test('a style that starts numbering a paragraph numbers it on the next resolve', () => {
+    const cascade = (stylePr: string) => {
+      const result = readOoxmlPart(
+        `<w:styles xmlns:w="${W}"><w:style w:type="paragraph" w:styleId="S">` +
+          `<w:pPr>${stylePr}</w:pPr></w:style></w:styles>`,
+        { name: '/word/styles.xml', contentType: 'app/xml' }
+      );
+      if (!result.ok) throw new Error(result.reason);
+      return buildStyleCascadeTable(result.part.root);
+    };
+    const numberingIndex = loadNumbering(TWO_LISTS);
+    const blocks = storyBlocks(longBody());
+    const session = createLayoutSession();
+    withResolvedListItemsForSession({ numberingIndex, styleCascade: cascade('') }, blocks, session);
+    const styled = readOoxmlPart(
+      `<w:document xmlns:w="${W}"><w:body>` +
+        '<w:p><w:pPr><w:pStyle w:val="S"/></w:pPr><w:r><w:t>styled</w:t></w:r></w:p>' +
+        '</w:body></w:document>',
+      { name: '/word/styled.xml', contentType: 'app/xml' }
+    );
+    if (!styled.ok) throw new Error(styled.reason);
+    const withStyled = [...storyBlocks(styled.part), ...blocks];
+    const numbered = cascade('<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>');
+    withResolvedListItemsForSession(
+      { numberingIndex, styleCascade: cascade('') },
+      withStyled,
+      session
+    );
+    const resumed = withResolvedListItemsForSession(
+      { numberingIndex, styleCascade: numbered },
+      withStyled,
+      session
+    );
+    const fresh = withResolvedListItems({ numberingIndex, styleCascade: numbered }, withStyled);
+    expect(shape(resumed.listItems!)).toEqual(shape(fresh.listItems!));
+    expect(resumed.listItems!.get(withStyled[0]!.id)?.markerText).toBe('1.');
+  });
+});

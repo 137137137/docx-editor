@@ -11,8 +11,10 @@ import { characterHeaderPageToken } from './character-header-pages.ts';
 
 import type { OoxmlElement } from '@docx-editor.dev/core/store';
 import { finalizePageFieldProjection, withPageFieldSources } from './field-projection.ts';
+import { recordMovedSeedReserves } from './note-reserves.ts';
 import { pageRefAssignmentToken } from './field-page-furniture.ts';
 import { framedTokenJoin } from './layout-cache.ts';
+import { drainLayoutSteps, type LayoutSteps } from './layout-steps.ts';
 import type { ContinuedPageHost } from './continued-page-zones.ts';
 import { framedStoryEntry, remapPage, type HeaderFooterStoryLayout } from './hf-layout.ts';
 import {
@@ -75,6 +77,11 @@ export interface SectionLayoutResult {
   /** The shell a sheet minted at a DOCUMENT index resolves to under this section's variants. */
   readonly overflowShellAt: (documentPageIndex: number, box: LayoutBox) => OverflowPageShell;
 }
+
+/** {@link LayoutSectionFn} as steps that may pause between pages. */
+export type LayoutSectionStepsFn = (
+  ...args: Parameters<LayoutSectionFn>
+) => LayoutSteps<SectionLayoutResult>;
 
 export type LayoutSectionFn = (
   bodies: readonly OoxmlElement[],
@@ -371,7 +378,10 @@ interface PublishedPageMemo {
   readonly format: string | undefined;
   readonly published: PageRecord;
 }
-const publishedPageMemos = new WeakMap<PageRecord, PublishedPageMemo>();
+// A few per page: a footnote reserve search can publish a page at alternating places in its
+// rounds, and one entry made each round remap the page again.
+const publishedPageMemos = new WeakMap<PageRecord, PublishedPageMemo[]>();
+const PUBLISHED_PER_PAGE = 3;
 
 function publishSectionPage(
   page: PageRecord,
@@ -381,27 +391,24 @@ function publishSectionPage(
   sectionPageCount: number,
   format: string | undefined
 ): PageRecord {
-  const memo = publishedPageMemos.get(page);
-  if (
-    memo &&
-    memo.globalIndex === globalIndex &&
-    memo.sheetY === sheetY &&
-    memo.pageNumber === pageNumber &&
-    memo.sectionPageCount === sectionPageCount &&
-    memo.format === format
-  ) {
-    return memo.published;
-  }
+  const memos = publishedPageMemos.get(page);
+  const memo = memos?.find(
+    (entry) =>
+      entry.globalIndex === globalIndex &&
+      entry.sheetY === sheetY &&
+      entry.pageNumber === pageNumber &&
+      entry.sectionPageCount === sectionPageCount &&
+      entry.format === format
+  );
+  if (memo) return memo.published;
   const remapped = remapPage(page, globalIndex, sheetY);
   const published = withPageFieldSources([remapped], pageNumber, sectionPageCount, format)[0]!;
-  publishedPageMemos.set(page, {
-    globalIndex,
-    sheetY,
-    pageNumber,
-    sectionPageCount,
-    format,
-    published,
-  });
+  const entry = { globalIndex, sheetY, pageNumber, sectionPageCount, format, published };
+  if (!memos) publishedPageMemos.set(page, [entry]);
+  else {
+    if (memos.length >= PUBLISHED_PER_PAGE) memos.shift();
+    memos.push(entry);
+  }
   return published;
 }
 
@@ -424,7 +431,89 @@ export function layoutMultiSectionDocument(
   options: SemanticLayoutOptions,
   layoutSection: LayoutSectionFn
 ): SemanticLayout {
+  return drainLayoutSteps(
+    layoutMultiSectionDocumentSteps(
+      blocks,
+      sections,
+      revision,
+      options,
+      function* (bodies, sectionRevision, sectionOptions) {
+        return layoutSection(bodies, sectionRevision, sectionOptions);
+      }
+    )
+  );
+}
+
+/**
+ * Re-report a section pass's completed pages as the document's: the sheets before the section,
+ * then the section's pages so far, numbered and stacked as the final publish places them. Not
+ * restorable: section sessions advance in place, so a paused pass is finished, never undone.
+ */
+function* sectionProgress(
+  steps: LayoutSteps<SectionLayoutResult>,
+  before: readonly PageRecord[] | null,
+  sheetY: number,
+  displayedStart: number,
+  format: string | undefined,
+  revision: number
+): LayoutSteps<SectionLayoutResult> {
+  // Each completed page publishes once, here, without the shared publish memo: the final
+  // publish knows the section's page count and must find the memo as the last pass left it.
+  const published: PageRecord[] = [];
+  const sources: PageRecord[] = [];
+  let y = sheetY;
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+    const partial = next.value?.pages;
+    if (!before || !partial) {
+      yield undefined;
+      continue;
+    }
+    let from = 0;
+    while (from < sources.length && from < partial.length && sources[from] === partial[from]) {
+      from += 1;
+    }
+    if (from === partial.length && from === sources.length) {
+      yield undefined;
+      continue;
+    }
+    published.length = from;
+    sources.length = from;
+    const last = published[from - 1];
+    y = last ? last.box.y + last.box.height + SHEET_GUTTER_PT : sheetY;
+    for (let offset = from; offset < partial.length; offset += 1) {
+      const page = partial[offset]!;
+      const remapped = remapPage(page, before.length + offset, y);
+      const sheet = withPageFieldSources(
+        [remapped],
+        displayedStart + offset,
+        partial.length,
+        format
+      )[0]!;
+      published.push(sheet);
+      sources.push(page);
+      y = sheet.box.y + sheet.box.height + SHEET_GUTTER_PT;
+    }
+    yield {
+      pages: [...before, ...published],
+      finalize: (pages) => finalizePageFieldProjection({ revision, pages }),
+      restorable: false,
+    };
+  }
+}
+
+/** {@link layoutMultiSectionDocument} as steps that report the pages completed so far. */
+export function* layoutMultiSectionDocumentSteps(
+  blocks: readonly OoxmlElement[],
+  sections: readonly DocumentSection[],
+  revision: number,
+  options: SemanticLayoutOptions,
+  layoutSectionSteps: LayoutSectionStepsFn
+): LayoutSteps<SemanticLayout> {
   const { session, ...rest } = options;
+  // A prefix pass of a sliced open: page fields finalize again when the full pass runs.
+  const provisional = options.bodyBlockLimit !== undefined;
   const multi = ensureMultiState(session, multiSectionKeys(sections, options));
   // One retention pass over the UNION of every section's live keys. Retaining inside each
   // section's pass evicted every other section's entries — the multi-section break cache
@@ -438,6 +527,21 @@ export function layoutMultiSectionDocument(
     if (retainKeys && !rest.retainKeys) rest.cache?.retain(retainKeys);
   };
 
+  // A notes pass seeds its first run with the reserves of the previous pass. When an edit
+  // added or removed pages, every later section starts at another page index, and the seed
+  // then gave each of those sections reserves at the wrong pages: they laid out again under
+  // a new context, and again on every round of the reserve search. Each section reads its
+  // own entries moved by how far its first page moved; with a section added or removed the
+  // seed stays as it is.
+  const seed =
+    options.pageBottomReservesFromPreviousPass &&
+    options.pageBottomReserves &&
+    multi &&
+    multi.spans.length > 0 &&
+    multi.spans.length === sections.length
+      ? options.pageBottomReserves
+      : undefined;
+  const movedSeed = seed ? new Map<number, number>() : undefined;
   const pages: PageRecord[] = [];
   const remappedAll: PageRecord[] = [];
   const newSpans: SectionStackSpan[] = [];
@@ -572,36 +676,55 @@ export function layoutMultiSectionDocument(
     // section, so a continued section that merges onto its host sheet needs no special case.
     const measuredPageNumberFormat = section.properties.pageNumbering?.fmt;
 
-    const laid = layoutSection(slice, revision, {
-      ...rest,
-      retainKeys,
-      geometry,
-      furniture,
-      sectionColumns: section.properties.columns,
-      paragraphLineUnitPt: sectionLineGridPt(section.properties),
-      ...(section.properties.pageBorders
-        ? { sectionPageBorders: section.properties.pageBorders }
-        : {}),
-      ...(balanceColumns ? { balanceColumns } : {}),
-      // The empty paragraph that carries this section's mark takes no flow height when the
-      // next section is continuous: the next section starts where the content ended.
-      ...(endsContinuous ? { sectionMarkCollapses: true } : {}),
-      ...(markJoinsBreakSheet ? { markJoinsBreakSheet } : {}),
-      lineCounterStart: lineCounter,
-      // A continued section's local page 0 IS the host sheet, so its document page index
-      // is one behind the stack; every other section starts a fresh sheet at `startIndex`.
-      pageIndexStart: continues ? startIndex - 1 : startIndex,
-      // Paragraph spacing still collapses across a section boundary on a new sheet.
-      // Carry only the after-spacing budget there, never the prior sheet's cursor.
-      spaceBeforeCarry: flowSpaceAfter,
-      ...(continues ? { flowStartY: flowCursorY } : {}),
-      ...(continuedPageInsets ? { continuedPageInsets } : {}),
-      ...(continuedPageFurniture ? { continuedPageFurniture } : {}),
-      ...(measuredPageNumberFormat !== undefined
-        ? { bodyPageNumberFormat: measuredPageNumberFormat }
-        : {}),
-      ...(sectionSession ? { session: sectionSession } : {}),
-    });
+    const sectionReserves =
+      seed && movedSeed && prevSpan
+        ? movedSectionSeed(
+            seed,
+            prevSpan,
+            startIndex,
+            continues ? startIndex - 1 : startIndex,
+            movedSeed
+          )
+        : undefined;
+    const progressStart = section.properties.pageNumbering?.start ?? nextDisplayed;
+    const laid: SectionLayoutResult = yield* sectionProgress(
+      layoutSectionSteps(slice, revision, {
+        ...rest,
+        ...(sectionReserves ? { pageBottomReserves: sectionReserves } : {}),
+        retainKeys,
+        geometry,
+        furniture,
+        sectionColumns: section.properties.columns,
+        paragraphLineUnitPt: sectionLineGridPt(section.properties),
+        ...(section.properties.pageBorders
+          ? { sectionPageBorders: section.properties.pageBorders }
+          : {}),
+        ...(balanceColumns ? { balanceColumns } : {}),
+        // The empty paragraph that carries this section's mark takes no flow height when the
+        // next section is continuous: the next section starts where the content ended.
+        ...(endsContinuous ? { sectionMarkCollapses: true } : {}),
+        ...(markJoinsBreakSheet ? { markJoinsBreakSheet } : {}),
+        lineCounterStart: lineCounter,
+        // A continued section's local page 0 IS the host sheet, so its document page index
+        // is one behind the stack; every other section starts a fresh sheet at `startIndex`.
+        pageIndexStart: continues ? startIndex - 1 : startIndex,
+        // Paragraph spacing still collapses across a section boundary on a new sheet.
+        // Carry only the after-spacing budget there, never the prior sheet's cursor.
+        spaceBeforeCarry: flowSpaceAfter,
+        ...(continues ? { flowStartY: flowCursorY } : {}),
+        ...(continuedPageInsets ? { continuedPageInsets } : {}),
+        ...(continuedPageFurniture ? { continuedPageFurniture } : {}),
+        ...(measuredPageNumberFormat !== undefined
+          ? { bodyPageNumberFormat: measuredPageNumberFormat }
+          : {}),
+        ...(sectionSession ? { session: sectionSession } : {}),
+      }),
+      continues ? null : [...pages],
+      sheetY,
+      progressStart,
+      section.properties.pageNumbering?.fmt,
+      revision
+    );
     sectionShells.push({ startIndex, at: laid.overflowShellAt });
     lineCounter = laid.lineCounter;
     flowCursorY = laid.endCursorY;
@@ -750,7 +873,7 @@ export function layoutMultiSectionDocument(
 
   if (pages.length === 0) {
     const geometry = geometryOfSection(sections[0]?.properties ?? DEFAULT_SECTION_PROPERTIES);
-    const laid = layoutSection([], revision, {
+    const laid: SectionLayoutResult = yield* layoutSectionSteps([], revision, {
       ...rest,
       retainKeys,
       geometry,
@@ -761,7 +884,7 @@ export function layoutMultiSectionDocument(
         : {}),
     });
     retainOnce();
-    const finalized = finalizePageFieldProjection({ revision, pages: laid.pages });
+    const finalized = finalizePageFieldProjection({ revision, pages: laid.pages }, { provisional });
     registerOverflowPageShell(finalized, (_sectionAnchorIndex, documentPageIndex, box) =>
       laid.overflowShellAt(documentPageIndex, box)
     );
@@ -784,7 +907,7 @@ export function layoutMultiSectionDocument(
     return finalized;
   }
 
-  const freshlyFinalized = finalizePageFieldProjection({ revision, pages });
+  const freshlyFinalized = finalizePageFieldProjection({ revision, pages }, { provisional });
   let finalized = freshlyFinalized;
   const pageRefToken = pageRefAssignmentToken(pages);
 
@@ -812,7 +935,8 @@ export function layoutMultiSectionDocument(
     multi.spans = newSpans;
     multi.previousRemapped = remappedAll;
     multi.previousFinalized = finalized;
-    multi.previousPageCount = finalized.pages.length;
+    // A provisional page may still show an earlier page count; never restore it as final.
+    multi.previousPageCount = provisional ? -1 : finalized.pages.length;
     multi.previousPageRefToken = pageRefToken;
   }
 
@@ -840,7 +964,31 @@ export function layoutMultiSectionDocument(
     return owner?.at(documentPageIndex, box);
   });
   registerParityPlan(finalized, evenAndOddHeaders, sheetStarts, runningAfter);
+  if (movedSeed && session) recordMovedSeedReserves(session, movedSeed);
 
   retainOnce();
   return finalized;
+}
+
+/**
+ * One section's seed entries: the reserves of the pages it had in the previous pass, moved to
+ * where its pages start now. Also adds them to `moved`, the map the whole pass used.
+ */
+function movedSectionSeed(
+  seed: ReadonlyMap<number, number>,
+  previous: SectionStackSpan,
+  startIndex: number,
+  pageIndexStart: number,
+  moved: Map<number, number>
+): ReadonlyMap<number, number> {
+  const shift = startIndex - previous.startIndex;
+  const previousStart = pageIndexStart - shift;
+  const previousEnd = previousStart + previous.sourcePages.length;
+  const own = new Map<number, number>();
+  for (const [pageIndex, height] of seed) {
+    if (pageIndex < previousStart || pageIndex >= previousEnd) continue;
+    own.set(pageIndex + shift, height);
+    moved.set(pageIndex + shift, height);
+  }
+  return own;
 }
