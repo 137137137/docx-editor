@@ -79,6 +79,9 @@ export interface SelectionOverlayOptions {
   readonly className?: string;
 }
 
+/** What a painted rect shows, so an identical rect in the next pass keeps its element. */
+const overlaySignatures = new WeakMap<Element, string>();
+
 /**
  * Draw a set of rectangles over the pages.
  *
@@ -86,9 +89,6 @@ export interface SelectionOverlayOptions {
  * not paint out of its own subtree, and a stray child of a contenteditable is editable content
  * a keystroke could land in.
  */
-/** What a painted rect shows, so an identical rect in the next pass keeps its element. */
-const overlaySignatures = new WeakMap<Element, string>();
-
 export function paintSelectionOverlay(
   layer: HTMLElement,
   layout: SemanticLayout,
