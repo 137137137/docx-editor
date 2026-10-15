@@ -24,6 +24,12 @@ export interface LayoutProgress {
    * host that pauses it must finish it before laying out again; it cannot put it back.
    */
   readonly restorable?: boolean;
+  /**
+   * Asks a pass that is not restorable to end at its next consistent point, for a newer edit
+   * that replaces its answer. The pass still returns a layout that matches its session; the
+   * next pass continues from there.
+   */
+  readonly wrapUp?: () => void;
 }
 
 /** Steps that end with a `T`, reporting progress at some pause points. */

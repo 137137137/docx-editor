@@ -57,6 +57,7 @@ import {
 import { registerSurfaceMeasurement } from './surface-measurement.ts';
 import { startOpeningSlices } from './surface-progressive-open.ts';
 import { createDeferredLayout } from './surface-deferred-layout.ts';
+import { createCanonicalLayout } from './surface-canonical-layout.ts';
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
 import { createReviewOrderIndex } from './surface-review-order.ts';
 import { litReviewKeys, reviewItemsByKey } from './review-replacement-pairs.ts';
@@ -404,7 +405,7 @@ export function mountPaginatedSurface(
   let measurer = options.measurer ?? defaults!.measurer;
   // Incremental layout machinery — without these every keystroke re-lays out the document.
   const layoutCache = createParagraphLayoutCache<never>();
-  const layoutSession = createLayoutSession();
+  let layoutSession = createLayoutSession();
   function producerIdentity(): string {
     if (options.measurer) return options.producer ?? 'host-measurer';
     return `${options.producer ?? defaults?.producer ?? 'fixed-measurer'}@scale:${scale}`;
@@ -1025,6 +1026,7 @@ export function mountPaginatedSurface(
     readonly authorFilter?: RevisionAuthorFilter;
     readonly layoutSession: ReturnType<typeof createLayoutSession>;
     readonly furnitureSource: ReturnType<typeof createCurrentFurnitureSource>;
+    readonly live?: boolean; // Lays out as the live session does, not for a save.
   }
 
   /**
@@ -1430,7 +1432,7 @@ export function mountPaginatedSurface(
       // The layout context key already folds the mode in (`|rev:<mode>`), so a surface
       // constructed `proposed` never shares cached pages with an `all-markup` one.
       displayMode: revisionDisplayMode(),
-      showFieldCodes: context ? false : showFieldCodes,
+      showFieldCodes: context && !context.live ? false : showFieldCodes,
       fieldResults: fieldScope.mode,
       revisionAuthorFilter: activeAuthorFilter,
       bodyBlockLimit,
@@ -1712,7 +1714,30 @@ export function mountPaginatedSurface(
     // another editor sharing the store — still reaches the screen. Otherwise the painted
     // pages keep showing a revision the model has already left.
     renderPublishedLayout();
+    canonicalLayout.request();
   }
+  // Footnote reserves as a one-pass layout finds them; see `surface-canonical-layout.ts`.
+  const canonicalLayout = createCanonicalLayout({
+    now,
+    schedule: (run, delayMs) =>
+      timers.clearTimeout.bind(null, timers.setTimeout(fieldScope.wrap(run), delayMs)),
+    revision: () => session.packageRevision(),
+    live: () => layoutSession,
+    current: () => currentLayout,
+    busy: () => deferredLayout.pending() || openingBlockLimit !== null,
+    pass: (revision, fresh) =>
+      layoutDocumentSteps(revision, undefined, {
+        authorFilter: revisionFilter(),
+        layoutSession: fresh,
+        furnitureSource,
+        live: true,
+      }),
+    createSession: createLayoutSession,
+    adopt: (fresh, layout) => {
+      layoutSession = fresh;
+      publishLayout(layout);
+    },
+  });
 
   // A settled image resource must reach the screen on its own — nothing else may ever
   // touch the document (a letterhead the user only reads). The flush is queued, not
@@ -5656,6 +5681,7 @@ export function mountPaginatedSurface(
       if (destroyed) return;
       destroyed = true;
       deferredLayout.cancel();
+      canonicalLayout.cancel();
       // Typed-but-unflushed text lands before teardown, so a detach-then-save
       // flow keeps the last keystrokes — all the way to a paint and its state
       // report: the final commit's `onChange` used to come from the synchronous

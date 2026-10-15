@@ -252,3 +252,64 @@ describe('layout timing never changes when a pass defers', () => {
     }
   });
 });
+
+describe('a pass that cannot be put back', () => {
+  test('a newer edit wraps it up, then finishes it instead of restoring the session', () => {
+    const restore = setDeferredLayoutForTest(1, 40);
+    let time = 0;
+    const page = {} as SemanticLayout['pages'][number];
+    const previous = { pages: Array.from({ length: 100 }, () => page) } as SemanticLayout;
+    const published: SemanticLayout[] = [];
+    let restored = 0;
+    let wrappedUp = false;
+    let stepsAfterWrapUp = 0;
+    const deferred = createDeferredLayout({
+      now: () => time,
+      pageAfterView: () => 1,
+      current: () => previous,
+      revision: () => 1,
+      publish: (layout) => void published.push(layout),
+      snapshot: () => () => void (restored += 1),
+    });
+    const finished = { pages: [] } as unknown as SemanticLayout;
+    /** Reports a page per 10 ms until wrapped up, then ends. */
+    function* steps(): Generator<
+      {
+        pages: readonly unknown[];
+        finalize: () => SemanticLayout;
+        restorable: false;
+        wrapUp: () => void;
+      },
+      SemanticLayout,
+      void
+    > {
+      for (let pages = 1; pages <= 50; pages += 1) {
+        if (wrappedUp) {
+          stepsAfterWrapUp += 1;
+          break;
+        }
+        time += 10;
+        yield {
+          pages: new Array(pages).fill(page),
+          finalize: () => ({ pages: [] }) as unknown as SemanticLayout,
+          restorable: false,
+          wrapUp: () => void (wrappedUp = true),
+        };
+      }
+      return finished;
+    }
+    try {
+      deferred.run(steps() as never, 1);
+      expect(deferred.pending()).toBe(true);
+      deferred.abandon();
+      expect(wrappedUp).toBe(true);
+      expect(stepsAfterWrapUp).toBe(1);
+      expect(restored).toBe(0);
+      expect(published).toEqual([finished]);
+      expect(deferred.pending()).toBe(false);
+    } finally {
+      deferred.cancel();
+      restore();
+    }
+  });
+});

@@ -121,7 +121,7 @@ import {
 export type { PageRefHit } from './note-ref-hit.ts';
 
 /**
- * Bound on reflow attempts for an UNSEEDED document layout pass (cold open).
+ * Bound on reflow attempts for one document layout pass, cold or seeded.
  *
  * Sized for a cold open of a reference-dense document: adoption is a forward fixed-point
  * iteration whose settled prefix extends a few pages per round, so a legal document with a
@@ -131,18 +131,8 @@ export type { PageRefHit } from './note-ref-hit.ts';
  */
 export const MAX_NOTE_REFLOW_ATTEMPTS = 64;
 
-/**
- * Bound on reflow attempts for a SEEDED pass — one whose session carries the reserves a
- * previous pass settled on.
- *
- * A seeded pass starts at (or one edit away from) the fixed point and normally converges
- * in a round or two; a document that still churns after this many rounds continues on the
- * NEXT pass from where this one stopped, so the interactive path never blocks on the cold
- * search's full depth. Every reserve delta invalidates the affected sections' context
- * keys, so an unconverged round is a real relayout of those sections — this cap is what
- * bounds a keystroke's worst-case synchronous layout work.
- */
-const MAX_SEEDED_NOTE_REFLOW_ATTEMPTS = 8;
+/** Adoptions a later pass of the same part may still make after a full search. */
+const SEEDED_NOTE_REFLOW_HEADROOM = 16;
 
 /**
  * Total reserve-map adoptions allowed per BODY-PART identity, across passes.
@@ -157,8 +147,7 @@ const MAX_SEEDED_NOTE_REFLOW_ATTEMPTS = 8;
  * document between the orbit's page counts forever. An edit replaces the part and restarts
  * the search.
  */
-const MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE =
-  MAX_NOTE_REFLOW_ATTEMPTS + 2 * MAX_SEEDED_NOTE_REFLOW_ATTEMPTS;
+const MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE = MAX_NOTE_REFLOW_ATTEMPTS + SEEDED_NOTE_REFLOW_HEADROOM;
 
 /** Cap on total note story fragments attached across the document. */
 export const MAX_NOTE_AREA_FRAGMENTS = 4_096;
@@ -2623,6 +2612,8 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
   const notesMemo = notesMemoState.memo;
   const allHits = notesMemoState.allHits;
   const noteMarks = notesMemo?.provisionalMarks ?? provisionalNoteMarks(allHits, notesInput);
+  // Set when a newer edit replaces this pass: the search stops after its current round.
+  let wrappedUp = false;
   const bodySteps = (opts: Opts): LayoutSteps<SemanticLayout> =>
     withNoteAreasOnProgress(
       runBodySteps(opts),
@@ -2631,7 +2622,10 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
           fallbackReasons: [],
           paragraphSectionIndex,
           memo: notesMemo,
-        }).layout
+        }).layout,
+      () => {
+        wrappedUp = true;
+      }
     );
   let seeded = optionsWithLists.session?.notePageBottomReserves;
   let usedReserves: ReadonlyMap<number, number> = seeded
@@ -2691,14 +2685,12 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
     if (notesMemo) notesMemo.reflowSpent = spent;
     let adoptedThisPass = 0;
 
-    // A seeded pass starts at the previous fixed point and answers a keystroke; its
-    // synchronous relayout depth stays at the interactive cap, and an unconverged search
-    // continues on the next pass (same `spent` budget). Only a cold pass pays the full
-    // search depth — and a seed with NO entries is cold in everything but name (the
-    // previous document state simply had no reserves; a paste that introduces a hundred
-    // footnotes deserves the full search, not the keystroke cap).
-    const attemptCap =
-      seeded && usedReserves.size > 0 ? MAX_SEEDED_NOTE_REFLOW_ATTEMPTS : MAX_NOTE_REFLOW_ATTEMPTS;
+    // A seeded pass starts at the previous fixed point and normally converges in a round or
+    // two. It has the full search depth: an edit host shows the pages on screen after the
+    // first round and runs the rest in the background, and a newer edit wraps the search up
+    // after its current round (`wrappedUp`), so the next pass continues it. A search cut short
+    // with no pass after it left the document on an unfinished answer.
+    const attemptCap = MAX_NOTE_REFLOW_ATTEMPTS;
     // Consecutive page-count growth is the runaway signature (an eviction chain minting a
     // near-blank sheet per round on a shape none of the guards recognized); the fingerprint
     // exits never fire on it because every round's map is new. Cut it off early rather
@@ -2757,7 +2749,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
         converged = true;
         break;
       }
-      if (spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE) {
+      if (spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE || wrappedUp) {
         fallbackReasons.push('note-reflow-exhausted');
         break;
       }
@@ -2823,7 +2815,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
     // Republish the strict one it started from: that map IS converged, and a phase that
     // failed to beat it must not cost the document a layout no pass agreed on. One extra
     // body pass, only here, and only when the maps actually differ.
-    if (!converged && strictReserves) {
+    if (!converged && strictReserves && !wrappedUp) {
       const refinementMoved = !footnoteReservesEqual(strictReserves, usedReserves);
       usedReserves = strictReserves;
       fallbackReasons = [...strictReasons];
@@ -2848,6 +2840,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
     // the answer so later passes over this part republish instead of re-searching.
     if (
       notesMemo &&
+      !wrappedUp &&
       (adoptedThisPass === 0 || spent.adopted >= MAX_NOTE_REFLOW_ADOPTIONS_PER_STATE)
     ) {
       notesMemo.settledReserves = {

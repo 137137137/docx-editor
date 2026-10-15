@@ -10,7 +10,9 @@
 //
 // A newer edit drops the paused pass and restores the session to its state before that pass,
 // then lays out from there; any other layout first finishes the paused pass. A pass that
-// cannot be put back (several sections, footnotes) is finished instead of dropped. A document
+// cannot be put back (several sections, footnotes) is asked to wrap up and finished instead of
+// dropped: a footnote search then stops after its current round, and the next pass continues
+// it. A document
 // whose pass finishes within its budget, or that never reports pages, lays out as before.
 
 import { drainLayoutSteps, type LayoutProgress, type LayoutSteps } from '../layout/layout-steps.ts';
@@ -115,6 +117,8 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     readonly timed: boolean;
     /** False when the pass advances state in place: it is finished, never put back. */
     readonly restorable: boolean;
+    /** Asks a pass that is not restorable to end early; see {@link LayoutProgress.wrapUp}. */
+    wrapUp: (() => void) | undefined;
   };
   let paused: Paused | null = null;
   /** Time of dropped passes, owed to the next pass. */
@@ -139,6 +143,7 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     const deadline = began + BACKGROUND_SLICE_MS;
     for (;;) {
       const next = pass.steps.next();
+      if (!next.done && next.value?.wrapUp) pass.wrapUp = next.value.wrapUp;
       if (next.done) {
         setPaused(null);
         settle(next.value, pass.revision);
@@ -198,6 +203,7 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
           spent: owed + host.now() - began,
           timed,
           restorable: progress.restorable !== false,
+          wrapUp: progress.wrapUp,
         });
         afterPaint(drive, host.view?.());
         return progress.finalize(pages);
@@ -210,7 +216,10 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
       // Several sections or footnotes advance their session state in place, so the snapshot
       // taken before the pass cannot put it back: such a pass ends here instead, and its
       // layout reaches the screen only if no newer edit arrived meanwhile.
-      if (!pass.restorable) return finish();
+      if (!pass.restorable) {
+        pass.wrapUp?.();
+        return finish();
+      }
       setPaused(null);
       pass.restore();
       if (pass.timed) carried += pass.spent;

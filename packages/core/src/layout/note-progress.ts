@@ -23,7 +23,8 @@ export type NotesBodyOptions = Pick<NotesLayoutInput, 'styleCascade' | 'numberin
  */
 export function* withNoteAreasOnProgress(
   steps: LayoutSteps<SemanticLayout>,
-  attachNotes: (layout: SemanticLayout) => SemanticLayout
+  attachNotes: (layout: SemanticLayout) => SemanticLayout,
+  wrapUp: () => void
 ): LayoutSteps<SemanticLayout> {
   for (;;) {
     const next = steps.next();
@@ -38,6 +39,7 @@ export function* withNoteAreasOnProgress(
     yield {
       ...progress,
       restorable: false,
+      wrapUp,
       ...(inner
         ? {
             finalize: (pages) => {
