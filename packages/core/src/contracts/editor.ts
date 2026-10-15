@@ -68,6 +68,8 @@ import type { ImageWrapTarget } from '../store/package/drawing-projection.ts';
 import type { DocumentProtectionState } from '../store/package/document-protection.ts';
 import type { SupportedImageMime } from '../store/package/image-resources.ts';
 import type { ImageCropPercent } from '../store/package/image-crop-units.ts';
+import type { ParsedDocument } from '../store/package/parsed-document.ts';
+export type { ParsedDocument } from '../store/package/parsed-document.ts';
 import type { ImageContext, SelectedImageState } from './editor-image-state.ts';
 import type { HyperlinkInfo, PageSetup } from './editor-page-reads.ts';
 export type * from './types';
@@ -132,9 +134,12 @@ export interface DocumentHandle {
 
 /**
  * What `createDocxEditor`/`load` accept as a document: raw DOCX bytes, an existing
- * in-memory `DocumentHandle` (shared/handed off), or `'blank'`. The engine is byte-native
- * (`PackageModel` is canonical); there is intentionally no structured-tree input,
- * which would be lossy against the canonical package.
+ * in-memory `DocumentHandle` (shared/handed off), `'blank'`, or a `ParsedDocument` — those
+ * bytes already read by `parseDocument` (`@docx-editor.dev/core/parse`), typically on a
+ * worker, which opens on the same model as the bytes without reading them again. The engine
+ * is byte-native; there is intentionally no structured-tree input, which would be lossy
+ * against the canonical package — a `ParsedDocument` carries its bytes and the engine's own
+ * read of them, not a tree a host built.
  *
  * `'blank'` is Word's blank template, the same bytes `blankDocumentBytes()` returns from
  * `@docx-editor.dev/core/editor`. OMITTING the document is not a way to ask for an empty
@@ -147,7 +152,7 @@ export interface DocumentHandle {
  * File › New. Call the function into `load()` or host state, never inline in a prop,
  * where a new array per render rebuilds the editor per render.
  */
-export type DocumentSource = ArrayBuffer | Uint8Array | DocumentHandle | 'blank';
+export type DocumentSource = ArrayBuffer | Uint8Array | DocumentHandle | ParsedDocument | 'blank';
 
 /** A concrete font face requested by authored document content. */
 export interface FontFaceRequest {

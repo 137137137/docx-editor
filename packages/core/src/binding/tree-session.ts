@@ -64,6 +64,7 @@ import {
   type OoxmlElement,
   type OoxmlPackage,
   type OoxmlPackageRejection,
+  type OoxmlPackageResult,
   type OoxmlPart,
   type RelationshipRecord,
   type StoryScope,
@@ -176,6 +177,8 @@ export interface OpenTreeSessionOptions {
    * `hasReviewContent` are unaffected.
    */
   readonly reviewModel?: ReviewModuleContribution;
+  /** These bytes' package, already read by `parseDocument` under the same limits: not read again. */
+  readonly read?: OoxmlPackageResult;
 }
 
 /**
@@ -192,7 +195,7 @@ export function openTreeSession(
   bytes: Uint8Array,
   options: OpenTreeSessionOptions = {}
 ): OpenTreeSessionResult {
-  const loaded = readOoxmlPackage(bytes);
+  const loaded = options.read ?? readOoxmlPackage(bytes);
   if (!loaded.ok) {
     return {
       ok: false,

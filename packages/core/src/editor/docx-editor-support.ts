@@ -21,6 +21,13 @@ import {
 } from '../store/store/table-constraints.ts';
 import { isDocAnchor, isDocAnchorRange } from './anchor-resolution.ts';
 import { blankDocumentBytes } from './blank-document.ts';
+import type { OoxmlPackageResult } from '@docx-editor.dev/core/store';
+import {
+  openTreeSession,
+  type OpenTreeSessionOptions,
+  type OpenTreeSessionResult,
+} from '../binding/tree-session.ts';
+import { isParsedDocument, parsedDocumentRead } from '../store/package/parsed-document.ts';
 import { tableCommandCanSupport } from './table-command-plan.ts';
 
 /** Recursively freeze plain objects and arrays (idempotent). */
@@ -225,6 +232,32 @@ export function selectionsMatch(a: SurfaceSelection | null, b: SurfaceSelection 
   );
 }
 
+/**
+ * The facade's sources: each resolved to the bytes it opens, and the read a parsed document
+ * carries (`parseDocument`, typically on a worker) kept by those bytes for their open — which
+ * then skips reading them. A package is immutable, so a remount of the same bytes (fonts,
+ * `attach`) opens from the same read again, exactly as a fresh read of them would.
+ */
+export function createDocumentSources(): {
+  bytesOf(source: DocumentSource): Uint8Array | null;
+  open(bytes: Uint8Array, options: OpenTreeSessionOptions): OpenTreeSessionResult;
+} {
+  const reads = new WeakMap<Uint8Array, OoxmlPackageResult>();
+  return {
+    bytesOf(source) {
+      const bytes = normalizeSource(source);
+      // A parsed document whose read this engine cannot use opens from its bytes, as any do.
+      const read = bytes && isParsedDocument(source) ? parsedDocumentRead(source) : null;
+      if (bytes && read) reads.set(bytes, read);
+      return bytes;
+    },
+    open(bytes, options) {
+      const read = reads.get(bytes);
+      return openTreeSession(bytes, read ? { ...options, read } : options);
+    },
+  };
+}
+
 export function normalizeSource(source: DocumentSource): Uint8Array | null {
   // `'blank'` is Word's blank template, minted here rather than by every host: omitting
   // the document is NOT a way to ask for an empty one, and the engine should not make
@@ -233,6 +266,9 @@ export function normalizeSource(source: DocumentSource): Uint8Array | null {
   if (source === 'blank') return blankDocumentBytes();
   if (source instanceof Uint8Array) return source;
   if (source instanceof ArrayBuffer) return new Uint8Array(source);
+  // Bytes already read ahead of the open (`parseDocument`): the file is its bytes, and the
+  // facade keeps the read alongside them (`createDocumentSources`).
+  if (isParsedDocument(source)) return source.bytes;
   // Any OTHER string is a mistake worth naming. Falling through to the handle branch below
   // would answer a `document="/report.docx"` or a `'Blank'` typo with "a DocumentHandle
   // cannot be re-loaded", which names a type the caller never mentioned.
@@ -250,6 +286,9 @@ export function normalizeSource(source: DocumentSource): Uint8Array | null {
 export function unloadableSourceReason(source: DocumentSource): string {
   if (typeof source === 'string') {
     return `'${source}' is not a document; pass DOCX bytes, or 'blank' for an empty one`;
+  }
+  if ((source as { kind?: unknown }).kind === 'docx-editor.parsed-document') {
+    return 'a parsed document without its bytes cannot be opened; pass what parseDocument returned';
   }
   return 'a DocumentHandle cannot be re-loaded; pass DOCX bytes';
 }

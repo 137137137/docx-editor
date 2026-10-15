@@ -110,7 +110,7 @@ import {
   createTocContextCache,
   editorError,
   formattingEqual,
-  normalizeSource,
+  createDocumentSources,
   pageEqual,
   pageSetupEqual,
   selectionsMatch,
@@ -380,6 +380,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   // the session opened ahead of a mount (`openBytes`).
   let mountedSeq = -1;
   let fontsFirstSeq = -1;
+  // Sources resolved to bytes, keeping the read a parsed document carries for its open.
+  const sources = createDocumentSources();
   let opened: {
     bytes: Uint8Array;
     result: ReturnType<typeof openTreeSession>;
@@ -818,7 +820,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     if (opened?.bytes !== bytes) {
       opened = {
         bytes,
-        result: openTreeSession(bytes, reviewModelOption(modules, reportDiagnostic)),
+        result: sources.open(bytes, reviewModelOption(modules, reportDiagnostic)),
         heldScale: scaleOf(),
       };
     }
@@ -1270,7 +1272,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   }
 
   if (config.document) {
-    const bytes = normalizeSource(config.document);
+    const bytes = sources.bytesOf(config.document);
     if (bytes) loadBytes(bytes);
     else {
       parseError = unloadableSourceReason(config.document);
@@ -1850,7 +1852,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     },
 
     load(document) {
-      const bytes = normalizeSource(document);
+      const bytes = sources.bytesOf(document);
       if (!bytes) {
         // A handle is identity, not content — there are no bytes to reopen, and an
         // unrecognized string is a typo. The current document (if any) stays mounted

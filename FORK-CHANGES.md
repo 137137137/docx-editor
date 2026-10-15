@@ -84,3 +84,19 @@ A relayout during a sliced opening, as after an unsliced one:
 - `scripts/check-eslint-max-lines-globs.mjs`: the declared length of `paginated-surface.ts`.
 - `.changeset/opening-relayout-pass.md` and `.collaboration/changes/opening-relayout-pass.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `surface-opening-layout.test.ts` and `progressive-open.test.ts` in `packages/core/src/editor/__tests__/`.
+
+A document parsed off the page's thread, and opened from that read:
+
+- `packages/core/src/store/package/parsed-document.ts` (new): `parseDocument`, which runs the open's bounded package read on any thread and answers a `ParsedDocument` that crosses `postMessage`; `parsedDocumentTransferables`; `receiveParsedDocument` and `receiveParsedDocumentInSlices`, which rebuild the read on the receiving thread in one task or in short ones; `parsedDocumentRead`, the rebuilt read an open uses.
+- `packages/core/src/store/package/parsed-document-codec.ts` (new): the wire form of a read: one integer stream with tables of distinct strings and object shapes, rebuilt with the key order, sharing and frozen state the read had, resumably.
+- `packages/core/src/parse/index.ts` and `packages/core/src/parse/tsconfig.json` (new): the `@docx-editor.dev/core/parse` entry, DOM-free.
+- `packages/core/package.json`, `packages/core/tsup.config.ts`, `packages/core/tsconfig.json`: the `./parse` subpath.
+- `packages/core/src/contracts/editor.ts`: `DocumentSource` takes a `ParsedDocument`.
+- `packages/core/src/binding/tree-session.ts`: `openTreeSession` takes the package already read from its bytes (`read`).
+- `packages/core/src/editor/docx-editor-support.ts`: `createDocumentSources`, which resolves a source to its bytes and opens those bytes from the read a parsed document carried; `normalizeSource` and `unloadableSourceReason` know a parsed document.
+- `packages/core/src/editor/docx-editor.ts`: sources resolve and open through `createDocumentSources`.
+- `packages/core/src/__tests__/core-lane-graph.ts` and `core-lane-graph.test.ts`, `scripts/check-lane-boundaries.mjs`: the `parse` lane, neutral, importing the store.
+- `docs/api/docx-editor-core/parse.api.md` (new), `contracts-editor.api.md`, `index.api.md`: the API snapshots.
+- `docs/site/content/guides/loading-and-saving.mdx`: parsing in a worker.
+- `.changeset/parse-off-thread.md` and `.collaboration/changes/parse-off-thread.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/store/__tests__/parsed-document.test.ts`, `same-graph.ts` and `packages/core/src/editor/__tests__/parsed-document-open.test.ts` (new).
