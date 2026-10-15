@@ -57,3 +57,18 @@ test('removing, inserting and replacing blocks keeps the index whole', () => {
   part = withBlocks(part, [...blocks().slice(0, 3), extra.children[1]!]);
   expectFullIndex(part);
 });
+
+test('changes far apart in a long story keep the index whole', () => {
+  const paragraphs = Array.from(
+    { length: 300 },
+    (_, at) => `<w:p>${ins(at + 1, run(`p${at}`))}</w:p>`
+  );
+  let part = read('/word/document.xml', paragraphs.join(''));
+  locateSites(part);
+  const extra = bodyOf(
+    read('/word/far.xml', `<w:p>${ins(900, run('first'))}</w:p><w:p>${run('last')}</w:p>`)
+  );
+  const blocks = bodyOf(part).children;
+  part = withBlocks(part, [extra.children[0]!, ...blocks.slice(1, -1), extra.children[1]!]);
+  expectFullIndex(part);
+});

@@ -148,16 +148,22 @@ function patchedLocations(
     oldEnd -= 1;
     newEnd -= 1;
   }
-  if (oldEnd - start + (newEnd - start) > MAX_PATCHED_BLOCKS) return null;
+  // Several edits since the last index sit apart, so the middle can be long while few blocks
+  // in it changed. Keys are unique to their block, so which blocks left and which arrived is
+  // all that matters, not where.
+  const oldMiddle = new Set(oldBlocks.slice(start, oldEnd));
+  const newMiddle = new Set(newBlocks.slice(start, newEnd));
+  const removed = [...oldMiddle].filter((block) => !newMiddle.has(block));
+  const added = [...newMiddle].filter((block) => !oldMiddle.has(block));
+  if (removed.length + added.length > MAX_PATCHED_BLOCKS) return null;
   const located = new Map(previous);
   // Root depth 0, body 1, its blocks 2: the depth guard counts the same as a full walk.
-  for (let index = start; index < oldEnd; index += 1) {
-    const removed = new Map<string, SiteLocation>();
-    locateWithin(oldBlocks[index]!, 2, removed, retainAcrossReads);
-    for (const key of removed.keys()) located.delete(key);
+  for (const block of removed) {
+    const gone = new Map<string, SiteLocation>();
+    locateWithin(block, 2, gone, retainAcrossReads);
+    for (const key of gone.keys()) located.delete(key);
   }
-  for (let index = start; index < newEnd; index += 1)
-    locateWithin(newBlocks[index]!, 2, located, retainAcrossReads);
+  for (const block of added) locateWithin(block, 2, located, retainAcrossReads);
   return located;
 }
 
