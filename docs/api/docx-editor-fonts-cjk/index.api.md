@@ -5,6 +5,12 @@
 ```ts
 
 // @public
+export const CJK_SUBSTITUTED_FAMILIES: readonly string[];
+
+// @public
+export const LOCALIZED_CJK_FAMILIES: ReadonlyMap<string, string>;
+
+// @public
 export const NOTO_SANS_CJK_JP_FAMILY = "Noto Sans CJK JP";
 
 // @public

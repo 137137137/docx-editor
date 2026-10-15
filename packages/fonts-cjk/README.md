@@ -10,7 +10,7 @@
 
 # @docx-editor.dev/fonts-cjk
 
-This package supplies Noto Sans CJK JP for Chinese, Japanese, and Korean text. The [`@docx-editor.dev/docx-to-pdf`](https://www.npmjs.com/package/@docx-editor.dev/docx-to-pdf) package uses it as an optional fallback. The font file is about 16 MB, so it ships separately.
+This package supplies Noto Sans CJK JP for Chinese, Japanese, and Korean text. The [`@docx-editor.dev/docx-to-pdf`](https://www.npmjs.com/package/@docx-editor.dev/docx-to-pdf) package uses it as an optional fallback, and the editor uses it through the `cjkFonts()` resolver. The font file is about 16 MB, so it ships separately.
 
 ## Install
 
@@ -38,14 +38,32 @@ An installed package with missing or unreadable font assets reports `font-origin
 
 For deployment examples, see [Integrate PDF conversion](../docx-to-pdf/docs/integrations.md).
 
+## Use the font in the editor
+
+The `@docx-editor.dev/fonts-cjk/browser` entry exports `cjkFonts()`, a font resolver with the same shape as `packagedFonts()` and `googleFonts()` from `@docx-editor.dev/fonts`. Put it after the origins whose fonts you prefer:
+
+```ts
+import { packagedFonts } from '@docx-editor.dev/fonts';
+import { googleFonts } from '@docx-editor.dev/fonts/google';
+import { cjkFonts } from '@docx-editor.dev/fonts-cjk/browser';
+
+const fonts = [packagedFonts(), googleFonts(), cjkFonts()];
+```
+
+The resolver downloads the font only when a document names one of the `CJK_SUBSTITUTED_FAMILIES`, or one of their localized names in `LOCALIZED_CJK_FAMILIES`. Your bundler emits the font file as an asset, and the resolver fetches it from there. No request goes to a third party. The browser entry is ECMAScript modules only, because it finds the file through `import.meta.url`.
+
+A failed download calls the `onFailure` option, or writes a console warning. The document then opens without the font.
+
 ## Use the font directly
 
-The package has two public exports:
+The Node.js entry has these public exports:
 
 | Export | Type | Value |
 | --- | --- | --- |
 | `NOTO_SANS_CJK_JP_FAMILY` | String literal | `'Noto Sans CJK JP'` |
 | `NOTO_SANS_CJK_JP_URL` | `URL` | A `file:` URL for `assets/NotoSansCJKjp-Regular.otf`. |
+| `CJK_SUBSTITUTED_FAMILIES` | `readonly string[]` | The East Asian families the font stands in for. |
+| `LOCALIZED_CJK_FAMILIES` | `ReadonlyMap<string, string>` | Localized family names, mapped to their English names. |
 
 Use the exported URL to read the font without constructing a package path:
 
@@ -60,7 +78,7 @@ const bytes = await readFile(NOTO_SANS_CJK_JP_URL);
 console.log(NOTO_SANS_CJK_JP_FAMILY, bytes.byteLength);
 ```
 
-The package runs on Node.js. It does not bundle the font into JavaScript or install a browser font.
+The Node.js entry does not bundle the font into JavaScript or install a browser font.
 
 ## Coverage and limits
 

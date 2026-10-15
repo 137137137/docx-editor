@@ -32,6 +32,7 @@ import { useWebrtcCollaboration } from '@docx-editor.dev/pro/react/webrtc';
 import { blankDocumentBytes } from '@docx-editor.dev/core/editor';
 import { packagedFonts } from '@docx-editor.dev/fonts';
 import { googleFonts } from '@docx-editor.dev/fonts/google';
+import { cjkFonts } from '@docx-editor.dev/fonts-cjk/browser';
 import { BrandLogo } from '../../shared/BrandLogo';
 import { AdapterSwitcher } from '../../shared/AdapterSwitcher';
 import { SourceLink } from '../../shared/SourceLink';
@@ -619,6 +620,10 @@ export function ComposedEditorDemo({ fixtureUrl }: { fixtureUrl: string }) {
   // key against a closed, commit-pinned catalog — and a failed fetch degrades to the fixed
   // measurer rather than breaking the document.
   //
+  // `cjkFonts()` comes last. Its one face stands in for the East Asian families (SimSun,
+  // MS Mincho, and their localized names) that the two origins before it cannot serve, and
+  // it downloads only when a document names one of them.
+  //
   // The trade is one reflow. Nothing can know the families before the parse, so the
   // document opens on the fixed measurer and re-paginates when the faces land; the eager
   // `{ fonts: defaultFonts }` still holds `document` back until fonts settle, at the cost
@@ -627,7 +632,9 @@ export function ComposedEditorDemo({ fixtureUrl }: { fixtureUrl: string }) {
     document: bytes,
     fonts,
     error: loadError,
-  } = useDocxSource(fixtureUrl, { fonts: [packagedFonts(), googleFonts()] });
+  } = useDocxSource(fixtureUrl, {
+    fonts: [packagedFonts(), googleFonts(), cjkFonts()],
+  });
 
   const activeDocument = collaboration.document ?? bytes;
 

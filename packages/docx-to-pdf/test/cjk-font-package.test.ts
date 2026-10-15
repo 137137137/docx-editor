@@ -9,9 +9,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NOTO_SANS_CJK_JP_URL } from '@docx-editor.dev/fonts-cjk';
 import {
+  CJK_SUBSTITUTED_FAMILIES as PACKAGE_CJK_FAMILIES,
+  LOCALIZED_CJK_FAMILIES,
+  NOTO_SANS_CJK_JP_URL,
+} from '@docx-editor.dev/fonts-cjk';
+import {
+  CJK_SUBSTITUTED_FAMILIES,
   importCjkFace,
+  localizedFamilies,
   isPackageNotFound,
   packagedFontResolvers,
   PDF_GLYPH_FALLBACKS,
@@ -257,4 +263,9 @@ test('a CJK document exports in the installed package face', async () => {
     via: 'substitution',
     hash: `sha256:${sha256}`,
   });
+});
+
+test('PDF export and the editor stand the CJK face in for the same families', () => {
+  expect([...CJK_SUBSTITUTED_FAMILIES]).toEqual([...PACKAGE_CJK_FAMILIES]);
+  expect(Object.entries(localizedFamilies)).toEqual([...LOCALIZED_CJK_FAMILIES.entries()]);
 });
