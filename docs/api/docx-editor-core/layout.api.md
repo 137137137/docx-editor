@@ -67,6 +67,7 @@ export function attachNotesToLayout(layout: SemanticLayout, allRefs: readonly Pa
     readonly fallbackReasons?: readonly NotePaginationFallbackReason[];
     readonly memo?: unknown;
     readonly paragraphSectionIndex?: ReadonlyMap<string, number>;
+    readonly partial?: boolean;
 }): NotesAttachResult;
 
 // @public
