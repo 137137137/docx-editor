@@ -44,7 +44,7 @@ import {
   glyphSizeFactorOf,
   TAB_LEADER_GLYPH,
 } from '@docx-editor.dev/core/layout';
-import { DEFAULT_CANVAS_FONT_STACK } from '../layout/canvas-measurer.ts';
+import { fallbackStackForFamily } from '../layout/canvas-measurer.ts';
 import { isolatePageFromHost } from './page-host-isolation.ts';
 import { styleForFontSlot } from '../layout/script-itemization.ts';
 import {
@@ -666,9 +666,8 @@ function applyRunFaceStyle(element: HTMLElement, style: ResolvedRunStyle, ctx: P
     const alias = ctx.fontAlias?.(family);
     // The measurer's fallback stack trails the family so an unresolvable name falls
     // back to the SAME face measurement fell back to — not to the inherited font.
-    css.fontFamily = alias
-      ? `"${alias}", "${family}", ${DEFAULT_CANVAS_FONT_STACK}`
-      : `"${family}", ${DEFAULT_CANVAS_FONT_STACK}`;
+    const stack = fallbackStackForFamily(family);
+    css.fontFamily = alias ? `"${alias}", "${family}", ${stack}` : `"${family}", ${stack}`;
   }
   if (style.color && HEX.test(style.color)) css.color = `#${style.color}`;
   const highlight = style.highlight ? HIGHLIGHT_COLOR_HEX.get(style.highlight) : undefined;

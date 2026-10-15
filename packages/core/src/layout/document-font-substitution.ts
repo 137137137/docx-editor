@@ -1,6 +1,11 @@
 import type { FontConfiguration, FontSourceSubstitution } from '../contracts/editor.ts';
 import type { HeadlessDocumentView } from '../store/headless-document-view.ts';
-import { fontTableAlternates } from '../store/package/font-table-alternates.ts';
+import { fontTableAlternates, fontTableClasses } from '../store/package/font-table-alternates.ts';
+import {
+  CLASS_FALLBACK_FAMILIES,
+  fontFamilyClassFromName,
+  type FontFamilyClass,
+} from '../store/package/font-family-class.ts';
 import { fontFamilyName } from '../store/package/font-family-name.ts';
 import type { OoxmlElement, OoxmlNode } from '../store/package/ooxml-tree.ts';
 import { WML_NAMESPACE_URI } from '../store/package/ooxml-shared.ts';
@@ -36,12 +41,26 @@ export function admittedDocumentSubstitutions(
   snapshot: FontResourceSnapshot
 ): ReadonlySet<string> {
   const families = new Set<string>();
+  // A document fallback named by its Word family reaches its face through the host's own
+  // substitution (Times New Roman to Liberation Serif), so either name is the planned target.
+  const hostTargets = new Map<string, string>();
+  for (const substitution of configuration.substitutions ?? []) {
+    const from = substitution.from.family.trim().toLowerCase();
+    if (!hostTargets.has(from)) hostTargets.set(from, substitution.to.family.trim().toLowerCase());
+  }
   for (const substitution of configuration.substitutions ?? []) {
     const key = substitution.from.family.trim().toLowerCase();
     const target = substitution.to.family.trim().toLowerCase();
-    const documentTarget = [plan.alternates.get(key), plan.fallbacks.get(key)].some(
-      (candidate) => candidate?.trim().toLowerCase() === target
-    );
+    const documentTarget = [plan.alternates.get(key), plan.fallbacks.get(key)].some((candidate) => {
+      const planned = candidate?.trim().toLowerCase();
+      // A family planned onto itself (Calibri, the slot default) is the host's own metric
+      // twin, not a document substitution.
+      return (
+        planned !== undefined &&
+        planned !== key &&
+        (planned === target || hostTargets.get(planned) === target)
+      );
+    });
     if (
       target !== key &&
       documentTarget &&
@@ -101,7 +120,23 @@ function scriptDefaults(
   const eastAsia = fontFamilyName(style.fontFamilyEastAsia ?? undefined);
   const complex =
     fontFamilyName(style.complexLane?.fontFamily ?? undefined) ?? theme.minorBidi ?? defaultFamily;
+  // A missing Latin family falls back to a face of its own class: the slot default when that
+  // is of the same class (or either class is unknown), else the class's standard face. A
+  // serif family set in the document's sans-serif default changed the look of every line.
+  const classes = fontTableClasses(view.currentPackage());
+  const classOf = (family: string): FontFamilyClass | undefined =>
+    classes.get(family.trim().toLowerCase()) ?? fontFamilyClassFromName(family);
+  const latinTarget = (family: string, slotDefault: string): string => {
+    const kind = classOf(family);
+    if (!kind) return slotDefault;
+    const defaultKind = classOf(slotDefault);
+    return defaultKind === undefined || defaultKind === kind
+      ? slotDefault
+      : CLASS_FALLBACK_FAMILIES[kind];
+  };
   const needs = new Map<string, Set<string>>();
+  /** Targets from the Latin slots alone, for families of a known class. */
+  const latinNeeds = new Map<string, Set<string>>();
   let inspected = 0;
   for (const part of view.currentPackage().parts.values()) {
     // Only story, style, and numbering parts carry run fonts. Charts, themes, and
@@ -128,8 +163,15 @@ function scriptDefaults(
             if (!family || !target) continue;
             const key = family.trim().toLowerCase();
             const targets = needs.get(key) ?? new Set<string>();
-            targets.add(target);
+            const latinSlot = slot === 'ascii' || slot === 'hAnsi';
+            const slotTarget = latinSlot ? latinTarget(family, target) : target;
+            targets.add(slotTarget);
             needs.set(key, targets);
+            if (latinSlot && classOf(family)) {
+              const latinTargets = latinNeeds.get(key) ?? new Set<string>();
+              latinTargets.add(slotTarget);
+              latinNeeds.set(key, latinTargets);
+            }
           }
           continue;
         }
@@ -143,7 +185,13 @@ function scriptDefaults(
   const fallbacks = new Map<string, string>();
   const ambiguousFamilies: string[] = [];
   for (const [family, targets] of needs) {
+    // One substitution serves every slot. Documents name a Latin face in all four slots, and
+    // the slot defaults then disagree. When the family's class is known, its Latin slots
+    // decide; leaving it ambiguous gave it no substitution at all, so its text was measured
+    // in one face and painted in whatever face the platform picked.
+    const latinTargets = latinNeeds.get(family);
     if (targets.size === 1) fallbacks.set(family, [...targets][0]!);
+    else if (latinTargets?.size === 1) fallbacks.set(family, [...latinTargets][0]!);
     else ambiguousFamilies.push(family);
   }
   return {
@@ -209,6 +257,26 @@ export function applyDocumentFontSubstitutions(
   const existing = new Set(
     (configuration.substitutions ?? []).map((substitution) => fontRequestKey(substitution.from))
   );
+  // A fallback named by its Word family (Times New Roman, Calibri) reaches bytes through the
+  // host's own substitution (Liberation Serif, Carlito), with that substitution's line box.
+  // Looking for a source of the Word name alone dropped every such fallback, and the text
+  // then painted in whatever face the browser picked.
+  const hostSubstitutions = new Map(
+    (configuration.substitutions ?? []).map((substitution) => [
+      fontRequestKey(substitution.from),
+      substitution,
+    ])
+  );
+  const supply = (
+    request: FontSourceSubstitution['from']
+  ): Pick<FontSourceSubstitution, 'to' | 'lineMetrics'> | undefined => {
+    const direct = sources.get(fontRequestKey(request));
+    if (direct) return { to: direct };
+    const hosted = hostSubstitutions.get(fontRequestKey(request));
+    const target = hosted && sources.get(fontRequestKey(hosted.to));
+    if (!hosted || !target) return undefined;
+    return hosted.lineMetrics ? { to: target, lineMetrics: hosted.lineMetrics } : { to: target };
+  };
   let remaining = Math.max(0, HARD_MAX_FONT_SOURCES - existing.size);
   for (const family of plan.families) {
     const key = family.trim().toLowerCase();
@@ -218,15 +286,21 @@ export function applyDocumentFontSubstitutions(
       for (const style of ['normal', 'italic'] as const) {
         const from = { family, weight, style };
         if (sources.has(fontRequestKey(from))) continue;
+        // A family the host substitutes itself (Arial to Liberation Sans) keeps that face unless
+        // the document names a face the host supplies directly, as before: following the host's
+        // substitutions for a fallback is only for families the host has no answer for.
+        const hostAnswered = hostSubstitutions.has(fontRequestKey(from));
         for (const candidate of [alternate, fallback]) {
           if (!candidate || candidate.trim().toLowerCase() === key) continue;
-          const to = sources.get(fontRequestKey({ family: candidate, weight, style }));
-          if (!to) continue;
+          const request = { family: candidate, weight, style };
+          const direct = sources.get(fontRequestKey(request));
+          const supplied = hostAnswered ? (direct ? { to: direct } : undefined) : supply(request);
+          if (!supplied) continue;
           if (!existing.has(fontRequestKey(from))) {
             if (remaining === 0) break;
             remaining--;
           }
-          substitutions.push({ from, to });
+          substitutions.push({ from, ...supplied });
           break;
         }
       }
