@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { everyStoryOrder } from '../document-order.ts';
-import { selectionMarkRects } from '../selection-rects.ts';
+import { rangeMayShowOnPages, selectionMarkRects } from '../selection-rects.ts';
 import type {
   LineRecord,
   PageRecord,
@@ -76,5 +76,17 @@ describe('selection mark rectangles', () => {
       everyStoryOrder(layout)
     );
     expect(rects.map((rect) => rect.pageIndex)).toEqual([3, 4, 5]);
+  });
+});
+
+describe('rangeMayShowOnPages', () => {
+  test('a range shows on a visible page that draws any paragraph inside it', () => {
+    expect(rangeMayShowOnPages(layout, new Set([2]), 'p3', 'p3')).toBe(true);
+    expect(rangeMayShowOnPages(layout, new Set([5]), 'p0', 'q4')).toBe(true);
+    expect(rangeMayShowOnPages(layout, new Set([5]), 'p0', 'p6')).toBe(false);
+  });
+
+  test('a paragraph outside the body order is always kept', () => {
+    expect(rangeMayShowOnPages(layout, new Set([5]), 'header-p', 'header-p')).toBe(true);
   });
 });

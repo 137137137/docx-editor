@@ -154,6 +154,7 @@ import {
   type SemanticSelection,
 } from '@docx-editor.dev/core/layout';
 import { attachListResolveChangeEvidence } from '../layout/list-resolve.ts';
+import { rangeMayShowOnPages } from '../layout/selection-rects.ts';
 import { refreshSurfaceRefFieldResults } from './surface-ref-field-refresh.ts';
 import { type RevisionAuthorFilter } from '../layout/revision-projection.ts';
 import { createRevisionAuthorVisibility } from './revision-author-visibility.ts';
@@ -3524,21 +3525,6 @@ export function mountPaginatedSurface(
     return window_;
   }
 
-  /** Paragraph id to the page it starts on, built once per layout. */
-  const paragraphPageCache = new WeakMap<SemanticLayout, Map<string, number>>();
-  function paragraphPagesOf(layout: SemanticLayout): Map<string, number> {
-    const cached = paragraphPageCache.get(layout);
-    if (cached) return cached;
-    const index = new Map<string, number>();
-    for (const page of layout.pages) {
-      for (const fragment of paragraphFragmentsOf(page)) {
-        if (!index.has(fragment.paragraphId)) index.set(fragment.paragraphId, page.index);
-      }
-    }
-    paragraphPageCache.set(layout, index);
-    return index;
-  }
-
   function commentRects(): readonly (OverlayRect & { key: string })[] {
     const revision = session.revision();
     // When the scroller is unknown — before mount, in a hidden container, in a host that is
@@ -3555,19 +3541,11 @@ export function mountPaginatedSurface(
     }
     /** Skip an item that cannot be on screen, before measuring anything about it. */
     const onScreen = (from: string, to: string): boolean => {
-      if (!pages) return true;
-      // EITHER end. Testing only the start dropped the band for a comment spanning pages
-      // 1–5 the moment page 1 scrolled away, so the highlight vanished from the middle of
-      // its own range. `keyedRangeRects` clips to the visible pages anyway; this is only a
-      // pre-filter, and a false keep costs one range's measurement.
-      const paragraphPages = paragraphPagesOf(currentLayout);
-      const start = paragraphPages.get(from);
-      const end = paragraphPages.get(to);
-      if (start === undefined || end === undefined) return true;
-      for (let page = Math.min(start, end); page <= Math.max(start, end); page += 1) {
-        if (pages.has(page)) return true;
-      }
-      return false;
+      // The WHOLE range, not its start. Testing only the start dropped the band for a comment
+      // spanning pages 1–5 the moment page 1 scrolled away. `keyedRangeRects` clips to the
+      // visible pages anyway; this is only a pre-filter, and a false keep costs one range's
+      // measurement. Asked of the visible pages, not of a per-layout index of every paragraph.
+      return !pages || rangeMayShowOnPages(currentLayout, pages, from, to);
     };
     const ranges: KeyedRange[] = [];
     for (const item of visibleReviewItems()) {

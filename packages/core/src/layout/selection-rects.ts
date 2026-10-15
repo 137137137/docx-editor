@@ -115,49 +115,59 @@ function layoutTerminals(layout: SemanticLayout): ReadonlyMap<string, ParagraphT
 
 const orderIndexCache = new WeakMap<readonly string[], ReadonlyMap<string, number>>();
 
-/** The lowest and highest index any paragraph drawn on a page has, in two orders. */
-interface PageParagraphSpan {
-  readonly layoutIndex: ReadonlyMap<string, number>;
-  readonly orderIndex: ReadonlyMap<string, number>;
-  readonly layout: readonly [number, number];
-  readonly order: readonly [number, number];
-}
+/** Per page, the last spans asked for: one per order index (layout order, story order). */
+const pageSpans = new WeakMap<
+  PageRecord,
+  { index: ReadonlyMap<string, number>; span: readonly [number, number] }[]
+>();
 
-const pageSpans = new WeakMap<PageRecord, PageParagraphSpan>();
-
-function pageParagraphSpan(
+/** The lowest and highest index `index` gives any paragraph drawn on `page`. */
+function pageOrderSpan(
   page: PageRecord,
-  layoutIndex: ReadonlyMap<string, number>,
-  orderIndex: ReadonlyMap<string, number>
-): PageParagraphSpan {
-  const cached = pageSpans.get(page);
-  if (cached && cached.layoutIndex === layoutIndex && cached.orderIndex === orderIndex)
-    return cached;
-  let layoutLow = Infinity;
-  let layoutHigh = -Infinity;
-  let orderLow = Infinity;
-  let orderHigh = -Infinity;
+  index: ReadonlyMap<string, number>
+): readonly [number, number] {
+  const entries = pageSpans.get(page) ?? [];
+  const cached = entries.find((entry) => entry.index === index);
+  if (cached) return cached.span;
+  let low = Infinity;
+  let high = -Infinity;
   for (const fragment of paragraphFragmentsOf(page))
     for (const paragraphId of fragmentParagraphs(fragment)) {
-      const atLayout = layoutIndex.get(paragraphId);
-      if (atLayout !== undefined) {
-        layoutLow = Math.min(layoutLow, atLayout);
-        layoutHigh = Math.max(layoutHigh, atLayout);
-      }
-      const atOrder = orderIndex.get(paragraphId);
-      if (atOrder !== undefined) {
-        orderLow = Math.min(orderLow, atOrder);
-        orderHigh = Math.max(orderHigh, atOrder);
-      }
+      const at = index.get(paragraphId);
+      if (at === undefined) continue;
+      low = Math.min(low, at);
+      high = Math.max(high, at);
     }
-  const span = {
-    layoutIndex,
-    orderIndex,
-    layout: [layoutLow, layoutHigh],
-    order: [orderLow, orderHigh],
-  } as const;
-  pageSpans.set(page, span);
+  const span = [low, high] as const;
+  pageSpans.set(page, [{ index, span }, ...entries].slice(0, 2));
   return span;
+}
+
+/**
+ * Whether a range between two paragraphs can draw on any of `pages`, by body layout order.
+ *
+ * A paragraph the body order cannot place (a header's, a note's) answers true: this is only a
+ * filter in front of measuring, and a false keep costs one range's measurement.
+ */
+export function rangeMayShowOnPages(
+  layout: SemanticLayout,
+  pages: ReadonlySet<number>,
+  fromParagraphId: string,
+  toParagraphId: string
+): boolean {
+  const index = documentOrderIndex(layout);
+  const from = index.get(fromParagraphId);
+  const to = index.get(toParagraphId);
+  if (from === undefined || to === undefined) return true;
+  const low = Math.min(from, to);
+  const high = Math.max(from, to);
+  for (const pageIndex of pages) {
+    const page = layout.pages[pageIndex];
+    if (!page) continue;
+    const span = pageOrderSpan(page, index);
+    if (span[1] >= low && span[0] <= high) return true;
+  }
+  return false;
 }
 
 /**
@@ -188,10 +198,11 @@ function pagesHoldingRange(
   )
     return layout.pages;
   return layout.pages.filter((page) => {
-    const span = pageParagraphSpan(page, layoutIndex, orderIndex);
+    const layoutSpan = pageOrderSpan(page, layoutIndex);
+    const orderSpan = pageOrderSpan(page, orderIndex);
     return (
-      (span.layout[1] >= fromLayout && span.layout[0] <= toLayout) ||
-      (span.order[1] >= fromOrder && span.order[0] <= toOrder)
+      (layoutSpan[1] >= fromLayout && layoutSpan[0] <= toLayout) ||
+      (orderSpan[1] >= fromOrder && orderSpan[0] <= toOrder)
     );
   });
 }
