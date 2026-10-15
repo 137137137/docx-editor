@@ -613,3 +613,36 @@ test('the shaper-failure console warning fires once, and only for the whole-docu
     resetFontFailureWarningForTests();
   }
 });
+
+test('faces are copied when shaping is requested, before anything is awaited', async () => {
+  // Each face's digest may be computed across an await (the browser's `crypto.subtle`), so the
+  // copy it digests must already be taken: a host reusing its buffer the moment the call returns
+  // must change neither what is admitted nor what it is fingerprinted as.
+  const original = new Uint8Array(await Bun.file(fontUrl).arrayBuffer());
+  const bytes = original.slice();
+  const configuration: FontConfiguration = {
+    epoch: 4,
+    maxFontBytes: 2_000_000,
+    sources: [
+      {
+        request: { family: 'DejaVu Sans', weight: 400, style: 'normal' },
+        id: 'dejavu',
+        bytes,
+        hash: sha256FontBytes(original),
+        faceIndex: 0,
+      },
+    ],
+    defaultFont: { family: 'DejaVu Sans', sizeHalfPoints: 24 },
+  };
+  const expectedFingerprint = layoutFontConfigurationFingerprint(configuration);
+  const pending = createLayoutShaping(configuration);
+  bytes.fill(0);
+  const shaping = await pending;
+
+  const resolved = shaping.fonts.resolve({ family: 'DejaVu Sans', weight: 400, style: 'normal' });
+  expect(resolved).not.toBeInstanceOf(FontResolutionError);
+  if (resolved instanceof FontResolutionError) return;
+  expect(resolved.bytes).toEqual(original);
+  expect(shaping.operation.extensionFingerprint).toBe(expectedFingerprint);
+  shaping.shaper.dispose();
+});

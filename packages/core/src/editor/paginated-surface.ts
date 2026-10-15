@@ -370,11 +370,15 @@ export function mountPaginatedSurface(
     /** Restore the model range on a font remount without claiming DOM selection/focus. */
     readonly initialSelection?: SemanticSelection;
     readonly initialTextFormInput?: PendingTextFormInput;
+    /**
+     * These bytes, already opened with the same review model — the facade opens a document
+     * before mounting it to read its fonts and page size. Never mounted twice.
+     */
+    readonly openedSession?: ReturnType<typeof openTreeSession>;
   };
-  const opened = openTreeSession(
-    bytes,
-    options.reviewModel ? { reviewModel: options.reviewModel } : {}
-  );
+  const opened =
+    runtimeOptions.openedSession ??
+    openTreeSession(bytes, options.reviewModel ? { reviewModel: options.reviewModel } : {});
   if (!opened.ok) {
     return {
       ok: false,

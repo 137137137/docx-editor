@@ -1222,6 +1222,18 @@ export function firstDayOfWeek(locale?: string): number;
 export const FIT_WIDTH_ZOOM_MODE: ZoomMode;
 
 // @public
+export function fitZoom(input: FitZoomInput): number | null;
+
+// @public
+export interface FitZoomInput {
+    readonly availableWidthPx: number;
+    readonly gutterPx?: number;
+    readonly maxZoom?: number;
+    readonly minZoom?: number;
+    readonly pageWidthPx: number;
+}
+
+// @public
 export const FONT_RESOLVER_BRAND: unique symbol;
 
 // @public

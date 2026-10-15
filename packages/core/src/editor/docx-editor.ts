@@ -3,7 +3,6 @@ import { supportedFontFamilies } from '../layout/supported-font-families.ts';
 import { resolvedFontMeasurement } from './resolved-font-measurement.ts';
 import { updateSurfaceMeasurement } from './surface-measurement.ts';
 import { createLiveFontResolution } from './live-font-resolution.ts';
-import { composeFontOrigins, defineFontResolver } from './font-resolver.ts';
 import { createEditorPopupChrome } from './text-form-field-chrome.ts';
 import {
   createReviewCommands,
@@ -92,9 +91,7 @@ import type {
 } from '@docx-editor.dev/core/contracts/editor';
 import { EditorFontError } from '@docx-editor.dev/core/contracts/editor';
 import {
-  FontResolutionError,
   HARD_MAX_FONT_BYTES,
-  HarfBuzzShapingError,
   fontRequestKey,
   resolveDefaultSurfaceMeasurer,
   type TextMeasurer,
@@ -175,10 +172,8 @@ import {
   createLayoutShaping,
   disposeLayoutShaping,
   toEditorFontError,
-  warnFontFailureOnce,
 } from './font-configuration.ts';
 import {
-  MAX_RESOLVER_FAMILIES,
   composeFontConfiguration,
   normalizeFontResolverResult,
   type FontConfigurationBase,
@@ -194,9 +189,16 @@ import {
   coveredFontFamiliesOf,
   createLocalFontProbe,
   detectFontSubstitutions,
-  fontResolverFamilies,
 } from './font-availability.ts';
-import { resolverGlyphFontFamilies } from './resolver-glyph-font-families.ts';
+import {
+  admittedFontSources,
+  documentFontRequestFamilies,
+  firstPageWidthPx,
+  refusedFontRequests,
+  reportEditorFontError,
+  resolveConfiguredFonts,
+} from './docx-editor-open-fonts.ts';
+import { openTreeSession, type TreeDocxSessionView } from '@docx-editor.dev/core/binding';
 import { tryCreateBrowserCanvasContext } from './browser-canvas-context.ts';
 import {
   registerEmbeddedFontFaces,
@@ -376,6 +378,11 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   }
   // Each async result belongs to one document load.
   let loadSeq = 0;
+  // Which load is mounted, which last had its fonts started before its mount (`prepare`), and
+  // the session opened ahead of a mount (`openBytes`).
+  let mountedSeq = -1;
+  let fontsFirstSeq = -1;
+  let opened: { bytes: Uint8Array; result: ReturnType<typeof openTreeSession> } | null = null;
   // Retain catalog metadata separately from byte admission and shaping.
   let resolvedFontConfiguration: FontConfigurationBase | undefined;
   const fontConfiguration = (): FontConfigurationBase | undefined =>
@@ -389,22 +396,15 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         generation: loadSeq,
         dynamic: typeof config.fonts === 'function',
         families: () =>
-          fontResolverFamilies(
-            [
-              ...new Set([
-                ...(selected && selected !== configuredDefaultFontFamily(fontConfiguration())
-                  ? [selected]
-                  : []),
-                ...session.documentFonts(),
-              ]),
-            ],
-            resolverGlyphFontFamilies(session),
-            MAX_RESOLVER_FAMILIES
+          documentFontRequestFamilies(
+            session,
+            selected,
+            configuredDefaultFontFamily(fontConfiguration())
           ),
       };
     },
     async (families) => {
-      if (surface) await resolveDocumentFonts(loadSeq, surface, families);
+      if (surface) await resolveDocumentFonts(loadSeq, surface.session, families);
     }
   );
   let fontsResolving = false;
@@ -537,6 +537,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     emitSelectionChange,
   });
   const scaleOf = (): number => zoomLane.scale();
+  const mountDisplayMode = (): ReviewDisplayMode =>
+    reviewEnabled ? reviewDisplayMode : 'proposed';
 
   function mountBytes(
     bytes: Uint8Array,
@@ -556,8 +558,11 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       return;
     }
     teardownSurface();
+    const openedSession = openBytes(bytes);
+    opened = null;
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
+      openedSession,
       scale: scaleOf(),
       showParagraphMarks: paragraphMarks.get(),
       onToggleParagraphMarks: paragraphMarks.toggle,
@@ -586,7 +591,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // insertions applied, deletions hidden, lossless on save. Markup rendering is a
       // review-module display mode; with one registered the surface keeps the layout
       // default (`all-markup`), which is what the review rail annotates.
-      revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
+      revisionDisplayMode: mountDisplayMode(),
       ...reviewModelOption(modules, reportDiagnostic),
       ...(shapedMeasurer
         ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
@@ -637,7 +642,10 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         if (!reviewVisibilityMoved && !publishSignal.moved(state, surface)) return;
         emitSelectionChange();
       },
-    } as PaginatedSurfaceOptions & { readonly onTrackedChange?: () => void });
+    } as PaginatedSurfaceOptions & {
+      readonly onTrackedChange?: () => void;
+      readonly openedSession?: ReturnType<typeof openTreeSession>;
+    });
     if (!result.ok) {
       parseError = result.detail ? `${result.reason}: ${result.detail}` : result.reason;
       // Failure is observable state too: `snapshot().parseError` moved.
@@ -647,6 +655,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     }
     parseError = null;
     surface = result.surface;
+    mountedSeq = loadSeq;
     // Before anything can publish: the mount decides the mode itself just below, and a sync
     // firing in between would decide a second time and clear what the first one published.
     protection.prime();
@@ -720,6 +729,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     // open publishes `isOpening`, so the loading page uses the full centred workspace.
     reviewPaneOpen = false;
     loadSeq += 1;
+    opened = null;
     reviewAuthorSlots = createStableReviewAuthorSlots();
     reviewAuthorVisibility.showAll();
     shapedMeasurer = undefined;
@@ -748,79 +758,92 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         scroller.scrollLeft = 0;
       }
     }
-    // A big document into a live container yields one painted frame first. Detached
-    // loads only stash bytes; the later `attach` decides whether the mount earns a yield.
-    if (container && openScheduler.shouldYield(bytes)) openScheduler.schedule(bytes);
+    // Detached loads only stash bytes; the later `attach` opens them.
+    if (container) openMounted(bytes);
     else mountBytes(bytes);
   }
 
-  function reportFontError(error: EditorFontError): void {
-    // A shaper that never loaded is not a per-face degradation: NOTHING measures correctly,
-    // and the fault is the host's build rather than the document's content. Said out loud
-    // exactly once, and only when nobody is listening — a host that reports it in its own
-    // UI does not need library noise it cannot switch off. Before this was fixed the same
-    // misconfiguration failed the BUILD, so a green build with a silent console would be a
-    // strictly worse trade (#282).
-    const shaperNeverLoaded =
-      error.code === 'wasmUnavailable' ||
-      (error.cause instanceof HarfBuzzShapingError && error.cause.code === 'unsupportedRuntime');
-    if (shaperNeverLoaded && !config.onFontError && handlers.error.size === 0) {
-      warnFontFailureOnce(error);
-    }
-    // A host handler that throws must not abort font resolution — reporting a dropped
-    // face would then cost the whole shaped measurer, and the catch's own report would
-    // throw again as an unhandled rejection.
-    try {
-      config.onFontError?.(error);
-    } catch {
-      /* the host's reporting problem, not the document's */
-    }
-    emitError(error);
+  /**
+   * Mount `bytes` into the live container. A big document yields one painted frame first,
+   * and while it is deferred anyway, waits for its fonts if they have not been asked for yet
+   * (bounded, see `docx-editor-open-scheduler.ts`), so its first layout is the shaped one. A
+   * small document keeps the synchronous mount every existing caller relies on.
+   */
+  function openMounted(bytes: Uint8Array): void {
+    if (!openScheduler.shouldYield(bytes)) mountBytes(bytes);
+    else openScheduler.schedule(bytes, fontsFirstSeq === loadSeq ? {} : { prepare });
   }
+
+  /**
+   * Bytes about to mount, as a session, opened once whether `prepare` or the mount asks first,
+   * with a fit's scale settled from its page before anything is laid out at the wrong one.
+   */
+  function openBytes(bytes: Uint8Array): ReturnType<typeof openTreeSession> {
+    if (opened?.bytes !== bytes) {
+      opened = {
+        bytes,
+        result: openTreeSession(bytes, reviewModelOption(modules, reportDiagnostic)),
+      };
+    }
+    const { result } = opened;
+    if (result.ok && zoomLane.prefit(firstPageWidthPx(result.session, mountDisplayMode()))) bump();
+    return result;
+  }
+
+  /**
+   * Before a document's first mount: open it and start resolving its fonts. Returns the work
+   * for the mount to wait on, or null with nothing to resolve or a file that does not open
+   * (the mount reports that failure as before).
+   */
+  function prepare(bytes: Uint8Array): Promise<void> | null {
+    const seq = (fontsFirstSeq = loadSeq);
+    const result = openBytes(bytes);
+    if (!result.ok || (!config.fonts && result.session.embeddedFonts().length === 0)) return null;
+    const { session } = result;
+    const fallback = configuredDefaultFontFamily(fontConfiguration());
+    const families = documentFontRequestFamilies(session, undefined, fallback);
+    const work = resolveDocumentFonts(seq, session, families);
+    liveFonts.adopt(seq, families, work);
+    return work;
+  }
+
+  const reportFontError = (error: EditorFontError): void =>
+    reportEditorFontError(error, config.onFontError, handlers.error.size > 0, emitError);
 
   // Fonts resolve asynchronously (HarfBuzz init + validation) PER LOAD, composing the
   // app's `config.fonts` with the faces the document itself embeds — explicit sources
   // beat embedded ones, and both beat substitutions. The surface samples its measurer at
-  // mount, so the document opens on the fixed measurer immediately, and when the shaped
-  // measurer arrives the surface is remounted FROM THE CURRENT TREE — `session.save()` —
-  // so every edit made before fonts resolved survives. What does not survive is the undo
-  // stack; the semantic selection is restored after the shaped surface mounts so an
-  // `onReady` selection does not disappear as fonts settle. In the not-yet-attached case
-  // there is nothing to remount: the measurer is simply picked up by the next mount.
+  // mount. A load's first resolution starts BEFORE its mount (`prepare`), and the mount
+  // waits for it, bounded, so a document normally opens on the shaped measurer and is laid
+  // out once. A resolution that lands after the mount — past that bound, after a `flush`,
+  // or for a family the document gained by editing — re-measures the mounted surface in
+  // place (`updateSurfaceMeasurement`), keeping its edits, selection and history. In the
+  // not-yet-attached case the measurer is simply picked up by the next mount.
   //
   // Failure is DEGRADATION, never a blocked load: a face the validator refuses drops
   // with a typed report and the remaining faces admit; a wholly failed resolution leaves
   // the document editable on the fixed measurer.
   async function resolveDocumentFonts(
     seq: number,
-    mounted: PaginatedSurface,
+    session: TreeDocxSessionView,
     families: readonly string[]
   ): Promise<void> {
     const configured = config.fonts;
-    const embedded = mounted.session.embeddedFonts();
+    const embedded = session.embeddedFonts();
     // The zero-config, nothing-embedded common case does NO font work at all: no
     if (!configured && embedded.length === 0) return;
     fontsResolving = true;
     bump();
     try {
-      // On-demand configurations resolve HERE rather than at construction, which is the
-      // whole point of the function form: the document is parsed and mounted by now, so
-      // the resolver is told what the file actually asks for and can skip everything
-      // else. A resolver that throws lands in this function's catch and degrades to the
-      // fixed measurer, exactly like a failed byte source.
+      // A resolver that throws lands in this function's catch and degrades to the fixed
+      // measurer, exactly like a failed byte source.
       const request = { families, defaultFamily: configuredDefaultFontFamily(fontConfiguration()) };
-      const raw =
-        typeof configured !== 'function'
-          ? configured
-          : resolvedFontConfiguration
-            ? await composeFontOrigins(
-                [resolvedFontConfiguration, defineFontResolver((next) => configured(next))],
-                request,
-                { onOriginFailure: ({ cause }) => reportFontError(toEditorFontError(cause)) }
-              )
-            : await configured(request);
-      const explicit: FontConfigurationBase | undefined =
-        typeof configured === 'function' ? normalizeFontResolverResult(raw) : raw;
+      const { raw, explicit } = await resolveConfiguredFonts(
+        configured,
+        resolvedFontConfiguration,
+        request,
+        reportFontError
+      );
       // Awaiting handed control back: this load may have been superseded (or the editor
       // destroyed) while the resolver ran, and installing its answer would overwrite a
       // newer document's fonts.
@@ -906,20 +929,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         fontsResolving = false;
         bump();
       };
-      // Per-face degradation, reported: an embedded face the validator refused still
-      // resolves — to a typed error. Probing here (map lookups, no shaping work) is what
-      // turns a silent fixed-measurer fallback into a diagnosable one.
-      const refusedIn = (snapshot: typeof shaping, composed: typeof fonts) => {
-        const refused = new Set<string>();
-        for (const source of composed.sources ?? []) {
-          const resolved = snapshot.fonts.resolve(source.request);
-          if (resolved instanceof FontResolutionError) {
-            reportFontError(toEditorFontError(resolved));
-            refused.add(fontRequestKey(source.request));
-          }
-        }
-        return refused;
-      };
+      // Per-face degradation, reported; see `refusedFontRequests`.
+      const refusedIn = (snapshot: typeof shaping, composed: typeof fonts) =>
+        refusedFontRequests(snapshot, composed, reportFontError);
       const refusedRequests = refusedIn(shaping, fonts);
       // A refused direct face is worse than no face. Composition drops a substitution
       // whenever a direct source exists, so recompose without every refused request.
@@ -980,20 +992,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // name, so a document laid out on Carlito metrics would be drawn in something else
       // — correct pagination, wrong glyphs. Aliasing (rather than registering the family
       // name itself) is what keeps that safe; see `embedded-font-faces.ts`.
-      const admitted = fonts.sources
-        .map((source) => {
-          const resolved = shaping.fonts.resolve(source.request);
-          return resolved instanceof FontResolutionError || resolved.id !== source.id
-            ? null
-            : {
-                request: source.request,
-                id: resolved.id,
-                bytes: resolved.bytes,
-                hash: resolved.hash,
-                faceIndex: resolved.faceIndex,
-              };
-        })
-        .filter((source): source is NonNullable<typeof source> => source !== null);
+      const admitted = admittedFontSources(shaping, fonts);
       const registration = await registerEmbeddedFontFaces(
         admitted,
         undefined,
@@ -1034,7 +1033,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         shapedMeasurer = measurement.measurer;
         shapedProducer = measurement.producer;
         fontsResolving = false;
-        if (surface) {
+        // Only THIS load's surface. Fonts resolved before the mount find the previous
+        // document still on screen, and the mount picks the measurer up itself.
+        if (surface && mountedSeq === seq) {
           updateSurfaceMeasurement(surface, {
             measurer: shapedMeasurer,
             producer: shapedProducer,
@@ -1823,8 +1824,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       pendingBytes = null;
       // A mount bumps the tick and emits change/selectionChange itself. A big document
       // yields one painted frame first, instead of freezing the commit the attach ran in.
-      if (bytes && openScheduler.shouldYield(bytes)) openScheduler.schedule(bytes);
-      else if (bytes) mountBytes(bytes);
+      if (bytes) openMounted(bytes);
       else bump();
     },
 

@@ -2,7 +2,15 @@
 export function createLiveFontResolution(
   read: () => { generation: number; families: () => readonly string[]; dynamic: boolean } | null,
   resolve: (families: readonly string[]) => Promise<void>
-): { schedule(initial?: boolean): void } {
+): {
+  schedule(initial?: boolean): void;
+  /**
+   * Record a document's first resolution, started before its surface mounted, as this
+   * generation's initial one. The mount's own `schedule(true)` then waits for it instead of
+   * starting a second, and later passes ask only for families it did not.
+   */
+  adopt(generation: number, families: readonly string[], running: Promise<void>): void;
+} {
   let current: { generation: number; requested: Set<string>; running: boolean } | undefined;
   let queued = false;
   const pump = (): void => {
@@ -35,5 +43,18 @@ export function createLiveFontResolution(
     queued = true;
     queueMicrotask(pump);
   };
-  return { schedule };
+  const adopt = (generation: number, families: readonly string[], running: Promise<void>): void => {
+    const active = {
+      generation,
+      requested: new Set(families.map((family) => family.toLowerCase())),
+      running: true,
+    };
+    current = active;
+    const settle = (): void => {
+      active.running = false;
+      if (current === active) schedule();
+    };
+    void running.then(settle, settle);
+  };
+  return { schedule, adopt };
 }

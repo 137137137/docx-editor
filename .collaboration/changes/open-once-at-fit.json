@@ -1,0 +1,13 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A large document is laid out on the fixed measurer, again at its fitted zoom, and again when its fonts resolve.",
+  "after": "A large document is parsed before its mount, fitted from its first page, and mounted once its fonts resolve or a bounded wait ends.",
+  "reason": "Only when local layout runs changes. Opening, fonts, zoom and digest timing do not enter shared state, operations, snapshots or protocol messages, and the parsed tree is the one the mount would have parsed.",
+  "tests": [
+    "packages/core/src/editor/__tests__/fonts-before-first-layout.test.ts",
+    "packages/core/src/editor/__tests__/open-scheduler-prepare.test.ts"
+  ],
+  "changeset": "open-once-at-fit",
+  "migration": null
+}

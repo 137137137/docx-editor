@@ -180,3 +180,22 @@ describe('the default mode', () => {
     expect(bumps()).toBe(1);
   });
 });
+
+describe('fitting before a document is laid out', () => {
+  // `prefit` runs while the previous document may still be mounted, so it must never rescale
+  // that surface, and it publishes nothing: the mount that follows publishes the new state.
+  test('without a container there is nothing to measure, so the scale holds', () => {
+    const { lane, bumps, emits, lastScale } = harness();
+    expect(lane.prefit(400)).toBe(false);
+    expect(lane.zoom()).toBe(1);
+    expect(lastScale()).toBeNull();
+    expect(bumps()).toBe(0);
+    expect(emits()).toBe(0);
+  });
+
+  test('an unknown page width changes nothing', () => {
+    const { lane } = harness();
+    expect(lane.prefit(null)).toBe(false);
+    expect(lane.zoom()).toBe(1);
+  });
+});

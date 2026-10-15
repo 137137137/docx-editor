@@ -1,7 +1,7 @@
 // The implementation lives in the store lane (`store/package/sha256.ts`), where both
 // byte-fingerprinting trust boundaries sit; this import + re-export keeps the layout entry
 // point and every shaping consumer unchanged. layout → store is a lane-legal edge.
-import { sha256FontBytes } from '../store/package/sha256.ts';
+import { sha256BytesAsync, sha256FontBytes } from '../store/package/sha256.ts';
 export { sha256FontBytes };
 
 /**
@@ -275,11 +275,21 @@ export interface PreparedFontResourceDefinition extends FontResourceDefinition {
   readonly actualHash: string | null;
 }
 
-/** Own and fingerprint one source before cache identity and admission share it. @internal */
-export function prepareFontResourceDefinition(
+/** A usable source whose bytes are owned but not yet fingerprinted. */
+interface OwnedFontResource {
+  readonly definition: FontResourceDefinition;
+  readonly request: FontRequest;
+  readonly bytes: Uint8Array;
+}
+
+/**
+ * Take ownership of one source: a forbidden source is finished as it is, a usable one gets its
+ * own copy of the bytes, which nothing the caller holds can write to afterwards.
+ */
+function ownFontResource(
   definition: FontResourceDefinition,
   instrumentation?: Pick<FontResourceInstrumentation, 'onOwnedByteCopy' | 'onHash'>
-): PreparedFontResourceDefinition {
+): PreparedFontResourceDefinition | OwnedFontResource {
   const request = freezeRequest(definition.request);
   if (definition.availability === 'forbidden') {
     const prepared = Object.freeze({
@@ -294,16 +304,46 @@ export function prepareFontResourceDefinition(
   const bytes = copyFontBytes(definition.bytes);
   instrumentation?.onOwnedByteCopy?.();
   instrumentation?.onHash?.();
-  const actualHash = sha256FontBytes(bytes);
+  return { definition, request, bytes };
+}
+
+function sealFontResource(
+  owned: OwnedFontResource,
+  actualHash: string
+): PreparedFontResourceDefinition {
   const prepared = Object.freeze({
-    ...definition,
-    request,
-    bytes,
+    ...owned.definition,
+    request: owned.request,
+    bytes: owned.bytes,
     actualHash,
     [PREPARED_FONT_RESOURCE_BRAND]: true as const,
   });
   preparedFontResourceHashes.set(prepared, actualHash);
   return prepared;
+}
+
+/** Own and fingerprint one source before cache identity and admission share it. @internal */
+export function prepareFontResourceDefinition(
+  definition: FontResourceDefinition,
+  instrumentation?: Pick<FontResourceInstrumentation, 'onOwnedByteCopy' | 'onHash'>
+): PreparedFontResourceDefinition {
+  const owned = ownFontResource(definition, instrumentation);
+  return 'actualHash' in owned ? owned : sealFontResource(owned, sha256FontBytes(owned.bytes));
+}
+
+/**
+ * {@link prepareFontResourceDefinition} with the digest from the platform where it is only
+ * asynchronous (`sha256BytesAsync`). The copy is taken before this returns its promise, so a
+ * caller preparing several sources samples all of them before anything awaits. @internal
+ */
+export async function prepareFontResourceDefinitionAsync(
+  definition: FontResourceDefinition,
+  instrumentation?: Pick<FontResourceInstrumentation, 'onOwnedByteCopy' | 'onHash'>
+): Promise<PreparedFontResourceDefinition> {
+  const owned = ownFontResource(definition, instrumentation);
+  return 'actualHash' in owned
+    ? owned
+    : sealFontResource(owned, await sha256BytesAsync(owned.bytes));
 }
 
 /** Prepared digest, or undefined when the source has not crossed preparation. @internal */

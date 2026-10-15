@@ -342,9 +342,11 @@ export interface Editor {
    * Load a new document (DOCX bytes, `'blank'`, or a handle), replacing the current one.
    *
    * A large document mounts behind one painted frame, so a loading screen keyed on
-   * `snapshot().isOpening` can show instead of a frozen page; a small one mounts before
-   * this returns. Callers that need the document synchronously do not have to care:
-   * `save`, `exec` and `selectMatch` complete a scheduled open before they run.
+   * `snapshot().isOpening` can show instead of a frozen page, and waits there for its fonts
+   * (for at most 1.5 seconds) so that it is laid out once, on the fonts it paints with; a
+   * small one mounts before this returns. Callers that need the document synchronously do
+   * not have to care: `save`, `exec` and `selectMatch` complete a scheduled open before they
+   * run.
    */
   load(document: DocumentSource): void;
   /**
@@ -1547,7 +1549,8 @@ export interface EditorSnapshot {
   /**
    * Whether a supplied document is still on its way to painted pages. Opening a large
    * document mounts behind one painted frame so a loading screen can show instead of a
-   * frozen page; this is true for exactly that window, and across it the previous
+   * frozen page, and after its fonts resolve (for at most 1.5 seconds) so it is laid out
+   * once; this is true for exactly that window, and across it the previous
    * document (if any) stays on screen. Show a loading overlay while it holds — but gate
    * only chrome on it, never the mount point, which must stay mounted for the open to
    * complete ({@link EditorSnapshot.isLoading} is the gate-safe flag). Optional and

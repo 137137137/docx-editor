@@ -50,6 +50,14 @@ export interface ZoomLane {
   refit(): void;
   /** Recompute only if the page's own width moved. Cheap enough for the commit path. */
   refitIfPageResized(): void;
+  /**
+   * Settle a fit mode's scale for a document whose first page is `pageWidthPx` wide (CSS
+   * pixels at 100%) BEFORE it is laid out, so the first layout is already at the scale the
+   * fit would move it to. Leaves any mounted surface alone, because the one mounted now
+   * belongs to the document being replaced, and publishes nothing; returns whether the scale
+   * moved, so the caller publishes with its own state.
+   */
+  prefit(pageWidthPx: number | null): boolean;
 }
 
 export interface ZoomLaneConfig {
@@ -147,6 +155,12 @@ export function createZoomLane(config: ZoomLaneConfig, host: ZoomLaneHost): Zoom
     detach: () => controller.detach(),
     refit: () => controller.refit(),
     refitIfPageResized: () => controller.refitIfPageResized(),
+    prefit(pageWidthPx) {
+      const next = pageWidthPx === null ? null : controller.fitFor(pageWidthPx);
+      if (next === null || next === zoom) return false;
+      zoom = next;
+      return true;
+    },
 
     setZoom(next: number): ExecResult {
       // Refused rather than clamped: a caller that asked for

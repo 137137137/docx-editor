@@ -148,6 +148,18 @@ describe('the default mode', () => {
     expect(harness.editor.getZoom()).toBeGreaterThan(0.5);
   });
 
+  // The fit used to run after the mount had laid the document out at the zoom it held, and on
+  // the fixed measurer a new zoom is a new measurer, so a narrow window laid every page out
+  // twice in the same task. The page size is in the parsed tree, so the fit settles first.
+  test('lays a narrow window out once, already at the fitted scale', () => {
+    const harness = mount();
+    harness.resize(700);
+    harness.editor.load(docx(''));
+
+    expect(harness.editor.getZoom()).toBeLessThan(1);
+    expect(harness.editor.surface?.state().perf.fullPasses).toBe(1);
+  });
+
   test('a configured zoom means the embedder pinned it, so the mode is fixed', () => {
     const { editor } = mount({ zoom: 1.5 });
     expect(editor.getZoomMode()).toEqual({ type: 'fixed' });

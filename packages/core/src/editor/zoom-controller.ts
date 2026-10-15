@@ -55,6 +55,12 @@ export interface ZoomController {
   refitIfPageResized(): void;
   /** Stop observing and cancel any pending frame. */
   detach(): void;
+  /**
+   * The scale the active fit would choose for a page this wide, in CSS pixels at 100%, or null
+   * for a fixed mode or a container that cannot be measured. Applies nothing. For a document
+   * whose page width is known before it is laid out.
+   */
+  fitFor(pageWidthPx: number): number | null;
 }
 
 /** The scroller's content box, or null when it cannot be measured. */
@@ -105,9 +111,20 @@ export function createZoomController(host: ZoomControllerHost): ZoomController {
     frame = null;
   }
 
-  function refit(): void {
+  /** The fit for a container `availableWidthPx` wide, or null for a fixed mode. */
+  function fitIn(availableWidthPx: number, pageWidthPx: number): number | null {
     const mode = host.mode();
-    if (!isFitMode(mode)) return;
+    if (!isFitMode(mode)) return null;
+    return fitZoom({
+      availableWidthPx,
+      pageWidthPx,
+      ...(mode.minZoom !== undefined ? { minZoom: mode.minZoom } : {}),
+      ...(mode.maxZoom !== undefined ? { maxZoom: mode.maxZoom } : {}),
+    });
+  }
+
+  function refit(): void {
+    if (!isFitMode(host.mode())) return;
     const container = host.container();
     if (!container) return;
     const width = availableWidth(container);
@@ -116,14 +133,16 @@ export function createZoomController(host: ZoomControllerHost): ZoomController {
     if (pageWidthPx === null) return;
     fittedPageWidthTwips = host.pageWidthTwips();
 
-    const next = fitZoom({
-      availableWidthPx: width,
-      pageWidthPx,
-      ...(mode.minZoom !== undefined ? { minZoom: mode.minZoom } : {}),
-      ...(mode.maxZoom !== undefined ? { maxZoom: mode.maxZoom } : {}),
-    });
+    const next = fitIn(width, pageWidthPx);
     if (next === null || next === host.zoom()) return;
     host.applyZoom(next);
+  }
+
+  function fitFor(pageWidthPx: number): number | null {
+    if (!isFitMode(host.mode())) return null;
+    const container = host.container();
+    const width = container ? availableWidth(container) : null;
+    return width === null ? null : fitIn(width, pageWidthPx);
   }
 
   function schedule(): void {
@@ -164,6 +183,7 @@ export function createZoomController(host: ZoomControllerHost): ZoomController {
       refit();
     },
     refit,
+    fitFor,
     detach(): void {
       cancelFrame();
       observer?.disconnect();

@@ -119,7 +119,9 @@ export interface FitZoomInput {
   readonly pageWidthPx: number;
   /** Room to leave per side; defaults to {@link FIT_GUTTER_PX}. */
   readonly gutterPx?: number;
+  /** The smallest scale to answer; defaults to {@link ZOOM_MIN}. */
   readonly minZoom?: number;
+  /** The largest scale to answer; defaults to {@link ZOOM_MAX}. */
   readonly maxZoom?: number;
 }
 

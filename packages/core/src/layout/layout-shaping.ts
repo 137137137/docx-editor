@@ -8,6 +8,7 @@ import {
   fontByteLength,
   fontRequestKey,
   prepareFontResourceDefinition,
+  prepareFontResourceDefinitionAsync,
   preparedFontResourceActualHash,
   sha256FontBytes,
   type FontRequest,
@@ -493,19 +494,48 @@ function prepareLayoutFontConfigurationInternal(
   preservePreparedSources: boolean
 ): PreparedLayoutFontConfiguration {
   const snapshot = snapshotLayoutFontConfigurationInternal(configuration, preservePreparedSources);
+  return sealLayoutFontConfiguration(
+    snapshot,
+    snapshot.sources.map((source) =>
+      preservePreparedSources && preparedFontResourceActualHash(source) !== undefined
+        ? source
+        : prepareFontResourceDefinition(source, {
+            onOwnedByteCopy: instrumentation?.onFontByteCopy,
+            onHash: instrumentation?.onFontHash,
+          })
+    )
+  );
+}
+
+/**
+ * {@link prepareLayoutFontConfiguration} with each face's digest from the platform where it is
+ * only asynchronous. Every caller-owned value, bytes included, is sampled and copied before the
+ * first `await`, so the rule `createLayoutShaping` states for its initialization boundary holds.
+ */
+async function prepareLayoutFontConfigurationAsync(
+  configuration: LayoutFontConfiguration,
+  instrumentation: LayoutShapingInstrumentation | undefined
+): Promise<PreparedLayoutFontConfiguration> {
+  const snapshot = snapshotLayoutFontConfigurationInternal(configuration, false);
+  const sources = await Promise.all(
+    snapshot.sources.map((source) =>
+      prepareFontResourceDefinitionAsync(source, {
+        onOwnedByteCopy: instrumentation?.onFontByteCopy,
+        onHash: instrumentation?.onFontHash,
+      })
+    )
+  );
+  return sealLayoutFontConfiguration(snapshot, sources);
+}
+
+function sealLayoutFontConfiguration(
+  snapshot: LayoutFontConfiguration,
+  sources: readonly LayoutFontSource[]
+): PreparedLayoutFontConfiguration {
   const preparedConfiguration = Object.freeze({
     epoch: snapshot.epoch,
     maxFontBytes: snapshot.maxFontBytes,
-    sources: Object.freeze(
-      snapshot.sources.map((source) =>
-        preservePreparedSources && preparedFontResourceActualHash(source) !== undefined
-          ? source
-          : prepareFontResourceDefinition(source, {
-              onOwnedByteCopy: instrumentation?.onFontByteCopy,
-              onHash: instrumentation?.onFontHash,
-            })
-      )
-    ),
+    sources: Object.freeze([...sources]),
     substitutions: snapshot.substitutions,
     defaultFont: snapshot.defaultFont,
     language: snapshot.language,
@@ -555,11 +585,11 @@ async function createLayoutShapingInternal(
 ): Promise<LayoutShapingOptions> {
   // Sample every caller-owned value before the asynchronous initialization boundary. A host
   // mutating its configuration while HarfBuzz loads must not create a half-old, half-new
-  // operation identity.
-  const alreadyPrepared = isPreparedLayoutFontConfiguration(configuration);
-  const prepared = alreadyPrepared
+  // operation identity. The preparation copies every face before it awaits anything, and only
+  // the digests of those copies are computed across the boundary.
+  const prepared = isPreparedLayoutFontConfiguration(configuration)
     ? configuration
-    : prepareLayoutFontConfiguration(configuration, instrumentation);
+    : await prepareLayoutFontConfigurationAsync(configuration, instrumentation);
   const snapshot = configurationOfPreparedLayoutFonts(prepared);
   const { epoch, maxFontBytes, sources, substitutions, defaultFont } = snapshot;
   const language = snapshot.language || 'en';

@@ -146,3 +146,32 @@ export const sha256IsNative = nativeSha256 !== null;
 export const sha256FontBytes: (bytes: Uint8Array) => string = nativeSha256
   ? (bytes) => `sha256:${nativeSha256(bytes)}`
   : sha256FontBytesPure;
+
+/** Lower-case hex of a digest, in the `sha256:` form every caller compares. */
+const digestText = (digest: ArrayBuffer): string =>
+  `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+
+/**
+ * SHA-256 of `bytes` in the same `sha256:<hex>` form, from the browser's `crypto.subtle` where
+ * there is no synchronous native hasher.
+ *
+ * The digest runs in the platform's own implementation instead of the pure path, which is what a
+ * browser otherwise pays for every font face it admits. The bytes are read after an `await`, so
+ * the caller must own them: pass a copy no one else can write, never a host's buffer. Without
+ * `crypto.subtle` (an insecure origin) or when it refuses, the synchronous hash answers.
+ */
+export function sha256BytesAsync(bytes: Uint8Array): Promise<string> {
+  const subtle = nativeSha256
+    ? undefined
+    : (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
+  return subtle ? sha256WithSubtle(bytes, subtle) : Promise.resolve(sha256FontBytes(bytes));
+}
+
+/** The `crypto.subtle` half of {@link sha256BytesAsync}. Exported for tests. */
+export async function sha256WithSubtle(bytes: Uint8Array, subtle: SubtleCrypto): Promise<string> {
+  try {
+    return digestText(await subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>));
+  } catch {
+    return sha256FontBytes(bytes);
+  }
+}
