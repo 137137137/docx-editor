@@ -378,7 +378,10 @@ interface PublishedPageMemo {
   readonly format: string | undefined;
   readonly published: PageRecord;
 }
-const publishedPageMemos = new WeakMap<PageRecord, PublishedPageMemo>();
+// A few per page: a footnote reserve search can publish a page at alternating places in its
+// rounds, and one entry made each round remap the page again.
+const publishedPageMemos = new WeakMap<PageRecord, PublishedPageMemo[]>();
+const PUBLISHED_PER_PAGE = 3;
 
 function publishSectionPage(
   page: PageRecord,
@@ -388,27 +391,24 @@ function publishSectionPage(
   sectionPageCount: number,
   format: string | undefined
 ): PageRecord {
-  const memo = publishedPageMemos.get(page);
-  if (
-    memo &&
-    memo.globalIndex === globalIndex &&
-    memo.sheetY === sheetY &&
-    memo.pageNumber === pageNumber &&
-    memo.sectionPageCount === sectionPageCount &&
-    memo.format === format
-  ) {
-    return memo.published;
-  }
+  const memos = publishedPageMemos.get(page);
+  const memo = memos?.find(
+    (entry) =>
+      entry.globalIndex === globalIndex &&
+      entry.sheetY === sheetY &&
+      entry.pageNumber === pageNumber &&
+      entry.sectionPageCount === sectionPageCount &&
+      entry.format === format
+  );
+  if (memo) return memo.published;
   const remapped = remapPage(page, globalIndex, sheetY);
   const published = withPageFieldSources([remapped], pageNumber, sectionPageCount, format)[0]!;
-  publishedPageMemos.set(page, {
-    globalIndex,
-    sheetY,
-    pageNumber,
-    sectionPageCount,
-    format,
-    published,
-  });
+  const entry = { globalIndex, sheetY, pageNumber, sectionPageCount, format, published };
+  if (!memos) publishedPageMemos.set(page, [entry]);
+  else {
+    if (memos.length >= PUBLISHED_PER_PAGE) memos.shift();
+    memos.push(entry);
+  }
   return published;
 }
 

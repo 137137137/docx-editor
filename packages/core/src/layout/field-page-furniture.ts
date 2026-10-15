@@ -705,10 +705,43 @@ export function carryStrippedPageFieldProjection(
  * field — and then threw 555 of those fresh records away when the previous finalized
  * identities were restored. Same idiom as `publishedPageMemos` in `multi-section-layout.ts`.
  */
-const finalizedPageMemos = new WeakMap<
-  PageRecord,
-  { pageCount: number; pageRefToken: string; result: PageRecord }
->();
+const finalizedPageMemos = new WeakMap<PageRecord, FinalizedPageMemo[]>();
+
+interface FinalizedPageMemo {
+  readonly pageCount: number;
+  readonly pageRefToken: string;
+  readonly result: PageRecord;
+}
+
+/**
+ * Finalized answers kept per page. A footnote reserve search lays the body out several times
+ * for one edit, and its page count can alternate between rounds; with one answer per page,
+ * each round projected every sheet's furniture again under a count it had already seen.
+ */
+const FINALIZED_PER_PAGE = 3;
+
+function finalizedMemoOf(
+  page: PageRecord,
+  provisional: boolean,
+  pageCount: number,
+  pageRefToken: string
+): FinalizedPageMemo | undefined {
+  const memos = finalizedPageMemos.get(page);
+  if (!memos) return undefined;
+  // A provisional pass keeps whatever this page was last finalized as.
+  if (provisional) return memos[memos.length - 1];
+  return memos.find((memo) => memo.pageCount === pageCount && memo.pageRefToken === pageRefToken);
+}
+
+function rememberFinalized(page: PageRecord, memo: FinalizedPageMemo): void {
+  const memos = finalizedPageMemos.get(page);
+  if (!memos) {
+    finalizedPageMemos.set(page, [memo]);
+    return;
+  }
+  if (memos.length >= FINALIZED_PER_PAGE) memos.shift();
+  memos.push(memo);
+}
 
 /**
  * Project allowlisted PAGE/NUMPAGES/SECTIONPAGES once the document page count is known.
@@ -744,11 +777,8 @@ export function finalizePageFieldProjection(
 
   let changed = false;
   const pages = layout.pages.map((page) => {
-    const memo = finalizedPageMemos.get(page);
-    if (
-      memo &&
-      (provisional || (memo.pageCount === pageCount && memo.pageRefToken === pageRefToken))
-    ) {
+    const memo = finalizedMemoOf(page, provisional, pageCount, pageRefToken);
+    if (memo) {
       if (memo.result !== page) changed = true;
       return memo.result;
     }
@@ -813,7 +843,7 @@ export function finalizePageFieldProjection(
     // carries a `pageFieldProjector`. A story kept by identity because its RETAINED
     // projection context still holds is already published text under this exact context.
     if (header === page.header && footer === page.footer && fragments === page.fragments) {
-      finalizedPageMemos.set(page, { pageCount: memoCount, pageRefToken, result: page });
+      rememberFinalized(page, { pageCount: memoCount, pageRefToken, result: page });
       return page;
     }
     if (fragments !== page.fragments) changed = true;
@@ -823,7 +853,7 @@ export function finalizePageFieldProjection(
       ...(footer !== undefined ? { footer } : {}),
       ...(fragments !== page.fragments ? { fragments } : {}),
     };
-    finalizedPageMemos.set(page, { pageCount: memoCount, pageRefToken, result });
+    rememberFinalized(page, { pageCount: memoCount, pageRefToken, result });
     return result;
   });
 
