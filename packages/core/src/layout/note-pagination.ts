@@ -2299,9 +2299,16 @@ export function attachNotesToLayout(
      * Opaque at this boundary; the shape is owned by this module.
      */
     readonly memo?: unknown;
+    /**
+     * The pages are a completed prefix of a pass, shown before it ends: attach page-bottom
+     * footnotes only. Section- and document-end notes, continuation sheets and the final marks
+     * wait for the whole document, or they would land at the end of the prefix.
+     */
+    readonly partial?: boolean;
   }
 ): NotesAttachResult {
   const memo = (options?.memo ?? null) as NotesPassMemo | null;
+  const partial = options?.partial === true;
   const reasons: NotePaginationFallbackReason[] = [...(options?.fallbackReasons ?? [])];
   const paragraphSectionIndex = options?.paragraphSectionIndex ?? new Map<string, number>();
   const overflowBudget: NoteOverflowBudget = { remaining: MAX_NOTE_OVERFLOW_PAGES };
@@ -2342,7 +2349,7 @@ export function attachNotesToLayout(
     noteMarks = memo.finalMarks.marks;
   } else {
     noteMarks = buildMarkContext(footnoteSites, endnoteSites, input);
-    if (memo) memo.finalMarks = { sitesFingerprint, marks: noteMarks };
+    if (memo && !partial) memo.finalMarks = { sitesFingerprint, marks: noteMarks };
   }
   // Keyed on the FINAL mark context, whose identity the memo keeps while the sites
   // fingerprint stands, so unchanged notes reuse their story layouts across passes.
@@ -2448,6 +2455,10 @@ export function attachNotesToLayout(
     return attached;
   });
 
+  if (partial) {
+    const shown = reprojectBodyNoteMarks({ ...layout, pages }, noteMarks);
+    return { layout: shown, fallbackReasons: reasons, noteMarks };
+  }
   const pageCountBeforeOverflow = pages.length;
 
   // Drain footnote continuations that outlive the final body page.
@@ -2622,6 +2633,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
           fallbackReasons: [],
           paragraphSectionIndex,
           memo: notesMemo,
+          partial: true,
         }).layout,
       () => {
         wrappedUp = true;

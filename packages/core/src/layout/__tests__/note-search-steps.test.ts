@@ -13,7 +13,13 @@ import {
 } from '../../store/package/note-properties.ts';
 import { createFixedMeasurer } from '../fixed-measurer.ts';
 import type { LayoutProgress, LayoutSteps } from '../layout-steps.ts';
-import { layoutSemanticDocumentWithNotesSteps, type NotesLayoutInput } from '../note-pagination.ts';
+import {
+  attachNotesToLayout,
+  buildPageRefHits,
+  layoutSemanticDocumentWithNotesSteps,
+  type NotesLayoutInput,
+} from '../note-pagination.ts';
+import { collectBodyNoteReferences } from '../note-reference-visibility.ts';
 import { enumerateDocumentSections } from '../section-properties.ts';
 import type { PageRecord, ParagraphFragmentRecord, SemanticLayout } from '../semantic-records.ts';
 
@@ -173,4 +179,26 @@ describe('footnote search as steps', () => {
     expect([...session.notePageBottomReserves!]).toEqual([[0, 80]]);
     expect(next.value.pages.length).toBe(2);
   });
+});
+
+test('a partial attach shows page-bottom notes only and leaves end-collected notes to the end', () => {
+  const { part, notes } = load();
+  const ref = collectNoteReferences(part)[0]!;
+  const docEnd: NotesLayoutInput = {
+    ...notes,
+    footnotePropsBySection: [{ ...notes.footnotePropsBySection[0]!, pos: 'docEnd' }],
+    documentFootnoteProps: { ...notes.documentFootnoteProps, pos: 'docEnd' },
+  };
+  const layout = {
+    revision: 1,
+    pages: [
+      page(0, [fragment(ref.paragraphId, ref.atomOffset + 1, 14)]),
+      page(1, [fragment('tail', 4, 14)]),
+    ],
+  };
+  const hits = buildPageRefHits(collectBodyNoteReferences(part, 'all-markup'), new Map());
+  const notesOn = (result: SemanticLayout) =>
+    result.pages.flatMap((p) => [...(p.footnotes?.notes ?? []), ...(p.endnotes?.notes ?? [])]);
+  expect(notesOn(attachNotesToLayout(layout, hits, docEnd).layout).length).toBeGreaterThan(0);
+  expect(notesOn(attachNotesToLayout(layout, hits, docEnd, { partial: true }).layout)).toEqual([]);
 });

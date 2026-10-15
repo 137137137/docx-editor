@@ -145,4 +145,13 @@ describe('one-pass footnote pagination in the background', () => {
     idle();
     expect(state.passes).toBe(0);
   });
+
+  test('a layout published after teardown starts nothing', () => {
+    const { canonical, state, idle } = harness({ liveReserves: new Map([[0, 20]]) });
+    canonical.cancel();
+    // The flush teardown runs publishes once more.
+    canonical.request();
+    idle();
+    expect(state.passes).toBe(0);
+  });
 });

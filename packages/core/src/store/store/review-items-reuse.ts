@@ -5,6 +5,7 @@ import type { ReviewRevisionItem } from './review-items.ts';
 import { locatedSitesIfKnown, locateSites, type SiteLocation } from './review-site-locations.ts';
 import { collectRevisionSites, type RevisionSite } from './tree-op-revisions.ts';
 import { paragraphOffsetIndex } from './tree-op-segments.ts';
+import { setLatestPerPart } from './latest-per-part.ts';
 
 /**
  * `WeakRef` is ES2021 and the workspace tsconfigs pin `lib` at ES2020, so the global is
@@ -20,7 +21,7 @@ const lastRoots = new Map<string, RootWeakRef>();
 
 /** Record that `part`'s queue was derived, so the next version can be compared with it. */
 export function rememberRevisionRoot(part: OoxmlPart): void {
-  lastRoots.set(part.name, new WeakRef(part.root));
+  setLatestPerPart(lastRoots, part.name, new WeakRef(part.root));
 }
 
 /** Changed paragraphs past this many derive the queue again. */

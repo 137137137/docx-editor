@@ -1,6 +1,7 @@
 // A re-derived review queue hands back the previous object for every card that did not change.
 
 import { revisionSiteNodeIdsOf, type ReviewRevisionItem } from './review-items.ts';
+import { setLatestPerPart } from './latest-per-part.ts';
 
 /**
  * `WeakRef` is ES2021 and the workspace tsconfigs pin `lib` at ES2020, so the global is
@@ -88,6 +89,6 @@ export function withStableCards(
     });
     result = unchanged ? previous : stable;
   }
-  lastQueues.set(partName, new WeakRef(result));
+  setLatestPerPart(lastQueues, partName, new WeakRef(result));
   return result;
 }

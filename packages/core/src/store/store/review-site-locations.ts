@@ -8,6 +8,7 @@ import { currentFieldResultsMode, FieldResultsModeMemo } from '../package/field-
 import type { OoxmlNode, OoxmlParagraphNode, OoxmlPart } from '../package/ooxml-tree.ts';
 import { paragraphOffsetIndex, transientParagraphOffsetIndex } from './tree-op-segments.ts';
 import { createRecentRootCache } from './recent-root-cache.ts';
+import { setLatestPerPart } from './latest-per-part.ts';
 
 /** The `w:p` a node sits inside, and the model offset it starts at within that paragraph. */
 export interface SiteLocation {
@@ -63,7 +64,7 @@ function locateSitesWithPolicy(
     fullLocations(part.root, retainAcrossReads);
   if (retainAcrossReads) {
     locatedSitesCaches[mode].set(part.root, located);
-    lastLocatedRoots.set(lastKey, new WeakRef(part.root));
+    setLatestPerPart(lastLocatedRoots, lastKey, new WeakRef(part.root));
   }
   return located;
 }

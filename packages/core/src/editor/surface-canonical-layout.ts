@@ -52,7 +52,10 @@ export interface CanonicalLayoutHost {
 export interface CanonicalLayout {
   /** A layout of the live session was published: check it again once things are idle. */
   request(): void;
-  /** Drop any background pass: for teardown. */
+  /**
+   * Drop any background pass and stop for good: for teardown. A layout published after it
+   * (the flush teardown runs) starts nothing.
+   */
   cancel(): void;
 }
 
@@ -74,6 +77,7 @@ function pagesSignature(layout: SemanticLayout, reserves: ReadonlyMap<number, nu
 export function createCanonicalLayout(host: CanonicalLayoutHost): CanonicalLayout {
   let cancelTimer: (() => void) | null = null;
   let adopting = false;
+  let disposed = false;
   /** The signature of the last layout a background pass confirmed or published. */
   let verified: string | null = null;
 
@@ -83,9 +87,10 @@ export function createCanonicalLayout(host: CanonicalLayoutHost): CanonicalLayou
   };
   const later = (run: () => void, delayMs: number): void => {
     stop();
+    if (disposed) return;
     cancelTimer = host.schedule(() => {
       cancelTimer = null;
-      run();
+      if (!disposed) run();
     }, delayMs);
   };
 
@@ -133,9 +138,12 @@ export function createCanonicalLayout(host: CanonicalLayoutHost): CanonicalLayou
 
   return {
     request() {
-      if (adopting) return;
+      if (adopting || disposed) return;
       later(start, START_DELAY_MS);
     },
-    cancel: stop,
+    cancel() {
+      disposed = true;
+      stop();
+    },
   };
 }
