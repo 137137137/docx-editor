@@ -281,3 +281,16 @@ export function withRevealPairKey(
     : keyUnderQuery(placements, event.key, { pairReplacements: true });
   return pairKey !== null && isReplacementPairKey(pairKey) ? { ...event, pairKey } : event;
 }
+
+const keyedQueues = new WeakMap<readonly ReviewItem[], ReadonlyMap<string, ReviewItem>>();
+
+/** Each item by its store key, built once per queue (weakly, so it goes with the queue). */
+export function reviewItemsByKey(items: readonly ReviewItem[]): ReadonlyMap<string, ReviewItem> {
+  let byKey = keyedQueues.get(items);
+  if (!byKey) {
+    const map = new Map<string, ReviewItem>();
+    for (const item of items) map.set(reviewItemKey(item), item);
+    keyedQueues.set(items, (byKey = map));
+  }
+  return byKey;
+}

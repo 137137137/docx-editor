@@ -59,7 +59,7 @@ import { startOpeningSlices } from './surface-progressive-open.ts';
 import { createDeferredLayout } from './surface-deferred-layout.ts';
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
 import { createReviewOrderIndex } from './surface-review-order.ts';
-import { litReviewKeys } from './review-replacement-pairs.ts';
+import { litReviewKeys, reviewItemsByKey } from './review-replacement-pairs.ts';
 import { bodyBlockCountOf } from '../layout/body-block-limit.ts';
 import {
   createContentControlWidgetSessions,
@@ -154,7 +154,7 @@ import {
   type SemanticSelection,
 } from '@docx-editor.dev/core/layout';
 import { attachListResolveChangeEvidence } from '../layout/list-resolve.ts';
-import { rangeMayShowOnPages } from '../layout/selection-rects.ts';
+import { rangesOnPages } from '../layout/selection-rects.ts';
 import { refreshSurfaceRefFieldResults } from './surface-ref-field-refresh.ts';
 import { type RevisionAuthorFilter } from '../layout/revision-projection.ts';
 import { createRevisionAuthorVisibility } from './revision-author-visibility.ts';
@@ -3539,14 +3539,11 @@ export function mountPaginatedSurface(
     ) {
       return commentRectCache.rects;
     }
-    /** Skip an item that cannot be on screen, before measuring anything about it. */
-    const onScreen = (from: string, to: string): boolean => {
-      // The WHOLE range, not its start. Testing only the start dropped the band for a comment
-      // spanning pages 1–5 the moment page 1 scrolled away. `keyedRangeRects` clips to the
-      // visible pages anyway; this is only a pre-filter, and a false keep costs one range's
-      // measurement. Asked of the visible pages, not of a per-layout index of every paragraph.
-      return !pages || rangeMayShowOnPages(currentLayout, pages, from, to);
-    };
+    // Skip an item that cannot be on screen, before measuring anything about it. The WHOLE
+    // range, not its start: testing only the start dropped the band for a comment spanning
+    // pages 1–5 the moment page 1 scrolled away. `keyedRangeRects` clips to the visible pages
+    // anyway; this is only a pre-filter, and a false keep costs one range's measurement.
+    const onScreen = pages ? rangesOnPages(currentLayout, pages) : () => true;
     const ranges: KeyedRange[] = [];
     for (const item of visibleReviewItems()) {
       if (item.kind === 'comment') {
@@ -3814,8 +3811,7 @@ export function mountPaginatedSurface(
     }
     // Once per paint, not once per rect: a decision spanning many lines asked the same
     // question for every one of them.
-    const byKey = new Map<string, ReviewItem>();
-    for (const item of visibleReviewItems()) byKey.set(reviewItemKey(item), item);
+    const byKey = reviewItemsByKey(visibleReviewItems());
     const bands: OverlayRect[] = [];
     for (const rect of commentRects()) {
       const className = bandClassFor(rect.key, activeKeys, byKey);

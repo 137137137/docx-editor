@@ -144,30 +144,42 @@ function pageOrderSpan(
 }
 
 /**
- * Whether a range between two paragraphs can draw on any of `pages`, by body layout order.
+ * A test of whether a range between two paragraphs can draw on any of `pages`, by body layout
+ * order. Built once per set of pages: the spans of the visible pages are read once, not once
+ * per range.
  *
  * A paragraph the body order cannot place (a header's, a note's) answers true: this is only a
  * filter in front of measuring, and a false keep costs one range's measurement.
  */
+export function rangesOnPages(
+  layout: SemanticLayout,
+  pages: ReadonlySet<number>
+): (fromParagraphId: string, toParagraphId: string) => boolean {
+  const index = documentOrderIndex(layout);
+  const spans: (readonly [number, number])[] = [];
+  for (const pageIndex of pages) {
+    const page = layout.pages[pageIndex];
+    if (page) spans.push(pageOrderSpan(page, index));
+  }
+  return (fromParagraphId, toParagraphId) => {
+    const from = index.get(fromParagraphId);
+    const to = index.get(toParagraphId);
+    if (from === undefined || to === undefined) return true;
+    const low = Math.min(from, to);
+    const high = Math.max(from, to);
+    for (const span of spans) if (span[1] >= low && span[0] <= high) return true;
+    return false;
+  };
+}
+
+/** {@link rangesOnPages} for one range. */
 export function rangeMayShowOnPages(
   layout: SemanticLayout,
   pages: ReadonlySet<number>,
   fromParagraphId: string,
   toParagraphId: string
 ): boolean {
-  const index = documentOrderIndex(layout);
-  const from = index.get(fromParagraphId);
-  const to = index.get(toParagraphId);
-  if (from === undefined || to === undefined) return true;
-  const low = Math.min(from, to);
-  const high = Math.max(from, to);
-  for (const pageIndex of pages) {
-    const page = layout.pages[pageIndex];
-    if (!page) continue;
-    const span = pageOrderSpan(page, index);
-    if (span[1] >= low && span[0] <= high) return true;
-  }
-  return false;
+  return rangesOnPages(layout, pages)(fromParagraphId, toParagraphId);
 }
 
 /**
