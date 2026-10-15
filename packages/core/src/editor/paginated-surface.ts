@@ -60,7 +60,7 @@ import { createDeferredLayout } from './surface-deferred-layout.ts';
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
 import { createReviewOrderIndex } from './surface-review-order.ts';
 import { litReviewKeys, reviewItemsByKey } from './review-replacement-pairs.ts';
-import { bodyBlockCountOf } from '../layout/body-block-limit.ts';
+import { bodyBlockCountOf, bodyBlocksOf } from '../layout/body-block-limit.ts';
 import {
   createContentControlWidgetSessions,
   contentControlValueOps,
@@ -6201,6 +6201,7 @@ export function mountPaginatedSurface(
       limit: () => openingBlockLimit,
       setLimit: (limit) => (openingBlockLimit = limit),
       bodyBlockCount: () => bodyBlockCountOf(layoutSession),
+      bodyBlock: (index) => bodyBlocksOf(layoutSession)?.[index],
       prefixPass: (limit) =>
         layoutDocumentSteps(session.packageRevision(), undefined, undefined, limit),
       finish: fieldScope.wrap(() => {

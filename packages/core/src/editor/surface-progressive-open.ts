@@ -43,14 +43,58 @@ export function progressiveOpenPending(surface: object): boolean {
 }
 
 /**
- * The work a sliced opening aims to do per slice, in milliseconds.
+ * The body text one prefix step adds, in characters, and its bounds in blocks.
  *
- * Every prefix pass also walks the blocks laid out before it, so that cost repeats once per
- * slice. On a document of a thousand pages, 40 ms slices spent more time repeating it than
- * laying out new blocks; at this size the document opens in under half the time, and the
- * muted pages still get a frame several times a second.
+ * Sized by CONTENT, never by the time a pass took. Each prefix is its own footnote-reserve
+ * problem and seeds the next one, so a schedule that followed the clock published a different
+ * pagination on a slower or busier machine. Content is the same on every machine and tracks the
+ * work closely enough: a footnoted body lays a step out in one task, so the step bounds the
+ * longest pause, and every prefix also walks the blocks before it, so steps must not be tiny.
  */
-const OPENING_SLICE_MS = 120;
+const PREFIX_STEP_CHARACTERS = 150_000;
+const MIN_PREFIX_STEP = 16;
+const MAX_PREFIX_STEP = 4096;
+
+/**
+ * The body block limit after `limit`: at least {@link MIN_PREFIX_STEP} more blocks, then more
+ * until the step holds {@link PREFIX_STEP_CHARACTERS} of text, at most {@link MAX_PREFIX_STEP}.
+ * A function of the content alone.
+ */
+export function nextPrefixLimit(
+  limit: number,
+  total: number,
+  blockAt: (index: number) => unknown
+): number {
+  let characters = 0;
+  let next = limit;
+  while (
+    next < total &&
+    next - limit < MAX_PREFIX_STEP &&
+    (next - limit < MIN_PREFIX_STEP || characters < PREFIX_STEP_CHARACTERS)
+  ) {
+    characters += bodyBlockWeight(blockAt(next));
+    next += 1;
+  }
+  return next;
+}
+
+const blockWeights = new WeakMap<object, number>();
+
+/** A body block's text length, the measure a prefix step is sized by. */
+export function bodyBlockWeight(block: unknown): number {
+  if (typeof block !== 'object' || block === null) return 1;
+  const cached = blockWeights.get(block);
+  if (cached !== undefined) return cached;
+  let weight = 1;
+  const stack: unknown[] = [block];
+  while (stack.length > 0) {
+    const node = stack.pop() as { kind?: string; value?: string; children?: readonly unknown[] };
+    if (node.kind === 'textValue') weight += node.value?.length ?? 0;
+    else if (node.children) for (const child of node.children) stack.push(child);
+  }
+  blockWeights.set(block, weight);
+  return weight;
+}
 
 /** What the slices need from the surface that is opening. */
 export interface OpeningSlicesHost {
@@ -64,11 +108,13 @@ export interface OpeningSlicesHost {
   prefixPass(limit: number): LayoutSteps<unknown>;
   /** The normal full layout, resumed from the last prefix; it ends the opening. */
   finish(): void;
+  /** The body block at `index` of the last pass, for sizing the next step. */
+  bodyBlock(index: number): unknown;
 }
 
 /**
- * Lay a mounted surface's body out in slices of about {@link OPENING_SLICE_MS}: each slice
- * extends the prefix and resumes from the previous one, and a prefix pass pauses between the
+ * Lay a mounted surface's body out in growing prefixes (see {@link PREFIX_STEP_CHARACTERS}):
+ * each extends the prefix and resumes from the previous one, and a prefix pass pauses between the
  * rows of a long table instead of laying it out in one task. Marks `container` while it runs,
  * so the loading overlay shows the document muted, and shows the loading indicator on the first
  * page.
@@ -84,7 +130,6 @@ export function startOpeningSlices(
 ): () => void {
   let growth = firstGrowth;
   let pass: LayoutSteps<unknown> | null = null;
-  let passWork = 0;
   const finishPaused = (): void => {
     const paused = pass;
     pass = null;
@@ -100,20 +145,20 @@ export function startOpeningSlices(
           host.finish();
           return true;
         }
-        host.setLimit(limit + growth);
-        pass = host.prefixPass(limit + growth);
-        passWork = 0;
+        const next =
+          total === undefined
+            ? limit + growth
+            : nextPrefixLimit(limit, total, (index) => host.bodyBlock(index));
+        host.setLimit(next);
+        pass = host.prefixPass(next);
       }
-      const began = host.now();
       let done = false;
       do done = pass.next().done === true;
       while (!done && host.now() < deadline);
-      passWork += host.now() - began;
       if (!done) return false;
       pass = null;
-      // Size the next slice from this one's cost per block.
-      const msPerBlock = Math.max(passWork, 1) / growth;
-      growth = Math.min(4096, Math.max(16, Math.round(OPENING_SLICE_MS / msPerBlock)));
+      // Before the first pass reports the block count, steps double; see the constants above.
+      growth = Math.min(MAX_PREFIX_STEP, growth * 2);
       if (host.now() >= deadline) return false;
     }
     return true;

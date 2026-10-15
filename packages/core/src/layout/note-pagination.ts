@@ -313,6 +313,8 @@ interface NotesPageAttachEntry {
 interface NotesPassMemo {
   /** Body state whose same-page reserve search reached the orphan-refinement phase. */
   orphanPolicyPart?: OoxmlPart;
+  /** The body block limit `orphanPolicyPart` was reached under; see `searchLimit` below. */
+  orphanPolicyLimit?: number;
   hitsFingerprint: string;
   /** {@link fingerprintHitsIdentity} of {@link allHits} — offsets excluded. */
   readonly identityFingerprint: string;
@@ -332,11 +334,12 @@ interface NotesPassMemo {
    */
   settledReserves: {
     readonly part: OoxmlPart;
+    readonly limit: number;
     readonly fingerprint: string;
     readonly reasons: readonly NotePaginationFallbackReason[];
   } | null;
   /** Reserve-map adoptions spent on the current body-part identity (budget above). */
-  reflowSpent: { readonly part: OoxmlPart; adopted: number } | null;
+  reflowSpent: { readonly part: OoxmlPart; readonly limit: number; adopted: number } | null;
   readonly pageAttach: WeakMap<PageRecord, NotesPageAttachEntry>;
   /**
    * PAGE-LOCAL reserve results only (area stack + eviction). The neighbour-reading
@@ -2647,7 +2650,12 @@ export function layoutSemanticDocumentWithNotes<
     resetNoteReserveSearch(notesMemo);
     bodyLayout = runBody({ ...optionsWithLists, noteMarks, pageBottomReserves: usedReserves });
   }
-  let allowOrphanDeferral = notesMemo?.orphanPolicyPart === part;
+  // A progressive open lays out growing prefixes of one part, each its own pagination
+  // problem. Search state is kept per part AND prefix, or a settled prefix answer (and the
+  // budget the prefixes spent) decided the whole document by how its open was sliced.
+  const searchLimit = (optionsWithLists as { bodyBlockLimit?: number }).bodyBlockLimit ?? -1;
+  let allowOrphanDeferral =
+    notesMemo?.orphanPolicyPart === part && notesMemo.orphanPolicyLimit === searchLimit;
   const seedFingerprint = footnoteReservesFingerprint(usedReserves);
   // An unchanged document seeded with the answer it settled on republishes it: the loop
   // below exists to find reserves for a NEW document state, and re-running it on the same
@@ -2656,6 +2664,7 @@ export function layoutSemanticDocumentWithNotes<
     notesMemoState.reused &&
     notesMemo?.settledReserves &&
     notesMemo.settledReserves.part === part &&
+    notesMemo.settledReserves.limit === searchLimit &&
     notesMemo.settledReserves.fingerprint === seedFingerprint
       ? notesMemo.settledReserves
       : null;
@@ -2666,9 +2675,12 @@ export function layoutSemanticDocumentWithNotes<
     // Adoption budget for this body-part identity, carried across session passes so the
     // iteration continues where the previous pass stopped instead of restarting.
     const spent =
-      notesMemo && notesMemo.reflowSpent && notesMemo.reflowSpent.part === part
+      notesMemo &&
+      notesMemo.reflowSpent &&
+      notesMemo.reflowSpent.part === part &&
+      notesMemo.reflowSpent.limit === searchLimit
         ? notesMemo.reflowSpent
-        : { part, adopted: 0 };
+        : { part, limit: searchLimit, adopted: 0 };
     if (notesMemo) notesMemo.reflowSpent = spent;
     let adoptedThisPass = 0;
 
@@ -2725,7 +2737,10 @@ export function layoutSemanticDocumentWithNotes<
           strictReserves = usedReserves;
           strictReasons = [...computed.reasons];
           allowOrphanDeferral = true;
-          if (notesMemo) notesMemo.orphanPolicyPart = part;
+          if (notesMemo) {
+            notesMemo.orphanPolicyPart = part;
+            notesMemo.orphanPolicyLimit = searchLimit;
+          }
           appliedFingerprints.clear();
           appliedFingerprints.add(footnoteReservesFingerprint(usedReserves));
           phaseEnvelope = usedReserves;
@@ -2813,6 +2828,7 @@ export function layoutSemanticDocumentWithNotes<
       if (notesMemo) {
         notesMemo.settledReserves = {
           part,
+          limit: searchLimit,
           fingerprint: footnoteReservesFingerprint(usedReserves),
           reasons: [...fallbackReasons],
         };
@@ -2828,6 +2844,7 @@ export function layoutSemanticDocumentWithNotes<
     ) {
       notesMemo.settledReserves = {
         part,
+        limit: searchLimit,
         fingerprint: footnoteReservesFingerprint(usedReserves),
         reasons: [...fallbackReasons],
       };
