@@ -238,7 +238,10 @@ function loadFace(fetcher: typeof fetch, url: string, signal?: AbortSignal): Pro
   const load = loadsByFetcher.get(fetcher) ?? startLoad(fetcher, url);
   load.waiters += 1;
   return new Promise<Uint8Array>((resolve, reject) => {
+    let left = false;
     const leave = () => {
+      if (left) return;
+      left = true;
       signal?.removeEventListener('abort', onAbort);
       load.waiters -= 1;
     };
