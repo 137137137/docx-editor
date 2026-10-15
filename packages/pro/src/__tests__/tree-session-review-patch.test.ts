@@ -99,8 +99,22 @@ function docx(body: string, comments?: string, header?: string, numbering?: stri
   return zipSync(files);
 }
 
+/**
+ * Full derivations so far. A re-derived queue keeps the objects of unchanged cards, so card
+ * identity cannot tell a patch from a fallback; this count can.
+ */
+let derivations = 0;
+
 function open(bytes: Uint8Array): TreeDocxSession {
-  const result = openTreeSession(bytes, { reviewModel: reviewModule().review! });
+  const review = reviewModule().review!;
+  const counted = {
+    ...review,
+    collectReviewItems: (...args: Parameters<typeof review.collectReviewItems>) => {
+      derivations += 1;
+      return review.collectReviewItems(...args);
+    },
+  };
+  const result = openTreeSession(bytes, { reviewModel: counted });
   if (!result.ok) throw new Error(`${result.reason}: ${result.detail ?? ''}`);
   return result.session;
 }
@@ -362,7 +376,9 @@ describe('local review patch after one-paragraph text-local edits', () => {
         (item): item is ReviewRevisionItem =>
           isRevision(item) && item.revisionKind === 'structural' && item.ranges.length === 0
       )!;
+    expect(structuralBefore).toBeDefined();
     const paragraphId = session.paragraphIds()[0]!;
+    const derivedBefore = derivations;
 
     const result = session.applyTreeOps([
       {
@@ -377,7 +393,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
 
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
-    expect(after.find((item) => item === structuralBefore)).toBeUndefined();
+    expect(derivations).toBe(derivedBefore + 1);
   });
 
   test('replacing existing local revisions preserves neighbors and matches oracle', () => {
@@ -485,11 +501,12 @@ describe('local review patch after one-paragraph text-local edits', () => {
     const before = session.reviewItems();
     const revisionBefore = before.find((item): item is ReviewRevisionItem => isRevision(item))!;
     expect(revisionBefore.ranges).toHaveLength(2);
+    const derivedBefore = derivations;
 
     retype(session, 0, 'START ');
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
-    expect(after.find((item) => isRevision(item))).not.toBe(revisionBefore);
+    expect(derivations).toBe(derivedBefore + 1);
   });
 
   test('header furniture change between cache and body edit forces full derivation', () => {
@@ -500,6 +517,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
       (item): item is ReviewRevisionItem => isRevision(item) && item.text === 'draft'
     )!;
     expect(headerBefore).toBeDefined();
+    const derivedBefore = derivations;
 
     const headerParagraphId = session.paragraphIdsIn({ kind: 'headerFooter', rId: 'rIdH' })[0]!;
     const headerEdit = session.applyTreeOps(
@@ -532,7 +550,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
 
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
-    expect(after.find((item) => item === headerBefore)).toBeUndefined();
+    expect(derivations).toBe(derivedBefore + 1);
     expect(
       after.some(
         (item) =>
@@ -565,6 +583,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
     const body = TWO_PARAGRAPH_TRACKED + `<w:p>${run('plain item')}</w:p>`;
     const session = open(docx(body, undefined, undefined, BULLET_NUMBERING));
     const before = session.reviewItems();
+    const derivedBefore = derivations;
 
     const numId = session.ensureListDefinition('bullet');
     session.applyTreeOps([
@@ -579,7 +598,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
     expect(after.length).toBeGreaterThan(before.length);
-    expect(after[0]).not.toBe(before[0]);
+    expect(derivations).toBe(derivedBefore + 1);
   });
 
   test('a list toggle in a table cell falls back and still matches the oracle', () => {
@@ -587,7 +606,8 @@ describe('local review patch after one-paragraph text-local edits', () => {
       TWO_PARAGRAPH_TRACKED +
       `<w:tbl><w:tblPr/><w:tr><w:tc><w:p>${run('cell item')}</w:p></w:tc></w:tr></w:tbl>`;
     const session = open(docx(body, undefined, undefined, BULLET_NUMBERING));
-    const before = session.reviewItems();
+    session.reviewItems();
+    const derivedBefore = derivations;
 
     const numId = session.ensureListDefinition('bullet');
     session.applyTreeOps([
@@ -596,14 +616,15 @@ describe('local review patch after one-paragraph text-local edits', () => {
 
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
-    expect(after[0]).not.toBe(before[0]);
+    expect(derivations).toBe(derivedBefore + 1);
   });
 
   test('a header change beside a list toggle forces full derivation', () => {
     const header = `<w:p>${run('Confidential ')}${ins('7', run('draft'))}</w:p>`;
     const body = TWO_PARAGRAPH_TRACKED + `<w:p>${run('plain item')}</w:p>`;
     const session = open(docx(body, undefined, header, BULLET_NUMBERING));
-    const before = session.reviewItems();
+    session.reviewItems();
+    const derivedBefore = derivations;
 
     const headerParagraphId = session.paragraphIdsIn({ kind: 'headerFooter', rId: 'rIdH' })[0]!;
     session.applyTreeOps(
@@ -628,7 +649,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
     expect(after.some((item) => isRevision(item) && item.text?.includes('v2'))).toBe(true);
-    expect(after[0]).not.toBe(before[0]);
+    expect(derivations).toBe(derivedBefore + 1);
   });
 
   describe('a split or join that moves no review markup keeps the queue', () => {
@@ -701,7 +722,7 @@ describe('local review patch after one-paragraph text-local edits', () => {
   test('structural edits fall back and still match the oracle', () => {
     const session = open(docx(TWO_PARAGRAPH_TRACKED));
     session.reviewItems();
-    const beforeRefs = session.reviewItems();
+    const derivedBefore = derivations;
 
     const paragraphId = session.paragraphIds()[0]!;
     session.applyTreeOps([
@@ -714,6 +735,6 @@ describe('local review patch after one-paragraph text-local edits', () => {
 
     const after = session.reviewItems();
     expect(after).toEqual(oracle(session));
-    expect(after.some((item, index) => item === beforeRefs[index])).toBe(false);
+    expect(derivations).toBe(derivedBefore + 1);
   });
 });

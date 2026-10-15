@@ -27,6 +27,7 @@ import {
 } from './comment-reads.ts';
 import { locateSites } from './review-site-locations.ts';
 import { createRecentRootCache } from './recent-root-cache.ts';
+import { withStableCards } from './review-item-identity.ts';
 import { deepParagraphOrderOfPart } from './review-paragraph-order.ts';
 // The vocabulary this derivation speaks — the item shapes and their pure helpers — lives in
 // `review-items.ts`, where the binding and layout lanes can reach it too.
@@ -118,7 +119,9 @@ function revisionItemsOfWith(
     // under a different name would stamp every range with the wrong part.
     if (cached && cached.name === part.name) return cached.items;
   }
-  const items = computeRevisionItemsOf(part, dependencies);
+  const computed = computeRevisionItemsOf(part, dependencies);
+  const items =
+    cacheable && dependencies.retainRevisionItems ? withStableCards(part.name, computed) : computed;
   if (cacheable && dependencies.retainRevisionItems) {
     revisionItemsCache.set(part.root, { name: part.name, items });
   }
