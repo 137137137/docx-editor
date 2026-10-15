@@ -32,19 +32,27 @@ function samePlainData(left: unknown, right: unknown, budget: { left: number }):
     return true;
   }
   if (Array.isArray(right) || !plainObject(left) || !plainObject(right)) return false;
-  const keys = Object.keys(left);
-  if (keys.length !== Object.keys(right).length) return false;
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+  // Counted, not listed: a card has a dozen keys and this runs once per card per derivation.
+  let keys = 0;
+  for (const key in left) {
+    if (!hasOwn(left, key)) continue;
+    keys += 1;
     const a = (left as Record<string, unknown>)[key];
     const b = (right as Record<string, unknown>)[key];
-    if (!samePlainData(a, b, budget)) return false;
+    if (a === b && (a !== undefined || hasOwn(right, key))) continue;
+    if (!hasOwn(right, key) || !samePlainData(a, b, budget)) return false;
   }
-  return true;
+  for (const key in right) if (hasOwn(right, key)) keys -= 1;
+  return keys === 0;
 }
 
+const hasOwn = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const budget = { left: 0 };
+
 function sameCard(previous: ReviewRevisionItem, next: ReviewRevisionItem): boolean {
-  const budget = { left: COMPARISON_BUDGET };
+  budget.left = COMPARISON_BUDGET;
   return (
     samePlainData(previous, next, budget) &&
     samePlainData(revisionSiteNodeIdsOf(previous), revisionSiteNodeIdsOf(next), budget)
