@@ -5,7 +5,12 @@
 // the one part of both that has to know a line can carry more than one paragraph.
 
 import { lineContentEdges } from './pending-line.ts';
-import { lineSegments, logicalLineSegments, segmentOverlap } from './line-segments.ts';
+import {
+  fragmentParagraphs,
+  lineSegments,
+  logicalLineSegments,
+  segmentOverlap,
+} from './line-segments.ts';
 import { xWithinLine, rangeBandsWithinLine, mergeLineRangeBands } from './line-geometry.ts';
 import { paragraphIsRtl } from './rtl-paragraph.ts';
 import { clipParagraphBox } from './paragraph-frame-clip.ts';
@@ -79,18 +84,10 @@ interface ParagraphTerminal {
   lineId: string;
 }
 
-const paragraphTerminalsCache = new WeakMap<
-  SemanticLayout,
-  ReadonlyMap<string, ParagraphTerminal>
->();
-const orderIndexCache = new WeakMap<readonly string[], ReadonlyMap<string, number>>();
-
-/** Last visual segment range for each paragraph, including repeated visual occurrences. */
-function paragraphTerminals(layout: SemanticLayout): ReadonlyMap<string, ParagraphTerminal> {
-  const cached = paragraphTerminalsCache.get(layout);
-  if (cached) return cached;
+/** Last visual segment range for each paragraph drawn on `pages`. */
+function paragraphTerminals(pages: readonly PageRecord[]): ReadonlyMap<string, ParagraphTerminal> {
   const terminals = new Map<string, ParagraphTerminal>();
-  for (const page of layout.pages)
+  for (const page of pages)
     for (const fragment of paragraphFragmentsOf(page))
       for (const line of fragment.lines)
         for (const segment of lineSegments(line)) {
@@ -104,8 +101,99 @@ function paragraphTerminals(layout: SemanticLayout): ReadonlyMap<string, Paragra
             terminals.set(segment.paragraphId, { end, start, lineId: line.id });
           }
         }
-  paragraphTerminalsCache.set(layout, terminals);
   return terminals;
+}
+
+const terminalsCache = new WeakMap<SemanticLayout, ReadonlyMap<string, ParagraphTerminal>>();
+
+/** {@link paragraphTerminals} over every page, once per layout. */
+function layoutTerminals(layout: SemanticLayout): ReadonlyMap<string, ParagraphTerminal> {
+  let terminals = terminalsCache.get(layout);
+  if (!terminals) terminalsCache.set(layout, (terminals = paragraphTerminals(layout.pages)));
+  return terminals;
+}
+
+const orderIndexCache = new WeakMap<readonly string[], ReadonlyMap<string, number>>();
+
+/** The lowest and highest index any paragraph drawn on a page has, in two orders. */
+interface PageParagraphSpan {
+  readonly layoutIndex: ReadonlyMap<string, number>;
+  readonly orderIndex: ReadonlyMap<string, number>;
+  readonly layout: readonly [number, number];
+  readonly order: readonly [number, number];
+}
+
+const pageSpans = new WeakMap<PageRecord, PageParagraphSpan>();
+
+function pageParagraphSpan(
+  page: PageRecord,
+  layoutIndex: ReadonlyMap<string, number>,
+  orderIndex: ReadonlyMap<string, number>
+): PageParagraphSpan {
+  const cached = pageSpans.get(page);
+  if (cached && cached.layoutIndex === layoutIndex && cached.orderIndex === orderIndex)
+    return cached;
+  let layoutLow = Infinity;
+  let layoutHigh = -Infinity;
+  let orderLow = Infinity;
+  let orderHigh = -Infinity;
+  for (const fragment of paragraphFragmentsOf(page))
+    for (const paragraphId of fragmentParagraphs(fragment)) {
+      const atLayout = layoutIndex.get(paragraphId);
+      if (atLayout !== undefined) {
+        layoutLow = Math.min(layoutLow, atLayout);
+        layoutHigh = Math.max(layoutHigh, atLayout);
+      }
+      const atOrder = orderIndex.get(paragraphId);
+      if (atOrder !== undefined) {
+        orderLow = Math.min(orderLow, atOrder);
+        orderHigh = Math.max(orderHigh, atOrder);
+      }
+    }
+  const span = {
+    layoutIndex,
+    orderIndex,
+    layout: [layoutLow, layoutHigh],
+    order: [orderLow, orderHigh],
+  } as const;
+  pageSpans.set(page, span);
+  return span;
+}
+
+/**
+ * The pages a range can paint on: those drawing a paragraph inside it, in either order.
+ *
+ * A segment paints only when its paragraph lies between the range's ends — by layout order for
+ * text, by story order for a paragraph mark — so a page drawing no such paragraph has nothing
+ * to paint, and every segment of a paragraph inside the range is on a page that is kept.
+ * Walking every line of a long document for a one-word selection cost tens of milliseconds per
+ * selection change. An end neither order can place keeps every page.
+ */
+function pagesHoldingRange(
+  layout: SemanticLayout,
+  from: SemanticPosition,
+  to: SemanticPosition,
+  orderIndex: ReadonlyMap<string, number>
+): readonly PageRecord[] {
+  const layoutIndex = documentOrderIndex(layout);
+  const fromLayout = layoutIndex.get(from.paragraphId);
+  const toLayout = layoutIndex.get(to.paragraphId);
+  const fromOrder = orderIndex.get(from.paragraphId);
+  const toOrder = orderIndex.get(to.paragraphId);
+  if (
+    fromLayout === undefined ||
+    toLayout === undefined ||
+    fromOrder === undefined ||
+    toOrder === undefined
+  )
+    return layout.pages;
+  return layout.pages.filter((page) => {
+    const span = pageParagraphSpan(page, layoutIndex, orderIndex);
+    return (
+      (span.layout[1] >= fromLayout && span.layout[0] <= toLayout) ||
+      (span.order[1] >= fromOrder && span.order[0] <= toOrder)
+    );
+  });
 }
 
 function indexesOf(order: readonly string[]): ReadonlyMap<string, number> {
@@ -140,9 +228,10 @@ function rangeRects(
   const orderIndex = indexesOf(order);
   const fromIndex = orderIndex.get(ordered.from.paragraphId);
   const toIndex = orderIndex.get(ordered.to.paragraphId);
-  const terminals = paragraphTerminals(layout);
+  const pages = pagesHoldingRange(layout, ordered.from, ordered.to, orderIndex);
+  const terminals = pages === layout.pages ? layoutTerminals(layout) : paragraphTerminals(pages);
   const rects: SelectionRect[] = [];
-  for (const page of layout.pages) {
+  for (const page of pages) {
     for (const fragment of paragraphFragmentsOf(page)) {
       for (const line of fragment.lines) {
         const segments = logicalLineSegments(line);
