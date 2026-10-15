@@ -4,7 +4,8 @@ import { surfaceFieldResultsScope } from './field-results-scope.ts';
 import { createRevisionMarkupState } from './revision-markup-state.ts';
 import { withDisplayedHyphens } from '../store/package/hyphen-text.ts';
 import { queryEditorDocument, watermarkOf } from './docx-editor-query.ts';
-import { refreshWriteBlocked } from './refresh-write-guard.ts';
+import { REFRESH_WRITE_REFUSAL, refreshWriteBlocked } from './refresh-write-guard.ts';
+import { reviewWriteRefusal } from './review-write-refusal.ts';
 import { registerRefreshHost, type RefreshHost } from './document-refresh-host.ts';
 import { reviewChangesLocked } from './command-protection.ts';
 import { resolvedFontMeasurement } from './resolved-font-measurement.ts';
@@ -1879,7 +1880,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         return {
           ok: false,
           code: 'unsupported',
-          reason: 'An external document refresh is in progress.',
+          reason: REFRESH_WRITE_REFUSAL,
         };
       // A command inside the yield window addresses the just-loaded document: mount now.
       // (`can` does NOT flush — chrome polls it per render; a read must not defeat the yield.)
@@ -1982,7 +1983,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         return {
           ok: false,
           code: 'unsupported',
-          reason: 'An external document refresh is in progress.',
+          reason: REFRESH_WRITE_REFUSAL,
         };
       if (command.type === 'openRevisionMarkupDialog') return revisionMarkupState.canOpen();
       const historyRefusal = historyGroups.gate(command, options);
@@ -2199,7 +2200,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         };
       }
       let created: string | null = null;
-      surface.commitReviewOps(() => {
+      const refused = surface.commitReviewOps(() => {
         created = surface!.session.replyToComment(
           null,
           {
@@ -2221,9 +2222,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         );
         return { committed: created !== null };
       }, 'comment-add');
-      if (created === null) {
-        return { ok: false, code: 'unsupported', reason: 'the comment could not be committed' };
-      }
+      if (created === null)
+        return reviewWriteRefusal(refused, 'the comment could not be committed');
       return { ok: true, changed: true };
     },
 
@@ -2492,15 +2492,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       if (item.kind !== 'comment') {
         return { ok: false, code: 'unsupported', reason: 'a custom node card cannot be deleted' };
       }
-      // An active key naming an item the queue no longer holds leaves the rail with nothing to
-      // draw and a band painted over text that has no card, so the open card is dismissed
-      // first — but ONLY when it is this one. `dismissActiveReview` acts on whatever the caret
-      // is in, and the delete button keeps the caret exactly where it was, so deleting a
-      // comment further down the page closed the card the reader was replying in and threw
-      // the draft away with it.
-      if (activeReviewKeyNow() === key) surface.dismissActiveReview();
+      // Nothing is dismissed. Activation reads the live queue, by caret and by pin, so a deleted
+      // card cannot stay active. Dismissing first closed the open card and its draft even when
+      // the delete was refused, and `dismissActiveReview` acts on whatever the caret is in, so
+      // dismissing after it closed whichever other card covers the caret.
       let deleted = false;
-      surface.commitReviewOps(() => {
+      const refused = surface.commitReviewOps(() => {
         const note = noteHomeOf(item);
         const parsed = note === null ? null : parseNoteScopeId(note);
         deleted = surface!.session.deleteComment(
@@ -2510,9 +2507,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         );
         return { committed: deleted };
       }, 'comment-delete');
-      if (!deleted) {
-        return { ok: false, code: 'unsupported', reason: 'the comment could not be deleted' };
-      }
+      if (!deleted) return reviewWriteRefusal(refused, 'the comment could not be deleted');
       bump();
       return { ok: true, changed: true };
     },
@@ -2542,7 +2537,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // and `w:del` no body and no thread, so there is nowhere else for the text to live.
       const parent = item.kind === 'comment' ? item.id : null;
       let created: string | null = null;
-      surface.commitReviewOps(() => {
+      const refused = surface.commitReviewOps(() => {
         created = surface!.session.replyToComment(
           parent,
           {
@@ -2564,9 +2559,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         );
         return { committed: created !== null };
       }, 'comment-reply');
-      if (created === null) {
-        return { ok: false, code: 'unsupported', reason: 'the reply could not be committed' };
-      }
+      if (created === null) return reviewWriteRefusal(refused, 'the reply could not be committed');
       return { ok: true, changed: true };
     },
 
