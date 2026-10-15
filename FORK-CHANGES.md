@@ -75,3 +75,11 @@ Every document opened the way a large one is, when the host asks:
 - `scripts/feature-parity-baseline.json`: the prop, added to both adapters' roots.
 - `.changeset/open-after-paint-every.md` and `.collaboration/changes/open-after-paint-every.json` (new).
 - Tests: `fonts-before-first-layout.test.ts` and `progressive-open.test.ts` in `packages/core/src/editor/__tests__/`.
+
+A relayout during a sliced opening, as after an unsliced one:
+
+- `packages/core/src/editor/surface-opening-layout.ts`: a relayout during the opening is one more pass after the open's layout, added to the run in progress (or, after a commit, to the run started again); every preview starts from a cold session.
+- `packages/core/src/editor/paginated-surface.ts`: the open's layout runs on the measurer, scale and furniture of the mount, and a relayout's pass on the current ones.
+- `packages/core/src/editor/surface-fixed-first.ts`: the fixed pass runs first only for an open whose fonts were resolved before its mount.
+- `scripts/check-eslint-max-lines-globs.mjs`: the declared length of `paginated-surface.ts`.
+- Tests: `surface-opening-layout.test.ts` and `progressive-open.test.ts` in `packages/core/src/editor/__tests__/`.

@@ -1,0 +1,13 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A relayout during a sliced opening starts the full layout again from a cold session.",
+  "after": "A relayout during a sliced opening adds one pass to the full layout in progress, or to the one started again after a commit.",
+  "reason": "Only local layout changes. Nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/editor/__tests__/surface-opening-layout.test.ts",
+    "packages/core/src/editor/__tests__/progressive-open.test.ts"
+  ],
+  "changeset": "opening-relayout-pass",
+  "migration": null
+}

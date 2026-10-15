@@ -8,15 +8,20 @@
 // not the document's page. The full layout then runs in short slices on the surface's own
 // session, from cold, as an open without slices runs it, and replaces the preview when it
 // ends. So the pages are the ones an open without slices lays out; only the moment they
-// appear changes. Where the surface lays out on the fixed measurer before the shaped one
-// (`fixedFirst` in `paginated-surface.ts`), each layout here is both passes, and each
-// preview starts from a cold session, so that its shaped pass starts where the full one does.
+// appear changes. Where the open lays out on the fixed measurer before the shaped one
+// (`surface-fixed-first.ts`), each layout here is both passes. Every preview starts from a
+// cold session, so that its passes start where the full layout's do.
 //
 // While the full layout runs:
 //
-//   - A relayout (a commit, an undo, a font or zoom change) lays the preview out again for
-//     the new revision at once, and starts the full layout again from cold. A pass of an
-//     older revision is never finished and never published.
+//   - A relayout (a commit, an undo, a font or zoom change, an image that settled) is one more
+//     pass over the session, as it is after an open without slices: the second pass of a
+//     footnoted document starts its reserve search where the first one settled, so how many
+//     passes a document has had decides its pages, and a pass cannot simply be dropped. Each
+//     layout here is therefore the open's own and then one pass per relayout so far, and the
+//     preview is laid out again at once the same way. A relayout that leaves the revision as
+//     it was adds its pass to the run in progress; a commit starts the run again, since a
+//     pass of an older revision is never finished and never published.
 //   - A view that comes near the end of the preview extends it in slices, ahead of the
 //     reader.
 //   - `reach` lays out at once as far as a caller needs, for a reveal or a page jump: a
@@ -61,12 +66,16 @@ export interface OpeningLayoutHost {
   revision(): number;
   /** How many blocks the body has. */
   bodyBlockCount(): number;
-  /** Steps of a layout of the first `limit` body blocks, on the preview session. */
+  /** Steps of the open's layout of the first `limit` body blocks, on the preview session. */
   previewSteps(limit: number): LayoutSteps<SemanticLayout>;
+  /** Steps of one more pass over the preview session, as a relayout lays it out. */
+  previewAgainSteps(limit: number): LayoutSteps<SemanticLayout>;
   /** Forget the preview session's state, because a pass on it stopped part way. */
   resetPreview(): void;
-  /** Steps of a full layout of the current revision on the surface's session, from cold. */
+  /** Steps of the open's full layout of the current revision on the surface's session, from cold. */
   fullSteps(): LayoutSteps<SemanticLayout>;
+  /** Steps of one more pass over the surface's session, as a relayout lays it out. */
+  fullAgainSteps(): LayoutSteps<SemanticLayout>;
   /**
    * Whether `layout` reaches far enough for what the reader sees now, and, when `selection`,
    * holds the selection too.
@@ -141,6 +150,22 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
   } | null = null;
   let cancelTask: (() => void) | null = null;
   const waiters: (() => void)[] = [];
+  /** Relayouts asked for during the opening: each is one more pass after the open's layout. */
+  let relayouts = 0;
+
+  /** The open's layout of a preview, then a pass for each relayout, the count read live. */
+  function* previewRun(at: number): LayoutSteps<SemanticLayout> {
+    let laid = yield* host.previewSteps(at);
+    for (let pass = 0; pass < relayouts; pass += 1) laid = yield* host.previewAgainSteps(at);
+    return laid;
+  }
+
+  /** The open's full layout, then a pass for each relayout, the count read live. */
+  function* fullRun(): LayoutSteps<SemanticLayout> {
+    let laid = yield* host.fullSteps();
+    for (let pass = 0; pass < relayouts; pass += 1) laid = yield* host.fullAgainSteps();
+    return laid;
+  }
 
   const maxPreview = (): number => Math.floor(total * PREVIEW_SHARE);
 
@@ -163,7 +188,7 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
   const preview = (grow: boolean): SemanticLayout => {
     dropExtension();
     for (;;) {
-      const laid = previewPagesOf(drainLayoutSteps(host.previewSteps(limit)));
+      const laid = previewPagesOf(drainLayoutSteps(previewRun(limit)));
       if (!grow || host.covers(laid, true) || limit * 2 > maxPreview()) return laid;
       limit *= 2;
     }
@@ -202,7 +227,7 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
       }
     }
     if (!extension && host.now() < deadline) {
-      full ??= { steps: host.fullSteps(), revision: host.revision() };
+      full ??= { steps: fullRun(), revision: host.revision() };
       const run = full;
       const step = advanceLayoutSteps(run.steps, deadline, host.now);
       if (step.done) {
@@ -216,7 +241,7 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
 
   function startExtension(next: number): void {
     if (extension || complete || next > maxPreview()) return;
-    extension = { steps: host.previewSteps(next), limit: next, revision: host.revision() };
+    extension = { steps: previewRun(next), limit: next, revision: host.revision() };
     arm();
   }
 
@@ -227,7 +252,7 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
     const run =
       full && full.revision === host.revision()
         ? full
-        : { steps: host.fullSteps(), revision: host.revision() };
+        : { steps: fullRun(), revision: host.revision() };
     publishFull(drainLayoutSteps(run.steps));
   };
 
@@ -239,7 +264,7 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
       if (!laid || laid.pages.length === 0) {
         // Nothing of the body can show before the cut: lay it all out now, as before.
         complete = true;
-        return drainLayoutSteps(host.fullSteps());
+        return drainLayoutSteps(fullRun());
       }
       // After the preview paints: a slice queued now could run before the first frame.
       arm(true);
@@ -247,9 +272,10 @@ export function createOpeningLayout(host: OpeningLayoutHost): OpeningLayout {
     },
     pending: () => !complete && !cancelled,
     relayout() {
-      // The pass in progress read a revision that no longer exists; the next slice starts
-      // the current one from cold.
-      full = null;
+      relayouts += 1;
+      // A commit: the run in progress reads a revision that no longer exists, and the next
+      // slice starts the current one from cold. Otherwise the run gains the pass.
+      if (full && full.revision !== host.revision()) full = null;
       const laid = preview(false);
       arm();
       return laid;
@@ -351,12 +377,8 @@ export interface SurfaceOpeningInput {
    * `bodyBlockLimit` blocks, otherwise the surface's own layout on its own session.
    */
   steps(previewSession?: LayoutSession, bodyBlockLimit?: number): LayoutSteps<SemanticLayout>;
-  /**
-   * Whether every preview is laid out from a cold session. A layout that runs a pass on
-   * another measurer first must not find the preview session holding a previous preview's
-   * shaped pass.
-   */
-  coldPreviews?(): boolean;
+  /** Steps of one more pass of the current revision, as a relayout lays it out, on the same session. */
+  stepsAgain(previewSession?: LayoutSession, bodyBlockLimit?: number): LayoutSteps<SemanticLayout>;
   publish(layout: SemanticLayout): void;
 }
 
@@ -376,10 +398,12 @@ export function createSurfaceOpening(
     now: input.now,
     revision: () => input.session.packageRevision(),
     bodyBlockCount,
+    // Every preview from a cold session, so that it starts where the full layout does.
     previewSteps: (limit) => {
-      if (input.coldPreviews?.()) replaceLayoutSession(previewSession, createLayoutSession());
+      replaceLayoutSession(previewSession, createLayoutSession());
       return input.steps(previewSession, limit);
     },
+    previewAgainSteps: (limit) => input.stepsAgain(previewSession, limit),
     resetPreview: () => replaceLayoutSession(previewSession, createLayoutSession()),
     fullSteps: () => {
       // A cold session: the pass an open without slices runs. A dropped pass may have left
@@ -387,6 +411,7 @@ export function createSurfaceOpening(
       replaceLayoutSession(input.layoutSession, createLayoutSession());
       return input.steps();
     },
+    fullAgainSteps: () => input.stepsAgain(),
     covers: (layout, selection) =>
       layoutCoversView(
         input.container,

@@ -29,17 +29,12 @@ export interface FixedFirst {
 export interface FixedFirstInput {
   /** The facade resolved the fonts before this mount, so it mounted on the shaped measurer. */
   readonly fontsFirst: boolean;
-  /** The surface mounted on its fixed measurer; a measurer that arrives during its opening
-   *  makes the opening's layouts the two passes too. */
-  readonly mountedFixed: boolean;
   /**
    * The scale the open without the wait first laid out at, before its fit: a document that
    * mounted synchronously did so at the zoom the editor held, and fitted after. Its pages are
    * those of that pass, the fit's and the fonts', in that order.
    */
   readonly unfittedScale?: number;
-  /** Whether the surface measures with a host (shaped) measurer now. */
-  hostMeasured(): boolean;
   readonly document: Document;
 }
 
@@ -64,10 +59,10 @@ export function createFixedFirst(input: FixedFirstInput): FixedFirst {
     passes(scale) {
       const passes: LayoutMeasurement[] = [];
       const { unfittedScale } = input;
-      if (unfittedScale !== undefined && unfittedScale !== scale)
+      if (unfittedScale !== undefined && unfittedScale !== scale) {
         passes.push(fixedAt(unfittedScale));
-      if ((input.fontsFirst || input.mountedFixed) && input.hostMeasured())
-        passes.push(fixedAt(scale));
+      }
+      if (input.fontsFirst) passes.push(fixedAt(scale));
       return passes;
     },
   };

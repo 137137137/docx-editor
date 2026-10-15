@@ -437,12 +437,10 @@ export function mountPaginatedSurface(
 
   // A layout runs the fixed pass first when the fonts were resolved before the mount.
   const fixedFirst = createFixedFirst({
-    fontsFirst: runtimeOptions.fixedFirst === true,
-    mountedFixed: options.measurer === undefined,
+    fontsFirst: runtimeOptions.fixedFirst === true && options.measurer !== undefined,
     ...(runtimeOptions.unfittedScale !== undefined
       ? { unfittedScale: runtimeOptions.unfittedScale }
       : {}),
-    hostMeasured: () => options.measurer !== undefined,
     document: container.ownerDocument,
   });
 
@@ -1009,6 +1007,12 @@ export function mountPaginatedSurface(
       projectFieldLink: (spec) => fieldLinks.project(spec),
     } satisfies SurfaceFurnitureOptions & Record<keyof SurfaceFurnitureOptions, unknown>);
   furnitureSource = createCurrentFurnitureSource(revisionFilter());
+  /** The mount's measurer, scale and furniture: what the open's own layout runs on. */
+  const openingLayout = {
+    scale,
+    measurement: { measurer, producer } as LayoutMeasurement,
+    furniture: furnitureSource,
+  };
 
   interface LayoutDocumentContext {
     readonly authorFilter?: RevisionAuthorFilter;
@@ -1019,12 +1023,14 @@ export function mountPaginatedSurface(
   }
 
   /**
-   * Steps of a layout of the current revision, after the fixed pass when one runs first
-   * (`surface-fixed-first.ts`), on the same session: the surface's, or a preview's.
+   * Steps of the open's layout of the current revision: on the measurer, scale and furniture
+   * of the mount, after the fixed passes an open without its fonts ran first
+   * (`surface-fixed-first.ts`), all on the same session: the surface's, or a preview's. A
+   * relayout during a sliced opening is one more pass after it (`surface-opening-layout.ts`).
    */
   function* layoutDocumentPasses(context?: LayoutDocumentContext): LayoutSteps<SemanticLayout> {
     const revision = session.packageRevision();
-    for (const fixed of fixedFirst.passes(scale)) {
+    for (const fixed of fixedFirst.passes(openingLayout.scale)) {
       // Its own furniture, measured on the fixed measurer, as the unshaped mount's was.
       const fixedFurniture = createCurrentFurnitureSource(
         context ? context.authorFilter : revisionFilter(),
@@ -1038,7 +1044,13 @@ export function mountPaginatedSurface(
         { ...fixed, furniture: fixedFurniture }
       );
     }
-    return yield* layoutDocumentSteps(revision, undefined, context);
+    const { furniture } = openingLayout;
+    return yield* layoutDocumentSteps(
+      revision,
+      undefined,
+      context ? { ...context, furnitureSource: furniture } : undefined,
+      { ...openingLayout.measurement, furniture }
+    );
   }
 
   /**
@@ -1112,7 +1124,19 @@ export function mountPaginatedSurface(
                 bodyBlockLimit,
               })
             : layoutDocumentPasses(),
-        coldPreviews: () => fixedFirst.passes(scale).length > 0,
+        stepsAgain: (previewSession, bodyBlockLimit) =>
+          layoutDocumentSteps(
+            session.packageRevision(),
+            undefined,
+            previewSession
+              ? {
+                  authorFilter: revisionFilter(),
+                  layoutSession: previewSession,
+                  furnitureSource,
+                  bodyBlockLimit,
+                }
+              : undefined
+          ),
         publish: publishLayout,
       })
     : null;

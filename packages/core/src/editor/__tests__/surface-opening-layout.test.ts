@@ -2,8 +2,9 @@
 //
 // What these tests pin down, against a host whose layouts are plain records: the first layout
 // is a preview cut before the page its last block lands on; the full layout runs only in
-// scheduled slices and is published once, at the end; a relayout drops the run in progress and
-// starts it again from cold; `reach` grows the preview and finishes the full layout when the
+// scheduled slices and is published once, at the end; a relayout is one more pass after the
+// open's layout, added to the run in progress or, after a commit, to the run started again
+// from cold; `reach` grows the preview and finishes the full layout when the
 // target lies too far in; a view near the end of the preview extends it; and `cancel` stops
 // everything without publishing.
 
@@ -56,7 +57,13 @@ function harness(
   let clock = 0;
   const tasks: (() => void)[] = [];
   const published: { pages: number; complete: boolean }[] = [];
-  const calls = { preview: [] as number[], full: 0, resetPreview: 0 };
+  const calls = {
+    preview: [] as number[],
+    full: 0,
+    resetPreview: 0,
+    previewAgain: 0,
+    fullAgain: 0,
+  };
   let coverPages = options.coverPages ?? 3;
   const host: OpeningLayoutHost = {
     // Every read of the clock advances it, so a slice ends after a bounded number of steps.
@@ -68,8 +75,16 @@ function harness(
       // The cut's last page and a notes-only page after it are not the document's.
       return stepsOf(() => layoutOf(previewPages(limit), revision, 1), 3);
     },
+    previewAgainSteps(limit) {
+      calls.previewAgain += 1;
+      return stepsOf(() => layoutOf(previewPages(limit), revision, 1), 1);
+    },
     resetPreview: () => {
       calls.resetPreview += 1;
+    },
+    fullAgainSteps() {
+      calls.fullAgain += 1;
+      return stepsOf(() => layoutOf(blocks / 4, revision), 4);
     },
     fullSteps() {
       calls.full += 1;
@@ -152,7 +167,7 @@ describe('createOpeningLayout', () => {
     expect(calls.preview).toEqual([12, 24, 48]);
   });
 
-  test('a relayout drops the run in progress and starts the full layout again', () => {
+  test('a relayout after a commit starts the full layout again, with the pass it adds', () => {
     const { host, calls, published, runTasks, commit } = harness();
     const opening = createOpeningLayout(host);
     opening.start();
@@ -161,8 +176,23 @@ describe('createOpeningLayout', () => {
     commit();
     const preview = opening.relayout();
     expect(preview.revision).toBe(2);
+    expect(calls.previewAgain).toBe(1);
     runTasks();
     expect(calls.full).toBe(2);
+    expect(calls.fullAgain).toBe(1);
+    expect(published).toEqual([{ pages: 100, complete: true }]);
+  });
+
+  test('a relayout with no commit adds its pass to the run in progress', () => {
+    const { host, calls, published, runTasks } = harness();
+    const opening = createOpeningLayout(host);
+    opening.start();
+    runTasks(2);
+    opening.relayout();
+    opening.relayout();
+    runTasks();
+    expect(calls.full).toBe(1);
+    expect(calls.fullAgain).toBe(2);
     expect(published).toEqual([{ pages: 100, complete: true }]);
   });
 

@@ -180,6 +180,16 @@ describe('a progressive open', () => {
     expect(texts(surface.layout())).toEqual(plainTexts);
   });
 
+  test('a relayout with no edit during the opening is one more pass, as after a plain open', async () => {
+    const after = mount(BYTES, false);
+    updateSurfaceMeasurement(after, {});
+    const surface = mount(BYTES, true);
+    updateSurfaceMeasurement(surface, {});
+    await surface.whenPaginated();
+    expect(texts(surface.layout())).toEqual(texts(after.layout()));
+    expect(surface.state().perf.fullPasses).toBe(after.state().perf.fullPasses);
+  });
+
   test('finishPagination lays out the rest in the same task', () => {
     const surface = mount(BYTES, true);
     surface.finishPagination();
