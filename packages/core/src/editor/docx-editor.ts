@@ -177,6 +177,7 @@ import {
   documentFontResolutionRequest,
   admittedDocumentSubstitutions,
   applyDocumentFontSubstitutions,
+  fallbacksForMissingFamilies,
 } from '../layout/document-font-substitution.ts';
 import {
   boundedExplicitFontSources,
@@ -871,6 +872,13 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         families,
         fontConfiguration()
       );
+      // Installed families keep their own face; only missing ones fall back. Without a canvas
+      // to probe with (headless), nothing counts as installed.
+      const canProbe =
+        !!container && tryCreateBrowserCanvasContext(container.ownerDocument) !== null;
+      const fallbacks = canProbe
+        ? fallbacksForMissingFamilies(documentFonts.fallbacks, probeLocalFont)
+        : documentFonts.fallbacks;
       const raw =
         typeof configured !== 'function'
           ? configured
@@ -930,7 +938,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
           { epoch: seq, ...explicit, sources: initialExplicitSources },
           fromDocument
         ),
-        documentFonts
+        documentFonts,
+        fallbacks
       );
       // Nothing to shape: the fixed measurer stays. An app that DID supply a
       // configuration deserves to hear that it contributed no usable source (every
@@ -1009,7 +1018,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
               { epoch: seq, ...explicit, sources: explicitSurvivors },
               { sources: embeddedSurvivors }
             ),
-            documentFonts
+            documentFonts,
+            fallbacks
           );
           if (fonts.sources.length === 0) return bailToFixed(superseded);
           shaping = await createLayoutShaping(fonts, undefined, fontShaping);
@@ -1029,7 +1039,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
                 { epoch: seq, ...explicit, sources: admittedExplicit },
                 { sources: admittedEmbedded }
               ),
-              documentFonts
+              documentFonts,
+              fallbacks
             );
             if (fonts.sources.length === 0) return bailToFixed(rejected);
             shaping = await createLayoutShaping(fonts, undefined, fontShaping);

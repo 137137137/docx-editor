@@ -337,3 +337,17 @@ export function hostChainedDocumentFallbacks(
   }
   return families;
 }
+
+/**
+ * The plan's fallbacks without the families the platform has installed. A family the host
+ * supplies no bytes for, but the platform draws itself, keeps its own face: measurement then
+ * reads it through the browser, as paint does. Only a family that is missing falls back.
+ */
+export function fallbacksForMissingFamilies(
+  fallbacks: ReadonlyMap<string, string>,
+  installed: (family: string) => boolean
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const [family, target] of fallbacks) if (!installed(family)) out.set(family, target);
+  return out;
+}

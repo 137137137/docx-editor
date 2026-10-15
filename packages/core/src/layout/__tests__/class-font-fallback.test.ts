@@ -14,6 +14,7 @@ import {
   admittedDocumentSubstitutions,
   applyDocumentFontSubstitutions,
   documentFontSubstitutionPlan,
+  fallbacksForMissingFamilies,
 } from '../document-font-substitution.ts';
 import { composeFontConfiguration } from '../font-composition.ts';
 
@@ -179,4 +180,15 @@ test('a classed family named in every script slot still falls back by its Latin 
   // family ambiguous and left it with no substitution.
   const slots = `w:ascii="Lexington Serif" w:hAnsi="Lexington Serif" w:eastAsia="Lexington Serif" w:cs="Lexington Serif"`;
   expect(fallbackOf('Lexington Serif', undefined, slots)).toBe('Liberation Serif');
+});
+
+test('a family the platform has installed keeps its own face', () => {
+  const document = documentWith('Georgia');
+  const plan = documentFontSubstitutionPlan(document, ['Georgia']);
+  expect(plan.fallbacks.get('georgia')).toBe('Times New Roman');
+  const fallbacks = fallbacksForMissingFamilies(plan.fallbacks, (family) => family === 'georgia');
+  const fonts = applyDocumentFontSubstitutions(hostFonts(), plan, fallbacks);
+  expect(fonts.substitutions?.some((substitution) => substitution.from.family === 'Georgia')).toBe(
+    false
+  );
 });
