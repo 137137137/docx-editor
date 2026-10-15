@@ -1761,7 +1761,8 @@ export function createBatchPlanner(host: BatchPlannerHost): BatchPlanner {
             const storyPlan = planFor(story);
             return pinWrite(storyPlan) ?? claim(storyPlan, paragraphId);
           },
-          host.trackedRangeReplacement !== false
+          host.trackedRangeReplacement !== false,
+          host.collaborative === true
         );
 
       case 'insertText': {
@@ -2422,7 +2423,7 @@ export function createBatchPlanner(host: BatchPlannerHost): BatchPlanner {
           operation.op === 'acceptRevision' ? 'accept' : 'reject'
         );
         if (!ops.length)
-          return refuse('unsupported-revision', 'the table decision has unresolved dependencies');
+          return refuse('unsupported-revision', 'that change cannot resolve apart from its group');
         return { ok: true, kind: 'command', story: found.reads.story, ops, answer: () => APPLIED };
       }
 
