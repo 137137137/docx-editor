@@ -239,6 +239,24 @@ export interface TextShaper {
   shape(input: ShapeInput): ShapedRun;
 }
 
+const facePreservingShapers = new WeakSet<TextShaper>();
+
+/**
+ * Record that `shaper` shapes every run in its environment's own face: with no fallback order,
+ * each span of its runs carries that face. A shaper that substitutes a face for text the face
+ * cannot draw (the export glyph fallback) is never marked, and neither is a host's own shaper.
+ * @internal
+ */
+export function markFacePreservingShaper<T extends TextShaper>(shaper: T): T {
+  facePreservingShapers.add(shaper);
+  return shaper;
+}
+
+/** Whether `shaper` was marked by {@link markFacePreservingShaper}. @internal */
+export function preservesShapingFace(shaper: TextShaper): boolean {
+  return facePreservingShapers.has(shaper);
+}
+
 /**
  * A font reduced to the values that identify it for fingerprinting.
  *

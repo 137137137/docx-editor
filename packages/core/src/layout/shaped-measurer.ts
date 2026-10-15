@@ -38,11 +38,12 @@ import {
   shapeLayoutStyleRun,
   type LayoutShapingEnvironment,
 } from './layout-run-shape.ts';
-import type {
-  FixedPointRoundingMode,
-  NormalizationPolicy,
-  TextShaper,
-  VersionedShapingLibrary,
+import {
+  preservesShapingFace,
+  type FixedPointRoundingMode,
+  type NormalizationPolicy,
+  type TextShaper,
+  type VersionedShapingLibrary,
 } from './shaped-run.ts';
 
 export type { LayoutShapingEnvironment } from './layout-run-shape.ts';
@@ -181,6 +182,8 @@ export function createShapedMeasurer(
   // `smcp`, so a plain run must not reuse a small-cap run's shaped width or the reverse.
   const widthsByFont = new WeakMap<ResolvedFont, Map<number, Map<string, number>>>();
   const smallCapsWidthsByFont = new WeakMap<ResolvedFont, Map<number, Map<string, number>>>();
+  // Sampled once: a shaper's runs keep their environment's face for its whole life.
+  const facePreserving = preservesShapingFace(shaper);
   const faceLineMetrics = createShapedLineMetrics(
     shaper,
     baseEnvironment,
@@ -430,6 +433,15 @@ export function createShapedMeasurer(
       const font = resolveFontCached(style);
       if (!font) return fallback.lineMetrics(style, text);
       if (!text || /^[\t\n\r\f ]*$/.test(text)) return faceLineMetrics(font, style);
+      // A shaper that never substitutes a face shapes this text in `font` alone, so its band
+      // is the answer; shaping each word again only to read the face back was a third of
+      // line breaking. Composed as the span loop below composes one span, to the same bits.
+      if (facePreserving) {
+        const metrics = faceLineMetrics(font, style);
+        const baseline = Math.max(0, metrics.baseline);
+        const descent = Math.max(0, metrics.height - metrics.baseline);
+        return baseline + descent > 0 ? { height: baseline + descent, baseline } : metrics;
+      }
       try {
         // Width and paint can select a fallback face. The same face must set the
         // line's ascent/descent, otherwise tall fallback glyphs overlap later lines.

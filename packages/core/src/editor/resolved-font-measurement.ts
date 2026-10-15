@@ -7,6 +7,7 @@ import {
   resolveDefaultSurfaceMeasurer,
 } from '../layout/index.ts';
 import type { LayoutShapingOptions, ResolvedFont, ShapeInput } from '../layout/index.ts';
+import { markFacePreservingShaper, preservesShapingFace } from '../layout/shaped-run.ts';
 
 export function resolvedFontMeasurement(
   shaping: LayoutShapingOptions,
@@ -23,7 +24,7 @@ export function resolvedFontMeasurement(
   // Report a face's execution refusal once per measurement owner. Keep the original
   // exception and the bounded fallback; observation must not change layout geometry.
   const reportedFonts = new WeakSet<ResolvedFont>();
-  const shaper = onFontError
+  const observed = onFontError
     ? {
         shape(input: ShapeInput) {
           try {
@@ -56,6 +57,11 @@ export function resolvedFontMeasurement(
         },
       }
     : shaping.shaper;
+  // It only reports a refusal and rethrows it, so its runs are the wrapped shaper's.
+  const shaper =
+    observed !== shaping.shaper && preservesShapingFace(shaping.shaper)
+      ? markFacePreservingShaper(observed)
+      : observed;
   const measurer = createLayoutShapedMeasurer(
     { ...shaping, shaper },
     {
