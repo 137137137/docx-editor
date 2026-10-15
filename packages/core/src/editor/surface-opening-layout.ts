@@ -8,7 +8,9 @@
 // not the document's page. The full layout then runs in short slices on the surface's own
 // session, from cold, as an open without slices runs it, and replaces the preview when it
 // ends. So the pages are the ones an open without slices lays out; only the moment they
-// appear changes.
+// appear changes. Where the surface lays out on the fixed measurer before the shaped one
+// (`fixedFirst` in `paginated-surface.ts`), each layout here is both passes, and each
+// preview starts from a cold session, so that its shaped pass starts where the full one does.
 //
 // While the full layout runs:
 //
@@ -349,6 +351,12 @@ export interface SurfaceOpeningInput {
    * `bodyBlockLimit` blocks, otherwise the surface's own layout on its own session.
    */
   steps(previewSession?: LayoutSession, bodyBlockLimit?: number): LayoutSteps<SemanticLayout>;
+  /**
+   * Whether every preview is laid out from a cold session. A layout that runs a pass on
+   * another measurer first must not find the preview session holding a previous preview's
+   * shaped pass.
+   */
+  coldPreviews?(): boolean;
   publish(layout: SemanticLayout): void;
 }
 
@@ -368,7 +376,10 @@ export function createSurfaceOpening(
     now: input.now,
     revision: () => input.session.packageRevision(),
     bodyBlockCount,
-    previewSteps: (limit) => input.steps(previewSession, limit),
+    previewSteps: (limit) => {
+      if (input.coldPreviews?.()) replaceLayoutSession(previewSession, createLayoutSession());
+      return input.steps(previewSession, limit);
+    },
     resetPreview: () => replaceLayoutSession(previewSession, createLayoutSession()),
     fullSteps: () => {
       // A cold session: the pass an open without slices runs. A dropped pass may have left

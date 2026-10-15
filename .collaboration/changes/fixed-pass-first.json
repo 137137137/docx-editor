@@ -1,0 +1,14 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A large document opened with its fonts resolved is laid out once, on the shaped measurer, from a cold layout session.",
+  "after": "A large document opened with its fonts resolved is laid out on the fallback measurer and then on the shaped one, on the same layout session, painting only the second; a small document mounts at its current zoom and fits after.",
+  "reason": "Only local layout changes. The passes run over the same revision, and nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/editor/__tests__/progressive-open.test.ts",
+    "packages/core/src/editor/__tests__/fonts-before-first-layout.test.ts",
+    "packages/core/src/editor/__tests__/zoom-controller.test.ts"
+  ],
+  "changeset": "fixed-pass-first",
+  "migration": null
+}

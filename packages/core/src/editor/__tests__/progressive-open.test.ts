@@ -15,6 +15,8 @@ import { strToU8, zipSync } from 'fflate';
 import type { PageRecord, SemanticLayout } from '@docx-editor.dev/core/layout';
 import { createDocxEditor, type DocxEditorInstance } from '../docx-editor.ts';
 import { mountPaginatedSurface, type PaginatedSurface } from '../paginated-surface.ts';
+import { updateSurfaceMeasurement } from '../surface-measurement.ts';
+import { createFixedMeasurer } from '../../layout/index.ts';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
@@ -214,6 +216,58 @@ describe('a progressive open', () => {
     if (!result.ok) throw new Error(result.reason);
     surfaces.push(result.surface);
     expect(result.surface.paginating()).toBe(false);
+  });
+});
+
+// The facade resolves a large document's fonts before its mount. The open without that wait
+// laid it out on the fixed measurer and then on the shaped one, on the same session, and the
+// second pass starts its footnote reserve search where the first one settled; so the surface
+// runs the fixed pass first (`fixedFirst`), and the pages are that open's.
+describe('an open whose fonts are resolved before its mount', () => {
+  const host = createFixedMeasurer(6.6, 15);
+
+  function mountShaped(progressive: boolean): PaginatedSurface {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const result = mountPaginatedSurface(container, BYTES, {
+      scale: 1,
+      measurer: host,
+      producer: 'host',
+      ...({ progressiveLayout: progressive, fixedFirst: true } as object),
+    });
+    if (!result.ok) throw new Error(`${result.reason}: ${result.detail ?? ''}`);
+    surfaces.push(result.surface);
+    return result.surface;
+  }
+
+  // The open without the wait: the fixed measurer at the mount, the host's when it arrives.
+  const twoPass = mount(BYTES, false);
+  updateSurfaceMeasurement(twoPass, { measurer: host, producer: 'host' });
+  const twoPassTexts = texts(twoPass.layout());
+
+  test('lays out the pages of the open that measured on the fixed measurer first', () => {
+    const surface = mountShaped(false);
+    expect(surface.state().perf.fullPasses).toBeGreaterThan(1);
+    expect(texts(surface.layout())).toEqual(twoPassTexts);
+  });
+
+  test('so does a progressive open, its preview included', async () => {
+    const surface = mountShaped(true);
+    expect(surface.paginating()).toBe(true);
+    const preview = texts(surface.layout());
+    expect(preview.length).toBeGreaterThan(1);
+    expect(preview).toEqual(twoPassTexts.slice(0, preview.length));
+
+    await surface.whenPaginated();
+    expect(texts(surface.layout())).toEqual(twoPassTexts);
+  });
+
+  test('a progressive open on the fixed measurer whose fonts land part way runs both passes', async () => {
+    const surface = mount(BYTES, true);
+    expect(surface.paginating()).toBe(true);
+    updateSurfaceMeasurement(surface, { measurer: host, producer: 'host' });
+    await surface.whenPaginated();
+    expect(texts(surface.layout())).toEqual(twoPassTexts);
   });
 });
 

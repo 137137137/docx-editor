@@ -52,3 +52,13 @@ The first layout of a large document, in slices:
 - `.changeset/sliced-first-layout.md` (new): the release note.
 - `.collaboration/changes/sliced-first-layout.json` (new): the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/layout/__tests__/layout-steps.test.ts`, `packages/core/src/editor/__tests__/surface-opening-layout.test.ts` and `progressive-open.test.ts` (new).
+
+The first layout of a document opened with its fonts, as the open without them laid it out:
+
+- `packages/core/src/editor/surface-fixed-first.ts` (new): when a layout runs the fixed measurer's pass before the shaped one, and the fixed measurer an unshaped mount resolves.
+- `packages/core/src/editor/paginated-surface.ts`: a mount whose fonts were resolved first lays out on the fixed measurer and then the shaped one on the same session, painting only the second; so does an opening that started on the fixed measurer when the fonts arrive part way.
+- `packages/core/src/editor/surface-opening-layout.ts`: every preview starts from a cold session when the layouts run both passes.
+- `packages/core/src/editor/docx-editor.ts`: tells the surface when the fonts were resolved before its mount; only a deferred open settles its fit before the mount.
+- `scripts/check-eslint-max-lines-globs.mjs`: the declared length of `paginated-surface.ts`.
+- `.changeset/open-once-at-fit.md`: the release note, corrected; `.changeset/fixed-pass-first.md` and `.collaboration/changes/fixed-pass-first.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `progressive-open.test.ts`, `fonts-before-first-layout.test.ts` and `zoom-controller.test.ts` in `packages/core/src/editor/__tests__/`.

@@ -166,6 +166,7 @@ import {
   type DrawingPaintStrings,
 } from '../output/semantic-paint-drawings.ts';
 import { tryCreateBrowserCanvasContext } from './browser-canvas-context.ts';
+import { createFixedFirst, type LayoutMeasurement } from './surface-fixed-first.ts';
 import {
   collaborationParagraphAt,
   localCollaborationSelection,
@@ -379,6 +380,12 @@ export function mountPaginatedSurface(
     readonly openedSession?: ReturnType<typeof openTreeSession>;
     /** Open on a preview of the first pages and lay the rest out in slices. */
     readonly progressiveLayout?: boolean;
+    /**
+     * The fonts were resolved before this mount, so `measurer` is the shaped one from the
+     * start. The first layout then runs on the fixed measurer before the shaped one, as an
+     * open whose fonts arrive after the mount runs them (`surface-fixed-first.ts`).
+     */
+    readonly fixedFirst?: boolean;
   };
   const opened =
     runtimeOptions.openedSession ??
@@ -425,6 +432,14 @@ export function mountPaginatedSurface(
   }
   let producer = producerIdentity();
   const document = container.ownerDocument;
+
+  // A layout runs the fixed pass first when the fonts were resolved before the mount.
+  const fixedFirst = createFixedFirst({
+    fontsFirst: runtimeOptions.fixedFirst === true,
+    mountedFixed: options.measurer === undefined,
+    hostMeasured: () => options.measurer !== undefined,
+    document: container.ownerDocument,
+  });
 
   const pagesLayer = document.createElement('div');
   pagesLayer.className = 'docx-pages';
@@ -966,12 +981,13 @@ export function mountPaginatedSurface(
   type SurfaceFurnitureOptions = Parameters<typeof createFurnitureSource>[0];
   const createCurrentFurnitureSource = (
     authorFilter?: RevisionAuthorFilter,
-    fieldCodes = showFieldCodes
+    fieldCodes = showFieldCodes,
+    measurement: LayoutMeasurement = { measurer, producer }
   ): ReturnType<typeof createFurnitureSource> =>
     createFurnitureSource({
       session,
-      measurer,
-      producer,
+      measurer: measurement.measurer,
+      producer: measurement.producer,
       cache: layoutCache,
       ...{ styleCascade, numberingIndex, defaultTabStopPt, compatibilityMode },
       // Furniture answers the document's display mode, like the body does — and it is named
@@ -995,6 +1011,30 @@ export function mountPaginatedSurface(
     readonly furnitureSource: ReturnType<typeof createCurrentFurnitureSource>;
     /** A preview of the first pages: lay out only this many body blocks. */
     readonly bodyBlockLimit?: number;
+  }
+
+  /**
+   * Steps of a layout of the current revision, after the fixed pass when one runs first
+   * (`surface-fixed-first.ts`), on the same session: the surface's, or a preview's.
+   */
+  function* layoutDocumentPasses(context?: LayoutDocumentContext): LayoutSteps<SemanticLayout> {
+    const revision = session.packageRevision();
+    if (fixedFirst.runs()) {
+      const fixed = fixedFirst.measurement(scale);
+      // Its own furniture, measured on the fixed measurer, as the unshaped mount's was.
+      const fixedFurniture = createCurrentFurnitureSource(
+        context ? context.authorFilter : revisionFilter(),
+        context && context.bodyBlockLimit === undefined ? false : showFieldCodes,
+        fixed
+      );
+      yield* layoutDocumentSteps(
+        revision,
+        undefined,
+        context ? { ...context, furnitureSource: fixedFurniture } : undefined,
+        { ...fixed, furniture: fixedFurniture }
+      );
+    }
+    return yield* layoutDocumentSteps(revision, undefined, context);
   }
 
   /**
@@ -1061,13 +1101,14 @@ export function mountPaginatedSurface(
         selection: () => selection,
         steps: (previewSession, bodyBlockLimit) =>
           previewSession
-            ? layoutDocumentSteps(session.packageRevision(), undefined, {
+            ? layoutDocumentPasses({
                 authorFilter: revisionFilter(),
                 layoutSession: previewSession,
                 furnitureSource,
                 bodyBlockLimit,
               })
-            : layoutDocumentSteps(session.packageRevision()),
+            : layoutDocumentPasses(),
+        coldPreviews: fixedFirst.runs,
         publish: publishLayout,
       })
     : null;
@@ -1350,20 +1391,25 @@ export function mountPaginatedSurface(
   function layoutDocumentSteps(
     revision: number,
     scope?: LayoutScope,
-    context?: LayoutDocumentContext
+    context?: LayoutDocumentContext,
+    /** Another measurer than the surface's, with its furniture: the fixed pass. */
+    measurement?: LayoutMeasurement & {
+      readonly furniture: ReturnType<typeof createFurnitureSource>;
+    }
   ): LayoutSteps<SemanticLayout> {
     const activeAuthorFilter = context ? context.authorFilter : revisionFilter();
     const activeLayoutSession = context?.layoutSession ?? layoutSession;
-    const activeFurnitureSource = context?.furnitureSource ?? furnitureSource;
+    const activeFurnitureSource =
+      context?.furnitureSource ?? measurement?.furniture ?? furnitureSource;
     if (scope) attachListResolveChangeEvidence(activeLayoutSession, scope);
     drawingBundle.sync(session);
     return layoutDocumentViewSteps({
       view: session,
       revision,
-      measurer,
+      measurer: measurement?.measurer ?? measurer,
       cache: layoutCache,
       session: activeLayoutSession,
-      producer,
+      producer: measurement?.producer ?? producer,
       styleCascade,
       defaultTabStopPt,
       numberingIndex,
@@ -1401,7 +1447,7 @@ export function mountPaginatedSurface(
 
   function layoutOnce(): SemanticLayout {
     const began = now();
-    const layout = layoutDocument(session.packageRevision());
+    const layout = drainLayoutSteps(layoutDocumentPasses());
     lastLayoutMs = now() - began;
     return layout;
   }

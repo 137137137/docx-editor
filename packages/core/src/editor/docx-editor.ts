@@ -556,14 +556,20 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       return;
     }
     teardownSurface();
-    const openedSession = openBytes(bytes);
+    const deferred = openScheduler.shouldYield(bytes);
+    const openedSession = openBytes(bytes, deferred);
+    // Fonts resolved before this load's first mount: its layout runs the fixed pass first, as
+    // the open whose fonts resolve after the mount does (`paginated-surface.ts`).
+    const fixedFirst =
+      shapedMeasurer !== undefined && fontsFirstSeq === loadSeq && mountedSeq !== loadSeq;
     opened = null;
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
       openedSession,
       // A document large enough to open behind a painted frame opens on a preview of its
       // first pages and lays the rest out in short tasks.
-      progressiveLayout: openScheduler.shouldYield(bytes),
+      progressiveLayout: deferred,
+      fixedFirst,
       scale: scaleOf(),
       showParagraphMarks: paragraphMarks.get(),
       onToggleParagraphMarks: paragraphMarks.toggle,
@@ -647,6 +653,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       readonly onTrackedChange?: () => void;
       readonly openedSession?: ReturnType<typeof openTreeSession>;
       readonly progressiveLayout?: boolean;
+      readonly fixedFirst?: boolean;
     });
     if (!result.ok) {
       parseError = result.detail ? `${result.reason}: ${result.detail}` : result.reason;
@@ -789,10 +796,13 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   }
 
   /**
-   * Bytes about to mount, as a session, opened once whether `prepare` or the mount asks first,
-   * with a fit's scale settled from its page before anything is laid out at the wrong one.
+   * Bytes about to mount, as a session, opened once whether `prepare` or the mount asks first.
+   * A `deferred` open also settles a fit's scale from its page before anything is laid out at
+   * the wrong one. A synchronous one mounts at the zoom it holds and fits after, as it always
+   * has: a footnoted document's pages depend on the passes it is laid out in, and a small
+   * document's are those of the mount, the fit and the fonts in that order.
    */
-  function openBytes(bytes: Uint8Array): ReturnType<typeof openTreeSession> {
+  function openBytes(bytes: Uint8Array, deferred: boolean): ReturnType<typeof openTreeSession> {
     if (opened?.bytes !== bytes) {
       opened = {
         bytes,
@@ -800,7 +810,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       };
     }
     const { result } = opened;
-    if (result.ok && zoomLane.prefit(firstPageWidthPx(result.session, mountDisplayMode()))) bump();
+    if (
+      deferred &&
+      result.ok &&
+      zoomLane.prefit(firstPageWidthPx(result.session, mountDisplayMode()))
+    )
+      bump();
     return result;
   }
 
@@ -811,7 +826,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
    */
   function prepare(bytes: Uint8Array): Promise<void> | null {
     const seq = (fontsFirstSeq = loadSeq);
-    const result = openBytes(bytes);
+    const result = openBytes(bytes, true);
     if (!result.ok || (!config.fonts && result.session.embeddedFonts().length === 0)) return null;
     const { session } = result;
     const fallback = configuredDefaultFontFamily(fontConfiguration());

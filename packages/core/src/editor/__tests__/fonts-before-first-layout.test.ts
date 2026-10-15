@@ -1,12 +1,13 @@
 // A large document's fonts resolve before its first layout.
 //
 // A document past the open-yield threshold already mounts behind a painted frame. Its fonts
-// used to be asked for only after that mount, so it was laid out on the fixed measurer and then
+// used to be asked for only after that mount, so it was painted on the fixed measurer and then
 // laid out again, whole, when the shaped measurer arrived. What these tests pin down: the
-// deferred mount waits for the fonts and comes up shaped, laid out once; a resolver slower than
-// the wait does not hold the document back, and its answer re-measures the mounted surface in
-// place; `exec` inside the wait mounts at once, as it does inside the yield window; and a small
-// document keeps its synchronous mount.
+// deferred mount waits for the fonts and comes up shaped, its layout the same two passes, fixed
+// then shaped, that the open without the wait ran (so its pages are the same), with only the
+// shaped one painted; a resolver slower than the wait does not hold the document back, and its
+// answer re-measures the mounted surface in place; `exec` inside the wait mounts at once, as it
+// does inside the yield window; and a small document keeps its synchronous mount.
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
@@ -92,21 +93,41 @@ async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
 const fullPasses = (editor: DocxEditorInstance) => editor.surface?.state().perf.fullPasses;
 
 describe('a deferred open with fonts', () => {
-  test('mounts on the shaped measurer and lays the document out once', async () => {
+  test('mounts on the shaped measurer, its layout the fixed pass and then the shaped one', async () => {
     const editor = open(LARGE, dejaVu);
     expect(editor.surface).toBeNull();
     expect(editor.snapshot().isOpening).toBe(true);
 
     await until(() => editor.surface !== null);
-    // The first moment the surface exists, it is already shaped.
+    // The first moment the surface exists, it is already shaped, and its first layout ran the
+    // fixed pass before the shaped one, as the open whose fonts land after the mount does.
     expect(editor.fontMeasurement().measurer).toBe('shaped');
-    expect(fullPasses(editor)).toBe(1);
+    expect(fullPasses(editor)).toBe(2);
 
     const mounted = editor.surface;
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(editor.surface).toBe(mounted);
-    expect(fullPasses(editor)).toBe(1);
+    // Nothing is laid out again when the fonts are settled.
+    expect(fullPasses(editor)).toBe(2);
     expect(editor.fontMeasurement()).toMatchObject({ measurer: 'shaped', resolving: false });
+  });
+
+  test('lays out the pages the open without the wait lays out', async () => {
+    const pagesOf = (editor: DocxEditorInstance) =>
+      JSON.stringify(editor.getPageGeometry().map((page) => [page.box.width, page.box.height]));
+    const first = open(LARGE, dejaVu);
+    await until(() => first.surface !== null && first.fontMeasurement().measurer === 'shaped');
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const after = open(LARGE, async () => {
+      await gate;
+      return dejaVu;
+    });
+    await until(() => after.surface !== null, OPEN_PREPARE_WAIT_MS + 3000);
+    release();
+    await until(() => after.fontMeasurement().measurer === 'shaped');
+    expect(pagesOf(first)).toBe(pagesOf(after));
   });
 
   test('a resolver slower than the wait does not hold the document back', async () => {

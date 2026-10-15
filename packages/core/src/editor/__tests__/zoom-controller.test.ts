@@ -148,16 +148,18 @@ describe('the default mode', () => {
     expect(harness.editor.getZoom()).toBeGreaterThan(0.5);
   });
 
-  // The fit used to run after the mount had laid the document out at the zoom it held, and on
-  // the fixed measurer a new zoom is a new measurer, so a narrow window laid every page out
-  // twice in the same task. The page size is in the parsed tree, so the fit settles first.
-  test('lays a narrow window out once, already at the fitted scale', () => {
+  // A small document mounts before `load` returns, at the zoom the editor holds, and the fit
+  // follows. A footnoted document's pages depend on the passes it is laid out in (the second
+  // pass starts its footnote reserves where the first settled), so the synchronous open keeps
+  // that order rather than settling the fit first. A deferred open settles it first: see
+  // `fonts-before-first-layout.test.ts`.
+  test('a small document mounts at the zoom it holds, then fits', () => {
     const harness = mount();
     harness.resize(700);
     harness.editor.load(docx(''));
 
     expect(harness.editor.getZoom()).toBeLessThan(1);
-    expect(harness.editor.surface?.state().perf.fullPasses).toBe(1);
+    expect(harness.editor.surface?.state().perf.fullPasses).toBe(2);
   });
 
   test('a configured zoom means the embedder pinned it, so the mode is fixed', () => {
