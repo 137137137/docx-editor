@@ -4,7 +4,9 @@ import { surfaceFieldResultsScope } from './field-results-scope.ts';
 import { createRevisionMarkupState } from './revision-markup-state.ts';
 import { withDisplayedHyphens } from '../store/package/hyphen-text.ts';
 import { queryEditorDocument, watermarkOf } from './docx-editor-query.ts';
-import { REFRESH_WRITE_REFUSAL, refreshWriteBlocked } from './refresh-write-guard.ts';
+import { previewAllows, refreshWriteBlocked, writeBlockReason } from './refresh-write-guard.ts';
+import type { PaginatedSurfaceRuntimeOptions } from './surface-runtime-options.ts';
+import { endEditorPreview, registerEditorPreviewHost } from './editor-preview.ts';
 import { registerRefreshHost, type RefreshHost } from './document-refresh-host.ts';
 import { reviewChangesLocked } from './command-protection.ts';
 import { resolvedFontMeasurement } from './resolved-font-measurement.ts';
@@ -564,7 +566,10 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     emitSelectionChange();
   }
 
+  /** Ends an open preview: it covers the surface this replaces, parks, or destroys. */
+  let endPreview = (): void => {};
   function teardownSurface(): void {
+    endPreview();
     revisionMarkupState.destroyDialog();
     unsubscribeSession?.();
     unsubscribeSession = null;
@@ -608,6 +613,44 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     }
   }
 
+  /**
+   * What the pages look like, apart from the document and the editing mode: shared by the
+   * live mount and by a preview, so a preview paints exactly what a commit would. Never a
+   * collaboration model or a callback, which belong to the live surface alone.
+   */
+  function displaySurfaceOptions(): PaginatedSurfaceRuntimeOptions {
+    return {
+      scale: scaleOf(),
+      ...views.snapshot(),
+      // What a run with no authored font is REPORTED as, matching what it is measured
+      // as (`resolveFont`'s fallback below) — so a blank document's font box reads
+      // "Calibri", not an em-dash.
+      defaultFontFamily: configuredDefaultFontFamily(fontConfiguration()),
+      translate: hostConfig.translate(),
+      drawingStrings: hostConfig.drawingStrings(),
+      locale: hostConfig.locale(),
+      // Suggesting needs both: an author to attribute a proposal to, and the mode itself,
+      // which survives a document reload because the reader chose it, not the file.
+      ...(author ? { author } : {}),
+      // Presentation policy for tracked changes, applied wherever revision markup paints.
+      // The facade's state, not `config`: a reload keeps a live `setRevisionStyles`.
+      ...(revisionStyleState.current() !== undefined
+        ? { revisionStyles: revisionStyleState.current() }
+        : {}),
+      reviewAuthorSlots,
+      revisionAuthorVisibility: reviewAuthorVisibility,
+      revisionMarkup: revisionMarkupState.current(),
+      ...preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
+      pairsReplacements: pairedPin.lightsPair,
+      ...(shapedMeasurer
+        ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
+        : {}),
+      ...(embeddedFaces ? { fontAlias: embeddedFaces.alias } : {}),
+      ...configSurfaceOptions(config),
+      ...(fieldScope.mode === 'editable' ? { fieldResults: fieldScope.mode } : {}),
+    };
+  }
+
   function mountBytesNow(
     bytes: Uint8Array,
     initialSelection?: SemanticSelection,
@@ -632,25 +675,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     teardownSurface();
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
-      scale: scaleOf(),
+      ...displaySurfaceOptions(),
       ...views.surfaceOptions(),
-      // What a run with no authored font is REPORTED as, matching what it is measured
-      // as (`resolveFont`'s fallback below) — so a blank document's font box reads
-      // "Calibri", not an em-dash.
-      defaultFontFamily: configuredDefaultFontFamily(fontConfiguration()),
-      translate: hostConfig.translate(),
-      drawingStrings: hostConfig.drawingStrings(),
-      locale: hostConfig.locale(),
-      // Suggesting needs both: an author to attribute a proposal to, and the mode itself,
-      // which survives a document reload because the reader chose it, not the file.
-      ...(author ? { author } : {}),
-      // Presentation policy for tracked changes, applied wherever revision markup paints.
-      // The facade's state, not `config`: a reload keeps a live `setRevisionStyles`.
-      ...(revisionStyleState.current() !== undefined
-        ? { revisionStyles: revisionStyleState.current() }
-        : {}),
-      reviewAuthorSlots,
-      revisionAuthorVisibility: reviewAuthorVisibility,
       initialSelection,
       initialTextFormInput,
       editingMode:
@@ -660,18 +686,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // review-module display mode; with one registered the surface keeps the layout
       // default (`all-markup`), which is what the review rail annotates.
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
-      revisionMarkup: revisionMarkupState.current(),
-      ...preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
-      pairsReplacements: pairedPin.lightsPair,
       ...diagnostics.surfaceHooks(suggesting, () => surface),
       ...preparedOpen.takePreparedOpen(bytes),
-      ...(shapedMeasurer
-        ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
-        : {}),
-      ...(embeddedFaces ? { fontAlias: embeddedFaces.alias } : {}),
-      ...configSurfaceOptions(config),
       ...(modules.collaboration ? { collaborationModel: modules.collaboration } : {}),
-      ...(fieldScope.mode === 'editable' ? { fieldResults: fieldScope.mode } : {}),
       onHostMoved: followHost,
       onTrackedChange: () => {
         if (reviewPaneOpen || !reviewPane.opensOnTrackedChange()) return;
@@ -1804,6 +1821,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       container = el;
       localFontProbe = null; // a probe answers for one document's font set
       if (surface) {
+        endPreview();
         surface.moveTo(el, options);
         mountGeneration += 1;
         followHost(el.ownerDocument);
@@ -1831,6 +1849,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       } else if (surface) {
         // Its settings draft belongs to chrome in the element being left.
         revisionMarkupState.destroyDialog();
+        endPreview();
         surface.park();
         mountGeneration += 1;
       }
@@ -1867,12 +1886,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     },
 
     exec(command, options) {
-      if (container && refreshWriteBlocked(container))
-        return {
-          ok: false,
-          code: 'unsupported',
-          reason: REFRESH_WRITE_REFUSAL,
-        };
+      if (container && refreshWriteBlocked(container) && !previewAllows(container, command))
+        return { ok: false, code: 'unsupported', reason: writeBlockReason(container) };
       // A command inside the yield window addresses the just-loaded document: mount now.
       // (`can` does NOT flush — chrome polls it per render; a read must not defeat the yield.)
       openScheduler.flush();
@@ -1970,12 +1985,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     },
 
     can(command, options): CanResult {
-      if (container && refreshWriteBlocked(container))
-        return {
-          ok: false,
-          code: 'unsupported',
-          reason: REFRESH_WRITE_REFUSAL,
-        };
+      if (container && refreshWriteBlocked(container) && !previewAllows(container, command))
+        return { ok: false, code: 'unsupported', reason: writeBlockReason(container) };
       if (command.type === 'openRevisionMarkupDialog') return revisionMarkupState.canOpen();
       const dialog = views.dialog(command, false);
       if (dialog) return dialog;
@@ -2496,5 +2507,13 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   const instance = fieldScope.methods(editor);
   registerEditorHost(instance, () => container);
   registerEditorHistoryGroups(instance, historyGroups);
+  endPreview = () => endEditorPreview(instance);
+  registerEditorPreviewHost(instance, {
+    displayOptions: displaySurfaceOptions,
+    changed: () => {
+      bump();
+      emitSelectionChange();
+    },
+  });
   return instance;
 }

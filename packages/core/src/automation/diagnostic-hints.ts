@@ -138,6 +138,14 @@ const HINTS: Readonly<Record<Exclude<DiagnosticCode, CollaborationDiagnosticCode
     'The edit would exceed a size or nesting limit. Split the change into smaller edits.',
   'edit.refresh-in-progress':
     'An external document refresh is in progress. Retry the edit after the refresh completes.',
+  'edit.preview-active':
+    'A preview is open over the document, so the editor refuses writes and a second preview. Commit or discard the open preview, then retry.',
+  'edit.preview-unsupported':
+    'A preview cannot show this operation, so nothing was shown. Write it with run() after the preview, or leave it out of the preview.',
+  'edit.preview-composing':
+    'An input method composition is in progress, so no preview began. Retry after the composition ends.',
+  'edit.preview-diverged':
+    'The document answered a replayed read differently from the preview, so the commit wrote nothing. Read the document again and build a new preview.',
   'edit.collaboration-not-ready':
     'The collaboration session is not ready to replicate edits, so this one was refused. Wait for the ready status, then retry; a destroyed session needs a rejoin.',
   'edit.collaboration-text-limit':

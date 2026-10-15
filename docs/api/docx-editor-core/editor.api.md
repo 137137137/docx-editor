@@ -69,6 +69,15 @@ export interface BarRoomInput {
 // @internal
 export function barRoomWidth(input: BarRoomInput): number;
 
+// @internal
+export function beginEditorPreview(editor: DocxEditorInstance): {
+    readonly fork: EditorPreviewFork;
+    readonly ok: true;
+} | {
+    readonly ok: false;
+    readonly reason: EditorPreviewRefusal;
+};
+
 // @public
 export function bindHistoryGroup(editor: Editor, element: HTMLElement, config: HistoryGroupBindingOptions): HistoryGroupBinding;
 
@@ -1577,6 +1586,23 @@ export interface EditorModuleRegistry {
     readonly review: ReviewModuleContribution | null;
     readonly wantsDiagnostic: (kind: EditorDiagnosticKind) => boolean;
 }
+
+// @internal
+export function editorPreviewActive(editor: object): boolean;
+
+// @internal
+export interface EditorPreviewFork {
+    end(): void;
+    readonly ended: boolean;
+    readonly host: AutomationHost;
+    onEnd(listener: () => void): () => void;
+    reveal(): boolean;
+    show(): boolean;
+    readonly shown: boolean;
+}
+
+// @internal
+export type EditorPreviewRefusal = 'no-document' | 'viewing' | 'blocked' | 'composing' | 'preview-active';
 
 // @public
 export interface EditorWindow {
