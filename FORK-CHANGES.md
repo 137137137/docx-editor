@@ -82,4 +82,5 @@ A relayout during a sliced opening, as after an unsliced one:
 - `packages/core/src/editor/paginated-surface.ts`: the open's layout runs on the measurer, scale and furniture of the mount, and a relayout's pass on the current ones.
 - `packages/core/src/editor/surface-fixed-first.ts`: the fixed pass runs first only for an open whose fonts were resolved before its mount.
 - `scripts/check-eslint-max-lines-globs.mjs`: the declared length of `paginated-surface.ts`.
+- `.changeset/opening-relayout-pass.md` and `.collaboration/changes/opening-relayout-pass.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `surface-opening-layout.test.ts` and `progressive-open.test.ts` in `packages/core/src/editor/__tests__/`.
