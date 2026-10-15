@@ -41,3 +41,23 @@ export function* withInterimLayout<T>(
     yield next.value ? { pages: next.value.pages, finalize } : undefined;
   }
 }
+
+/** `steps` with every interim layout it reports relabelled, as {@link withInterimLayout} does. */
+export function* withRelabeledProgress<T>(
+  steps: LayoutSteps<T>,
+  listItems: InterimLayoutInput['listItems'],
+  measurer: InterimLayoutInput['measurer']
+): LayoutSteps<T> {
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+    const progress = next.value;
+    const finalize = progress?.finalize;
+    yield finalize
+      ? {
+          ...progress,
+          finalize: (pages) => relabelListMarkers(finalize(pages), listItems, measurer),
+        }
+      : progress;
+  }
+}

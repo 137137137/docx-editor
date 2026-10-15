@@ -14,6 +14,7 @@ import { finalizePageFieldProjection, withPageFieldSources } from './field-proje
 import { recordMovedSeedReserves } from './note-reserves.ts';
 import { pageRefAssignmentToken } from './field-page-furniture.ts';
 import { framedTokenJoin } from './layout-cache.ts';
+import { drainLayoutSteps, type LayoutSteps } from './layout-steps.ts';
 import type { ContinuedPageHost } from './continued-page-zones.ts';
 import { framedStoryEntry, remapPage, type HeaderFooterStoryLayout } from './hf-layout.ts';
 import {
@@ -76,6 +77,11 @@ export interface SectionLayoutResult {
   /** The shell a sheet minted at a DOCUMENT index resolves to under this section's variants. */
   readonly overflowShellAt: (documentPageIndex: number, box: LayoutBox) => OverflowPageShell;
 }
+
+/** {@link LayoutSectionFn} as steps that may pause between pages. */
+export type LayoutSectionStepsFn = (
+  ...args: Parameters<LayoutSectionFn>
+) => LayoutSteps<SectionLayoutResult>;
 
 export type LayoutSectionFn = (
   bodies: readonly OoxmlElement[],
@@ -425,6 +431,86 @@ export function layoutMultiSectionDocument(
   options: SemanticLayoutOptions,
   layoutSection: LayoutSectionFn
 ): SemanticLayout {
+  return drainLayoutSteps(
+    layoutMultiSectionDocumentSteps(
+      blocks,
+      sections,
+      revision,
+      options,
+      function* (bodies, sectionRevision, sectionOptions) {
+        return layoutSection(bodies, sectionRevision, sectionOptions);
+      }
+    )
+  );
+}
+
+/**
+ * Re-report a section pass's completed pages as the document's: the sheets before the section,
+ * then the section's pages so far, numbered and stacked as the final publish places them. Not
+ * restorable: section sessions advance in place, so a paused pass is finished, never undone.
+ */
+function* sectionProgress(
+  steps: LayoutSteps<SectionLayoutResult>,
+  before: readonly PageRecord[] | null,
+  sheetY: number,
+  displayedStart: number,
+  format: string | undefined,
+  revision: number
+): LayoutSteps<SectionLayoutResult> {
+  // Each completed page publishes once, here, without the shared publish memo: the final
+  // publish knows the section's page count and must find the memo as the last pass left it.
+  const published: PageRecord[] = [];
+  const sources: PageRecord[] = [];
+  let y = sheetY;
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+    const partial = next.value?.pages;
+    if (!before || !partial) {
+      yield undefined;
+      continue;
+    }
+    let from = 0;
+    while (from < sources.length && from < partial.length && sources[from] === partial[from]) {
+      from += 1;
+    }
+    if (from === partial.length && from === sources.length) {
+      yield undefined;
+      continue;
+    }
+    published.length = from;
+    sources.length = from;
+    const last = published[from - 1];
+    y = last ? last.box.y + last.box.height + SHEET_GUTTER_PT : sheetY;
+    for (let offset = from; offset < partial.length; offset += 1) {
+      const page = partial[offset]!;
+      const remapped = remapPage(page, before.length + offset, y);
+      const sheet = withPageFieldSources(
+        [remapped],
+        displayedStart + offset,
+        partial.length,
+        format
+      )[0]!;
+      published.push(sheet);
+      sources.push(page);
+      y = sheet.box.y + sheet.box.height + SHEET_GUTTER_PT;
+    }
+    yield {
+      pages: [...before, ...published],
+      finalize: (pages) => finalizePageFieldProjection({ revision, pages }),
+      restorable: false,
+    };
+  }
+}
+
+/** {@link layoutMultiSectionDocument} as steps that report the pages completed so far. */
+export function* layoutMultiSectionDocumentSteps(
+  blocks: readonly OoxmlElement[],
+  sections: readonly DocumentSection[],
+  revision: number,
+  options: SemanticLayoutOptions,
+  layoutSectionSteps: LayoutSectionStepsFn
+): LayoutSteps<SemanticLayout> {
   const { session, ...rest } = options;
   // A prefix pass of a sliced open: page fields finalize again when the full pass runs.
   const provisional = options.bodyBlockLimit !== undefined;
@@ -600,37 +686,45 @@ export function layoutMultiSectionDocument(
             movedSeed
           )
         : undefined;
-    const laid = layoutSection(slice, revision, {
-      ...rest,
-      ...(sectionReserves ? { pageBottomReserves: sectionReserves } : {}),
-      retainKeys,
-      geometry,
-      furniture,
-      sectionColumns: section.properties.columns,
-      paragraphLineUnitPt: sectionLineGridPt(section.properties),
-      ...(section.properties.pageBorders
-        ? { sectionPageBorders: section.properties.pageBorders }
-        : {}),
-      ...(balanceColumns ? { balanceColumns } : {}),
-      // The empty paragraph that carries this section's mark takes no flow height when the
-      // next section is continuous: the next section starts where the content ended.
-      ...(endsContinuous ? { sectionMarkCollapses: true } : {}),
-      ...(markJoinsBreakSheet ? { markJoinsBreakSheet } : {}),
-      lineCounterStart: lineCounter,
-      // A continued section's local page 0 IS the host sheet, so its document page index
-      // is one behind the stack; every other section starts a fresh sheet at `startIndex`.
-      pageIndexStart: continues ? startIndex - 1 : startIndex,
-      // Paragraph spacing still collapses across a section boundary on a new sheet.
-      // Carry only the after-spacing budget there, never the prior sheet's cursor.
-      spaceBeforeCarry: flowSpaceAfter,
-      ...(continues ? { flowStartY: flowCursorY } : {}),
-      ...(continuedPageInsets ? { continuedPageInsets } : {}),
-      ...(continuedPageFurniture ? { continuedPageFurniture } : {}),
-      ...(measuredPageNumberFormat !== undefined
-        ? { bodyPageNumberFormat: measuredPageNumberFormat }
-        : {}),
-      ...(sectionSession ? { session: sectionSession } : {}),
-    });
+    const progressStart = section.properties.pageNumbering?.start ?? nextDisplayed;
+    const laid: SectionLayoutResult = yield* sectionProgress(
+      layoutSectionSteps(slice, revision, {
+        ...rest,
+        ...(sectionReserves ? { pageBottomReserves: sectionReserves } : {}),
+        retainKeys,
+        geometry,
+        furniture,
+        sectionColumns: section.properties.columns,
+        paragraphLineUnitPt: sectionLineGridPt(section.properties),
+        ...(section.properties.pageBorders
+          ? { sectionPageBorders: section.properties.pageBorders }
+          : {}),
+        ...(balanceColumns ? { balanceColumns } : {}),
+        // The empty paragraph that carries this section's mark takes no flow height when the
+        // next section is continuous: the next section starts where the content ended.
+        ...(endsContinuous ? { sectionMarkCollapses: true } : {}),
+        ...(markJoinsBreakSheet ? { markJoinsBreakSheet } : {}),
+        lineCounterStart: lineCounter,
+        // A continued section's local page 0 IS the host sheet, so its document page index
+        // is one behind the stack; every other section starts a fresh sheet at `startIndex`.
+        pageIndexStart: continues ? startIndex - 1 : startIndex,
+        // Paragraph spacing still collapses across a section boundary on a new sheet.
+        // Carry only the after-spacing budget there, never the prior sheet's cursor.
+        spaceBeforeCarry: flowSpaceAfter,
+        ...(continues ? { flowStartY: flowCursorY } : {}),
+        ...(continuedPageInsets ? { continuedPageInsets } : {}),
+        ...(continuedPageFurniture ? { continuedPageFurniture } : {}),
+        ...(measuredPageNumberFormat !== undefined
+          ? { bodyPageNumberFormat: measuredPageNumberFormat }
+          : {}),
+        ...(sectionSession ? { session: sectionSession } : {}),
+      }),
+      continues ? null : [...pages],
+      sheetY,
+      progressStart,
+      section.properties.pageNumbering?.fmt,
+      revision
+    );
     sectionShells.push({ startIndex, at: laid.overflowShellAt });
     lineCounter = laid.lineCounter;
     flowCursorY = laid.endCursorY;
@@ -779,7 +873,7 @@ export function layoutMultiSectionDocument(
 
   if (pages.length === 0) {
     const geometry = geometryOfSection(sections[0]?.properties ?? DEFAULT_SECTION_PROPERTIES);
-    const laid = layoutSection([], revision, {
+    const laid: SectionLayoutResult = yield* layoutSectionSteps([], revision, {
       ...rest,
       retainKeys,
       geometry,

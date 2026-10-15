@@ -20,10 +20,10 @@ import {
   attachNotesToLayout,
   buildPageRefHits,
   computeFootnoteReserves,
-  layoutSemanticDocumentWithNotes,
   provisionalNoteMarks,
   type NotesLayoutInput,
 } from '../note-pagination.ts';
+import { layoutSemanticDocumentWithNotes } from './notes-layout-drain.ts';
 import { collectNoteReferences } from '../../store/package/note-references.ts';
 import type { PageRecord, ParagraphFragmentRecord, SemanticLayout } from '../semantic-records.ts';
 

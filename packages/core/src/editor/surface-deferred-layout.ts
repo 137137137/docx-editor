@@ -9,9 +9,9 @@
 // show where its content stood before the edit.
 //
 // A newer edit drops the paused pass and restores the session to its state before that pass,
-// then lays out from there; any other layout first finishes the paused pass. A document whose
-// pass finishes within its budget, or that never reports pages (several sections, notes),
-// lays out exactly as before.
+// then lays out from there; any other layout first finishes the paused pass. A pass that
+// cannot be put back (several sections, footnotes) is finished instead of dropped. A document
+// whose pass finishes within its budget, or that never reports pages, lays out as before.
 
 import { drainLayoutSteps, type LayoutProgress, type LayoutSteps } from '../layout/layout-steps.ts';
 import type { SemanticLayout } from '../layout/semantic-records.ts';
@@ -113,6 +113,8 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     /** Main-thread milliseconds the pass has taken so far. */
     spent: number;
     readonly timed: boolean;
+    /** False when the pass advances state in place: it is finished, never put back. */
+    readonly restorable: boolean;
   };
   let paused: Paused | null = null;
   /** Time of dropped passes, owed to the next pass. */
@@ -149,6 +151,15 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     queueTask(drive, host.view?.());
   };
 
+  const finish = (): void => {
+    const pass = paused;
+    if (!pass) return;
+    const began = host.now();
+    setPaused(null);
+    settle(drainLayoutSteps(pass.steps), pass.revision);
+    report(pass.timed, pass.spent + host.now() - began);
+  };
+
   return {
     run(steps, revision, timed = true) {
       const restore = host.snapshot();
@@ -180,22 +191,26 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
         // The completed pages, then the previous layout's pages after them, until the pass
         // ends. Each keeps the index it is painted at.
         const pages = [...progress.pages, ...previous.pages.slice(progress.pages.length)];
-        setPaused({ steps, revision, restore, spent: owed + host.now() - began, timed });
+        setPaused({
+          steps,
+          revision,
+          restore,
+          spent: owed + host.now() - began,
+          timed,
+          restorable: progress.restorable !== false,
+        });
         afterPaint(drive, host.view?.());
         return progress.finalize(pages);
       }
     },
-    finish() {
-      const pass = paused;
-      if (!pass) return;
-      const began = host.now();
-      setPaused(null);
-      settle(drainLayoutSteps(pass.steps), pass.revision);
-      report(pass.timed, pass.spent + host.now() - began);
-    },
+    finish,
     abandon() {
       const pass = paused;
       if (!pass) return;
+      // Several sections or footnotes advance their session state in place, so the snapshot
+      // taken before the pass cannot put it back: such a pass ends here instead, and its
+      // layout reaches the screen only if no newer edit arrived meanwhile.
+      if (!pass.restorable) return finish();
       setPaused(null);
       pass.restore();
       if (pass.timed) carried += pass.spent;

@@ -10,10 +10,7 @@ import {
   bodyParagraphOptionFlow,
   bodyParagraphPlacementFlow,
 } from './body-paragraph-flow.ts';
-import {
-  layoutWithCharacterHeaders,
-  layoutWithCharacterHeadersSteps,
-} from './character-header-layout.ts';
+import { layoutWithCharacterHeadersSteps } from './character-header-layout.ts';
 import { contextualParagraphSpacing, flowNeighbourStyle } from './contextual-paragraph-spacing.ts';
 import { resolveParagraphFrame } from './paragraph-drop-cap.ts';
 import {
@@ -182,7 +179,10 @@ import {
 import { pageBreakBeforeRules } from './page-break-before.ts';
 import { marginInset } from './page-body-margins.ts';
 import { columnSeparatorBoxes, resolveSectionColumns } from './section-columns.ts';
-import { inheritNotesLayoutInput, layoutSemanticDocumentWithNotes } from './note-pagination.ts';
+import {
+  inheritNotesLayoutInput,
+  layoutSemanticDocumentWithNotesSteps,
+} from './note-pagination.ts';
 import { closingSpaceAfterPt } from './note-area-fit.ts';
 import { passProducerOf } from './pass-producer.ts';
 import { documentProjectionProducer } from './document-property-context.ts';
@@ -205,11 +205,11 @@ import { createListFirstLineMetrics, markerLineStart, publishListMarker } from '
 import { FlowCheckpointOwner, flowCheckpointsMatch } from './flow-checkpoint.ts';
 import { sectionReserveResume } from './note-reserve-resume.ts';
 import type { FlowCheckpoint, LayoutSession } from './layout-session.ts';
-import { furnitureForSection, layoutMultiSectionDocument } from './multi-section-layout.ts';
+import { furnitureForSection, layoutMultiSectionDocumentSteps } from './multi-section-layout.ts';
 import { hostedStoryFlowDeps, layoutTextboxStory } from './textbox-story-layout.ts';
 import { inlineDrawingFlow } from './inline-textbox-flow.ts';
 import { convergeExclusionLayout } from './exclusion-layout-steps.ts';
-import { withInterimLayout } from './interim-layout.ts';
+import { withInterimLayout, withRelabeledProgress } from './interim-layout.ts';
 import { layoutWithFurnitureRetry } from './furniture-retry-layout.ts';
 import { drainLayoutSteps, stepsInFieldResultsMode, type LayoutSteps } from './layout-steps.ts';
 import { preparedBlocks } from './prepared-block-memo.ts';
@@ -330,11 +330,20 @@ function* layoutInModeSteps(
   const refFields = resolveBodyRefFields(part, blocks, sections, optionsWithLists);
   const optionsForBody = refFields === null ? optionsWithLists : { ...optionsWithLists, refFields };
 
-  const runBody = (opts: SemanticLayoutOptions): SemanticLayout =>
-    drainLayoutSteps(runBodySteps(opts));
   function* runBodySteps(opts: SemanticLayoutOptions): LayoutSteps<SemanticLayout> {
     if (sections.length > 1) {
-      return layoutMultiSectionDocument(blocks, sections, revision, opts, layoutBlocksWithGeometry);
+      // Reports document pages as each section completes them, labelled as a single section's.
+      return yield* withRelabeledProgress(
+        layoutMultiSectionDocumentSteps(
+          blocks,
+          sections,
+          revision,
+          opts,
+          layoutBlocksWithGeometrySteps
+        ),
+        optionsWithLists.listItems,
+        options.measurer
+      );
     }
 
     const section = sections[0];
@@ -433,8 +442,8 @@ function* layoutInModeSteps(
     refFields ? { ...options, refFields } : options
   );
   return finish(
-    layoutWithCharacterHeaders(part, optionsForBody, (opts) =>
-      layoutSemanticDocumentWithNotes(part, sections, opts, notesInput, runBody)
+    yield* layoutWithCharacterHeadersSteps(part, optionsForBody, (opts) =>
+      layoutSemanticDocumentWithNotesSteps(part, sections, opts, notesInput, runBodySteps)
     )
   );
 }
@@ -2844,14 +2853,6 @@ function* layoutBlocksPass(
     endsOpenPage,
     overflowShellAt,
   };
-}
-
-function layoutBlocksWithGeometry(
-  bodies: readonly OoxmlElement[],
-  revision: number,
-  options: BlockLayoutOptions
-): BlockLayoutResult {
-  return drainLayoutSteps(layoutBlocksWithGeometrySteps(bodies, revision, options));
 }
 
 function layoutBlocksWithGeometrySteps(

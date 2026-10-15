@@ -19,6 +19,11 @@ export const TABLE_ROWS_PER_STEP = 8;
 export interface LayoutProgress {
   readonly pages: readonly PageRecord[];
   readonly finalize?: (pages: readonly PageRecord[]) => SemanticLayout;
+  /**
+   * False when the pass advances state in place (section sessions, the notes search), so a
+   * host that pauses it must finish it before laying out again; it cannot put it back.
+   */
+  readonly restorable?: boolean;
 }
 
 /** Steps that end with a `T`, reporting progress at some pause points. */

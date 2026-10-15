@@ -102,6 +102,8 @@ import type { PendingLine } from './paragraph-flow.ts';
 import { cascadeRunProperties, type StyleCascadeTable } from './style-cascade.ts';
 import { DEFAULT_RUN_STYLE, resolveRunStyle, type ResolvedRunStyle } from './run-style.ts';
 import { finalizePageFieldProjection } from './field-projection.ts';
+import type { LayoutSteps } from './layout-steps.ts';
+import { withNoteAreasOnProgress, type NotesBodyOptions } from './note-progress.ts';
 import { overflowPageShellAt, type OverflowPageShell } from './page-furniture-insets.ts';
 import { resettleParitySheets } from './page-parity-sheet.ts';
 import {
@@ -2559,7 +2561,7 @@ export function attachNotesToLayout(
 
 /**
  * Notes path: provisional marks → body layout → reserve → bounded reflow → attach.
- * `runBody` is the coordinator's body layout pass (single- or multi-section).
+ * `runBodySteps` is the coordinator's body layout pass (single- or multi-section).
  *
  * Convergence requires the body to have been laid out with exactly the reserves still
  * needed. Every pass adopts the freshly computed map (stale entries drop with it); a
@@ -2574,26 +2576,17 @@ export function attachNotesToLayout(
  * first body pass already carries the prior published reserve set (and its context key).
  * Reflow keeps the session: a changed reserve set changes the layout context, so resume
  * falls through to a full pass without discarding the caller's session write-back.
+ *
+ * Each body run reports the pages it has completed, with their footnote areas, so an edit
+ * can show the pages on screen before the reserve search ends.
  */
-export function layoutSemanticDocumentWithNotes<
-  Opts extends Pick<NotesLayoutInput, 'styleCascade' | 'numberingIndex'> & {
-    noteMarks?: NoteMarkContext;
-    pageBottomReserves?: ReadonlyMap<number, number>;
-    pageBottomReservesFromPreviousPass?: boolean;
-    session?: {
-      previous: SemanticLayout | null;
-      multi: unknown;
-      notes: unknown;
-      notePageBottomReserves?: ReadonlyMap<number, number> | null;
-    };
-  },
->(
+export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOptions>(
   part: OoxmlPart,
   sections: readonly DocumentSection[],
   optionsWithLists: Opts,
   notesInput: NotesLayoutInput,
-  runBody: (opts: Opts) => SemanticLayout
-): SemanticLayout {
+  runBodySteps: (opts: Opts) => LayoutSteps<SemanticLayout>
+): LayoutSteps<SemanticLayout> {
   const displayMode =
     (optionsWithLists as { displayMode?: RevisionDisplayMode }).displayMode ??
     DEFAULT_REVISION_DISPLAY_MODE;
@@ -2605,7 +2598,7 @@ export function layoutSemanticDocumentWithNotes<
       optionsWithLists.session.notes = null;
       optionsWithLists.session.notePageBottomReserves = null;
     }
-    return runBody({
+    return yield* runBodySteps({
       ...optionsWithLists,
       noteMarks: undefined,
       pageBottomReserves: undefined,
@@ -2630,12 +2623,22 @@ export function layoutSemanticDocumentWithNotes<
   const notesMemo = notesMemoState.memo;
   const allHits = notesMemoState.allHits;
   const noteMarks = notesMemo?.provisionalMarks ?? provisionalNoteMarks(allHits, notesInput);
+  const bodySteps = (opts: Opts): LayoutSteps<SemanticLayout> =>
+    withNoteAreasOnProgress(
+      runBodySteps(opts),
+      (layout) =>
+        attachNotesToLayout(layout, allHits, notesInput, {
+          fallbackReasons: [],
+          paragraphSectionIndex,
+          memo: notesMemo,
+        }).layout
+    );
   let seeded = optionsWithLists.session?.notePageBottomReserves;
   let usedReserves: ReadonlyMap<number, number> = seeded
     ? compactFootnoteReserves(seeded)
     : new Map();
   let fallbackReasons: NotePaginationFallbackReason[] = [];
-  let bodyLayout: SemanticLayout = runBody({
+  let bodyLayout: SemanticLayout = yield* bodySteps({
     ...optionsWithLists,
     noteMarks,
     pageBottomReserves: usedReserves,
@@ -2648,7 +2651,11 @@ export function layoutSemanticDocumentWithNotes<
     seeded = undefined;
     usedReserves = new Map();
     resetNoteReserveSearch(notesMemo);
-    bodyLayout = runBody({ ...optionsWithLists, noteMarks, pageBottomReserves: usedReserves });
+    bodyLayout = yield* bodySteps({
+      ...optionsWithLists,
+      noteMarks,
+      pageBottomReserves: usedReserves,
+    });
   }
   // A progressive open lays out growing prefixes of one part, each its own pagination
   // problem. Search state is kept per part AND prefix, or a settled prefix answer (and the
@@ -2703,8 +2710,9 @@ export function layoutSemanticDocumentWithNotes<
     let converged = false;
     let stableReserves: ReadonlyMap<number, number> | null = null;
     let phaseEnvelope: ReadonlyMap<number, number> = usedReserves;
-    const relayout = (reserves: ReadonlyMap<number, number>): SemanticLayout =>
-      runBody({ ...optionsWithLists, noteMarks, pageBottomReserves: reserves });
+    function* relayout(reserves: ReadonlyMap<number, number>): LayoutSteps<SemanticLayout> {
+      return yield* bodySteps({ ...optionsWithLists, noteMarks, pageBottomReserves: reserves });
+    }
     let previousPageCount = bodyLayout.pages.length;
     // Scaled with the document: legitimate cold convergence of a large document can grow
     // the page count for more consecutive rounds than a small one (the settled prefix
@@ -2790,7 +2798,7 @@ export function layoutSemanticDocumentWithNotes<
           fallbackReasons.push('note-reflow-exhausted');
           if (!computed.stable && stableReserves && stableReserves !== usedReserves) {
             usedReserves = stableReserves;
-            bodyLayout = relayout(stableReserves);
+            bodyLayout = yield* relayout(stableReserves);
           }
           break;
         }
@@ -2803,7 +2811,7 @@ export function layoutSemanticDocumentWithNotes<
       adoptedThisPass += 1;
       // Keep the caller's session: reserve changes alter the layout context key, so
       // checkpoints from a different reserve set are not resumed — they are replaced.
-      bodyLayout = relayout(usedReserves);
+      bodyLayout = yield* relayout(usedReserves);
       consecutiveGrowth = bodyLayout.pages.length > previousPageCount ? consecutiveGrowth + 1 : 0;
       previousPageCount = bodyLayout.pages.length;
       if (attempt === attemptCap - 1) {
@@ -2820,7 +2828,7 @@ export function layoutSemanticDocumentWithNotes<
       usedReserves = strictReserves;
       fallbackReasons = [...strictReasons];
       if (refinementMoved) {
-        bodyLayout = relayout(usedReserves);
+        bodyLayout = yield* relayout(usedReserves);
       }
       // Settled for this part identity: the refinement had its budget and did not beat the
       // strict answer, so later passes republish instead of re-spending it. An edit
