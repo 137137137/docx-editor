@@ -1612,7 +1612,8 @@ function* layoutBlocksPass(
     appliedSkipByLineIndex: ReadonlyMap<number, number>
   ): readonly ExclusionZone[] => {
     const pageZones = pageExclusionZonesForEntry(entry, entryIndex);
-    if (!options.inlineDrawingLayout) return pageZones;
+    if (!options.inlineDrawingLayout || lineIndex <= fragmentFirstLine) return pageZones;
+    if (drawingModelOffsetsInParagraph(entry.paragraph).size === 0) return pageZones;
     return drawingZonesAtLinePlacement({
       paragraph: entry.paragraph,
       paragraphId: entry.paragraph.id,
@@ -2615,7 +2616,8 @@ function* layoutBlocksPass(
       const penX = columnX - (rtl ? firstLineOffset : 0);
       const placedSpans = pendingLine.spans.map((span) => ({
         ...span,
-        range: { ...span.range, paragraphId },
+        // The broken range already names this paragraph unless a shared break was reused.
+        range: span.range.paragraphId === paragraphId ? span.range : { ...span.range, paragraphId },
         box: { ...span.box, x: span.box.x + penX, y: cursorY },
       }));
       // Word aligns inside the passage a float leaves the line, not the page margins.

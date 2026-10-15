@@ -73,7 +73,12 @@ export function anchoredDrawingAtomsInParagraph(
   return Object.freeze(atoms);
 }
 
+const drawingOffsetMemos = new WeakMap<OoxmlNode, ReadonlyMap<string, number>>();
+
 export function drawingModelOffsetsInParagraph(paragraph: OoxmlNode): ReadonlyMap<string, number> {
+  // Asked once per placed line of a paragraph, and a node never changes: one walk per node.
+  const known = drawingOffsetMemos.get(paragraph);
+  if (known) return known;
   const offsets = new Map<string, number>();
   if (paragraph.kind !== 'paragraph') return offsets;
   // The shared paragraph index counts breaks, tabs, wrappers, and every modeled atom.
@@ -85,5 +90,10 @@ export function drawingModelOffsetsInParagraph(paragraph: OoxmlNode): ReadonlyMa
     const span = (index ??= paragraphOffsetIndex(paragraph)).spanOf(node);
     if (span) offsets.set(node.id, span.start);
   });
-  return offsets;
+  const answer = offsets.size === 0 ? NO_DRAWING_OFFSETS : offsets;
+  drawingOffsetMemos.set(paragraph, answer);
+  return answer;
 }
+
+/** Shared by every paragraph without drawings, so the memo holds no map per paragraph. */
+const NO_DRAWING_OFFSETS: ReadonlyMap<string, number> = new Map();
