@@ -50,6 +50,8 @@ test('removing, inserting and replacing blocks keeps the index whole', () => {
 
   part = withBlocks(part, [blocks()[0]!, blocks()[2]!, blocks()[3]!]);
   expectFullIndex(part);
+  // Another story indexed in between, as one derivation indexes the body and then each header.
+  locateSites(read('/word/header1.xml', `<w:p>${ins(11, run('head'))}</w:p>`));
   part = withBlocks(part, [blocks()[0]!, extra.children[0]!, ...blocks().slice(1)]);
   expectFullIndex(part);
   part = withBlocks(part, [...blocks().slice(0, 3), extra.children[1]!]);

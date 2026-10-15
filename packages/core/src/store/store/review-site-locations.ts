@@ -53,7 +53,8 @@ function locateSitesWithPolicy(
   // An edit replaces the root, the body and the blocks it touched; every other block is the
   // same object. Patching the previous index for those blocks replaces a walk of every
   // paragraph per edit.
-  const previousRoot = retainAcrossReads ? lastLocatedRoots[mode]?.deref() : undefined;
+  const lastKey = `${mode}\u0000${part.name}`;
+  const previousRoot = retainAcrossReads ? lastLocatedRoots.get(lastKey)?.deref() : undefined;
   const previous = previousRoot ? locatedSitesCaches[mode].get(previousRoot) : undefined;
   const located =
     (previousRoot &&
@@ -62,7 +63,7 @@ function locateSitesWithPolicy(
     fullLocations(part.root, retainAcrossReads);
   if (retainAcrossReads) {
     locatedSitesCaches[mode].set(part.root, located);
-    lastLocatedRoots[mode] = new WeakRef(part.root);
+    lastLocatedRoots.set(lastKey, new WeakRef(part.root));
   }
   return located;
 }
@@ -76,11 +77,12 @@ interface RootWeakRef {
 }
 declare const WeakRef: new (target: OoxmlNode) => RootWeakRef;
 
-/** The root each mode last indexed, weakly: a closed document leaves nothing here. */
-const lastLocatedRoots: Record<'atomic' | 'editable', RootWeakRef | undefined> = {
-  atomic: undefined,
-  editable: undefined,
-};
+/**
+ * The root each story part last indexed per mode, weakly: a closed document leaves nothing
+ * here but a dead reference per part name. Per part, because one derivation indexes the body,
+ * then every header, footer and note part; a shared slot always held the last one of those.
+ */
+const lastLocatedRoots = new Map<string, RootWeakRef>();
 
 /** Blocks changed past this many are indexed from scratch. */
 const MAX_PATCHED_BLOCKS = 256;
