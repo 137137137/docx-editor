@@ -20,12 +20,10 @@ export interface LayoutMeasurement {
   readonly producer: string;
 }
 
-/** When a surface's layouts run the fixed pass first, and on which measurer. */
+/** The passes a surface's layouts run before the one they publish. */
 export interface FixedFirst {
-  /** Whether a layout now runs the fixed pass before the one it publishes. */
-  runs(): boolean;
-  /** The fixed measurer at `scale`, as a mount with no measurer resolves it. */
-  measurement(scale: number): LayoutMeasurement;
+  /** The fixed measurers, in order, a layout at `scale` runs before the one it publishes. */
+  passes(scale: number): readonly LayoutMeasurement[];
 }
 
 export interface FixedFirstInput {
@@ -34,29 +32,43 @@ export interface FixedFirstInput {
   /** The surface mounted on its fixed measurer; a measurer that arrives during its opening
    *  makes the opening's layouts the two passes too. */
   readonly mountedFixed: boolean;
+  /**
+   * The scale the open without the wait first laid out at, before its fit: a document that
+   * mounted synchronously did so at the zoom the editor held, and fitted after. Its pages are
+   * those of that pass, the fit's and the fonts', in that order.
+   */
+  readonly unfittedScale?: number;
   /** Whether the surface measures with a host (shaped) measurer now. */
   hostMeasured(): boolean;
   readonly document: Document;
 }
 
 export function createFixedFirst(input: FixedFirstInput): FixedFirst {
-  let resolved: { readonly scale: number; readonly measurement: LayoutMeasurement } | null = null;
+  const resolved = new Map<number, LayoutMeasurement>();
+  /** The fixed measurer at `scale`, as a mount with no measurer resolves it. */
+  const fixedAt = (scale: number): LayoutMeasurement => {
+    let measurement = resolved.get(scale);
+    if (!measurement) {
+      const fixed = resolveDefaultSurfaceMeasurer(scale, {
+        context: tryCreateBrowserCanvasContext(input.document),
+      });
+      measurement = {
+        measurer: fixed.measurer,
+        producer: `${fixed.producer ?? 'fixed-measurer'}@scale:${scale}`,
+      };
+      resolved.set(scale, measurement);
+    }
+    return measurement;
+  };
   return {
-    runs: () => (input.fontsFirst || input.mountedFixed) && input.hostMeasured(),
-    measurement(scale) {
-      if (resolved?.scale !== scale) {
-        const fixed = resolveDefaultSurfaceMeasurer(scale, {
-          context: tryCreateBrowserCanvasContext(input.document),
-        });
-        resolved = {
-          scale,
-          measurement: {
-            measurer: fixed.measurer,
-            producer: `${fixed.producer ?? 'fixed-measurer'}@scale:${scale}`,
-          },
-        };
-      }
-      return resolved.measurement;
+    passes(scale) {
+      const passes: LayoutMeasurement[] = [];
+      const { unfittedScale } = input;
+      if (unfittedScale !== undefined && unfittedScale !== scale)
+        passes.push(fixedAt(unfittedScale));
+      if ((input.fontsFirst || input.mountedFixed) && input.hostMeasured())
+        passes.push(fixedAt(scale));
+      return passes;
     },
   };
 }

@@ -1043,6 +1043,7 @@ export interface DocxEditorConfig {
     modules?: readonly EditorModule[];
     // (undocumented)
     onFontError?: (error: EditorFontError) => void;
+    openAfterPaint?: 'large' | 'every';
     revisionStyles?: RevisionStyles;
     tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
     translate?: (key: string, params?: Record<string, string | number>) => string;

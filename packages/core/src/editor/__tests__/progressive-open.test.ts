@@ -262,6 +262,29 @@ describe('an open whose fonts are resolved before its mount', () => {
     expect(texts(surface.layout())).toEqual(twoPassTexts);
   });
 
+  test('a deferred small document runs the pass at the zoom it held before its fit', async () => {
+    // The synchronous open: mounted at the held zoom, fitted, then the fonts.
+    const held = mount(BYTES, false) as PaginatedSurface & { setScale(scale: number): boolean };
+    held.setScale(0.8);
+    updateSurfaceMeasurement(held, { measurer: host, producer: 'host' });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const result = mountPaginatedSurface(container, BYTES, {
+      scale: 0.8,
+      measurer: host,
+      producer: 'host',
+      ...({ progressiveLayout: true, fixedFirst: true, unfittedScale: 1 } as object),
+    });
+    if (!result.ok) throw new Error(result.reason);
+    surfaces.push(result.surface);
+    await result.surface.whenPaginated();
+    expect(texts(result.surface.layout())).toEqual(texts(held.layout()));
+    // The held zoom's pass is one more than an open already at its fit runs.
+    const fitted = mountShaped(false);
+    expect(result.surface.state().perf.fullPasses).toBeGreaterThan(fitted.state().perf.fullPasses);
+  });
+
   test('a progressive open on the fixed measurer whose fonts land part way runs both passes', async () => {
     const surface = mount(BYTES, true);
     expect(surface.paginating()).toBe(true);

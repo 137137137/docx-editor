@@ -68,6 +68,8 @@ export interface DocxEditorRootProps {
   mode?: 'edit' | 'view' | 'suggesting';
   zoom?: number;
   zoomMode?: ZoomMode | 'auto';
+  /** Which documents open behind a painted frame: `'large'` (the default) or `'every'`. Sampled at mount. */
+  openAfterPaint?: 'large' | 'every';
   tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
   imageDecodePort?: ImageDecodePort;
   onReady?: (editor: Editor) => void;
@@ -216,6 +218,7 @@ export function useDocxEditorRootOwner(
       ...(p.modules !== undefined ? { modules: p.modules } : {}),
       ...(p.zoom !== undefined ? { zoom: p.zoom } : {}),
       ...(p.zoomMode !== undefined ? { zoomMode: p.zoomMode } : {}),
+      ...(p.openAfterPaint !== undefined ? { openAfterPaint: p.openAfterPaint } : {}),
       ...(p.tableInteractionLabel ? { tableInteractionLabel: p.tableInteractionLabel } : {}),
       ...(p.imageDecodePort ? { imageDecodePort: p.imageDecodePort } : {}),
       onFontError: fireFontError,

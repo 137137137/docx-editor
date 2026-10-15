@@ -62,3 +62,16 @@ The first layout of a document opened with its fonts, as the open without them l
 - `scripts/check-eslint-max-lines-globs.mjs`: the declared length of `paginated-surface.ts`.
 - `.changeset/open-once-at-fit.md`: the release note, corrected; `.changeset/fixed-pass-first.md` and `.collaboration/changes/fixed-pass-first.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `progressive-open.test.ts`, `fonts-before-first-layout.test.ts` and `zoom-controller.test.ts` in `packages/core/src/editor/__tests__/`.
+
+Every document opened the way a large one is, when the host asks:
+
+- `packages/core/src/editor/docx-editor-types.ts`: the `openAfterPaint` option.
+- `packages/core/src/editor/docx-editor-open-scheduler.ts`: an open yields for every document when asked; `isLarge` says whether it would by default.
+- `packages/core/src/editor/docx-editor.ts`: passes the option to the scheduler, and tells the surface the zoom a small document held before its fit.
+- `packages/core/src/editor/surface-fixed-first.ts` and `packages/core/src/editor/paginated-surface.ts`: the pass at that held zoom runs first, unpainted.
+- `packages/react/src/editor/DocxEditorRoot.tsx`, `packages/vue/src/editor/DocxEditorRoot.ts`, `packages/vue/src/editor/useDocxEditorRoot.ts`: the `openAfterPaint` prop.
+- `docs/site/content/react/composition.mdx`, `docs/site/content/vue/composition.mdx`: the prop documented.
+- `docs/api/docx-editor-core/editor.api.md`, `index.api.md`, `docs/api/docx-editor-react/index.api.md`, `docs/api/docx-editor-vue/index.api.md`: the API snapshots.
+- `scripts/feature-parity-baseline.json`: the prop, added to both adapters' roots.
+- `.changeset/open-after-paint-every.md` and `.collaboration/changes/open-after-paint-every.json` (new).
+- Tests: `fonts-before-first-layout.test.ts` and `progressive-open.test.ts` in `packages/core/src/editor/__tests__/`.

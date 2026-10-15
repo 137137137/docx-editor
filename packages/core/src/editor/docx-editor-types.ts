@@ -137,6 +137,19 @@ export interface DocxEditorConfig {
    * the old unconditional behaviour.
    */
   zoomMode?: ZoomMode | 'auto';
+  /**
+   * Which documents open behind a painted frame.
+   *
+   * - `'large'` (the default) — a document past 512 KiB of content. A smaller one mounts
+   *   before `load` returns.
+   * - `'every'` — every document. Each one then also resolves its fonts before its first
+   *   layout and opens on its first pages while the rest is laid out
+   *   ({@link EditorSnapshot.isPaginating}), as a large one does.
+   *
+   * The pages and line breaks are the same either way. A host with no frames to wait for
+   * (no `requestAnimationFrame`) mounts at once whatever this says.
+   */
+  openAfterPaint?: 'large' | 'every';
   onFontError?: (error: EditorFontError) => void;
   /** Localized labels for table insertion furniture on the painted surface. */
   tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;

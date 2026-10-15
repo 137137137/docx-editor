@@ -119,6 +119,7 @@ export const DocxEditorRoot = defineComponent({
     mode: { type: String as PropType<'edit' | 'view' | 'suggesting'>, default: undefined },
     zoom: { type: Number, default: undefined },
     zoomMode: { type: [Object, String] as PropType<ZoomMode | 'auto'>, default: undefined },
+    openAfterPaint: { type: String as PropType<'large' | 'every'>, default: undefined },
     tableInteractionLabel: {
       type: Function as PropType<DocxEditorRootProps['tableInteractionLabel']>,
       default: undefined,

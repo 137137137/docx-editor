@@ -173,3 +173,32 @@ describe('a deferred open with fonts', () => {
     expect(editor.snapshot().isOpening).toBe(false);
   });
 });
+
+describe("openAfterPaint: 'every'", () => {
+  function openEvery(bytes: Uint8Array): DocxEditorInstance {
+    const editor = createDocxEditor({ document: bytes, fonts: dejaVu, openAfterPaint: 'every' });
+    editors.push(editor);
+    editor.attach(document.createElement('div'));
+    return editor;
+  }
+
+  test('a small document also waits for its fonts behind a painted frame', async () => {
+    const editor = openEvery(SMALL);
+    expect(editor.surface).toBeNull();
+    expect(editor.snapshot().isOpening).toBe(true);
+
+    await until(() => editor.surface !== null);
+    expect(editor.fontMeasurement().measurer).toBe('shaped');
+    expect(editor.snapshot().isOpening).toBe(false);
+  });
+
+  test('lays out the pages its synchronous open lays out', async () => {
+    const pagesOf = (editor: DocxEditorInstance) =>
+      JSON.stringify(editor.getPageGeometry().map((page) => [page.box.width, page.box.height]));
+    const synchronous = open(SMALL, dejaVu);
+    await until(() => synchronous.fontMeasurement().measurer === 'shaped');
+    const deferred = openEvery(SMALL);
+    await until(() => deferred.surface !== null);
+    expect(pagesOf(deferred)).toBe(pagesOf(synchronous));
+  });
+});

@@ -1,0 +1,13 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A document under 512 KiB of content always mounts synchronously, at the zoom the editor holds, and fits after.",
+  "after": "With openAfterPaint 'every', such a document mounts behind a painted frame with its fonts resolved, at its fit, and lays out the pass at its held zoom first, unpainted, so its pages are unchanged.",
+  "reason": "Only when local layout runs changes. Nothing about opening or layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/editor/__tests__/fonts-before-first-layout.test.ts",
+    "packages/core/src/editor/__tests__/progressive-open.test.ts"
+  ],
+  "changeset": "open-after-paint-every",
+  "migration": null
+}

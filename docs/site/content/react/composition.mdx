@@ -64,6 +64,7 @@ The editor reads construction props when it creates the instance. Changes to `do
 | `mode` | `'edit' \| 'view' \| 'suggesting'` | Sets the editing mode. When omitted, `w:trackRevisions` can select suggesting mode. |
 | `modules` | `readonly EditorModule[]` | Registers modules during construction. Remount with a different `key` to change them. |
 | `zoom` / `zoomMode` | `number` / `ZoomMode \| 'auto'` | Sets the display scale and its source. `'auto'` fits the page width. |
+| `openAfterPaint` | `'large' \| 'every'` | Which documents open behind a painted frame, with their fonts resolved first and their first pages shown while the rest is laid out. Defaults to `'large'`; read at construction. |
 | `onReady` | `(editor: Editor) => void` | Runs once per instance after `Content` attaches. |
 | `onChange` | `(change: DocumentChange) => void` | Reports revision and identity changes after mutations. |
 | `onFontError` | `(error: EditorFontError) => void` | Reports typed font-resolution failures. |

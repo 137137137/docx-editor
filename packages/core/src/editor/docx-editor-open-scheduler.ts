@@ -104,12 +104,16 @@ export interface OpenSchedulerHooks {
   readonly scheduled: () => void;
   /** How long a mount waits for its preparation; {@link OPEN_PREPARE_WAIT_MS} by default. */
   readonly prepareWaitMs?: number;
+  /** Every open yields, not only a large one (`DocxEditorConfig.openAfterPaint: 'every'`). */
+  readonly everyDocument?: boolean;
 }
 
 /** The deferred-mount window, owned by the facade. See the module comment. */
 export interface OpenScheduler {
   /** Whether this open is worth (and able to get) a painted frame before the mount. */
   shouldYield(bytes: Uint8Array): boolean;
+  /** Whether these bytes are past the content size that earns the frame by default. */
+  isLarge(bytes: Uint8Array): boolean;
   /**
    * Schedule the mount behind one painted frame and any preparation, and report the state
    * move. A mount that turns out to need neither runs before this returns.
@@ -143,13 +147,15 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
     return bytes;
   };
 
+  // The zipped size is a shortcut, not the measure: a file already past the limit zipped
+  // cannot be under it unpacked in any way that mounts fast.
+  const isLarge = (bytes: Uint8Array): boolean =>
+    bytes.byteLength >= OPEN_PAINT_YIELD_CONTENT_BYTES ||
+    zipContentExceeds(bytes, OPEN_PAINT_YIELD_CONTENT_BYTES);
+
   return {
-    // The zipped size is a shortcut, not the measure: a file already past the limit
-    // zipped cannot be under it unpacked in any way that mounts fast.
-    shouldYield: (bytes) =>
-      canYieldFrame() &&
-      (bytes.byteLength >= OPEN_PAINT_YIELD_CONTENT_BYTES ||
-        zipContentExceeds(bytes, OPEN_PAINT_YIELD_CONTENT_BYTES)),
+    shouldYield: (bytes) => canYieldFrame() && (hooks.everyDocument === true || isLarge(bytes)),
+    isLarge,
 
     // `requestAnimationFrame` fires BEFORE the pending paint, so the heavy work goes
     // into a task queued from inside it — the first slot guaranteed to run after the

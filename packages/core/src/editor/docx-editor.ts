@@ -283,6 +283,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   /** A big document's mount, deferred behind one painted frame so a loading screen can
    *  show — `snapshot().isOpening` holds for that window. See `docx-editor-open-scheduler.ts`. */
   const openScheduler = createOpenScheduler({
+    everyDocument: config.openAfterPaint === 'every',
     mount: (bytes) => mountBytes(bytes),
     scheduled: () => {
       bump();
@@ -379,7 +380,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   // the session opened ahead of a mount (`openBytes`).
   let mountedSeq = -1;
   let fontsFirstSeq = -1;
-  let opened: { bytes: Uint8Array; result: ReturnType<typeof openTreeSession> } | null = null;
+  let opened: {
+    bytes: Uint8Array;
+    result: ReturnType<typeof openTreeSession>;
+    /** The scale held when the bytes were opened, before a fit settled from their page. */
+    heldScale: number;
+  } | null = null;
   // Retain catalog metadata separately from byte admission and shaping.
   let resolvedFontConfiguration: FontConfigurationBase | undefined;
   const fontConfiguration = (): FontConfigurationBase | undefined =>
@@ -558,10 +564,14 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     teardownSurface();
     const deferred = openScheduler.shouldYield(bytes);
     const openedSession = openBytes(bytes, deferred);
+    const firstMount = mountedSeq !== loadSeq;
     // Fonts resolved before this load's first mount: its layout runs the fixed pass first, as
-    // the open whose fonts resolve after the mount does (`paginated-surface.ts`).
-    const fixedFirst =
-      shapedMeasurer !== undefined && fontsFirstSeq === loadSeq && mountedSeq !== loadSeq;
+    // the open whose fonts resolve after the mount does (`surface-fixed-first.ts`).
+    const fixedFirst = shapedMeasurer !== undefined && fontsFirstSeq === loadSeq && firstMount;
+    // A document small enough to mount synchronously by default, deferred because the host
+    // asked for every document to be: that mount was laid out at the zoom held before its fit.
+    const unfittedScale =
+      deferred && firstMount && !openScheduler.isLarge(bytes) ? opened?.heldScale : undefined;
     opened = null;
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
@@ -570,6 +580,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // first pages and lays the rest out in short tasks.
       progressiveLayout: deferred,
       fixedFirst,
+      ...(unfittedScale !== undefined ? { unfittedScale } : {}),
       scale: scaleOf(),
       showParagraphMarks: paragraphMarks.get(),
       onToggleParagraphMarks: paragraphMarks.toggle,
@@ -654,6 +665,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       readonly openedSession?: ReturnType<typeof openTreeSession>;
       readonly progressiveLayout?: boolean;
       readonly fixedFirst?: boolean;
+      readonly unfittedScale?: number;
     });
     if (!result.ok) {
       parseError = result.detail ? `${result.reason}: ${result.detail}` : result.reason;
@@ -807,6 +819,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       opened = {
         bytes,
         result: openTreeSession(bytes, reviewModelOption(modules, reportDiagnostic)),
+        heldScale: scaleOf(),
       };
     }
     const { result } = opened;

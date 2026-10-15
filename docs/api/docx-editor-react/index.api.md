@@ -1166,6 +1166,7 @@ export interface DocxEditorRootProps {
     onChange?: (change: DocumentChange) => void;
     onFontError?: (error: EditorFontError) => void;
     onReady?: (editor: Editor) => void;
+    openAfterPaint?: 'large' | 'every';
     popups?: DocxEditorPopups;
     tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
     translate?: (key: string, params?: Record<string, string | number>) => string;

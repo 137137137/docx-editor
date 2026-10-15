@@ -386,6 +386,8 @@ export function mountPaginatedSurface(
      * open whose fonts arrive after the mount runs them (`surface-fixed-first.ts`).
      */
     readonly fixedFirst?: boolean;
+    /** The scale the open without a deferral first laid out at (`surface-fixed-first.ts`). */
+    readonly unfittedScale?: number;
   };
   const opened =
     runtimeOptions.openedSession ??
@@ -437,6 +439,9 @@ export function mountPaginatedSurface(
   const fixedFirst = createFixedFirst({
     fontsFirst: runtimeOptions.fixedFirst === true,
     mountedFixed: options.measurer === undefined,
+    ...(runtimeOptions.unfittedScale !== undefined
+      ? { unfittedScale: runtimeOptions.unfittedScale }
+      : {}),
     hostMeasured: () => options.measurer !== undefined,
     document: container.ownerDocument,
   });
@@ -1019,8 +1024,7 @@ export function mountPaginatedSurface(
    */
   function* layoutDocumentPasses(context?: LayoutDocumentContext): LayoutSteps<SemanticLayout> {
     const revision = session.packageRevision();
-    if (fixedFirst.runs()) {
-      const fixed = fixedFirst.measurement(scale);
+    for (const fixed of fixedFirst.passes(scale)) {
       // Its own furniture, measured on the fixed measurer, as the unshaped mount's was.
       const fixedFurniture = createCurrentFurnitureSource(
         context ? context.authorFilter : revisionFilter(),
@@ -1108,7 +1112,7 @@ export function mountPaginatedSurface(
                 bodyBlockLimit,
               })
             : layoutDocumentPasses(),
-        coldPreviews: fixedFirst.runs,
+        coldPreviews: () => fixedFirst.passes(scale).length > 0,
         publish: publishLayout,
       })
     : null;

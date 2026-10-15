@@ -3599,6 +3599,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: PropType<readonly EditorModule[]>;
     };
+    openAfterPaint: {
+        default: undefined;
+        type: PropType<"large" | "every">;
+    };
     popups: PropType<DocxEditorPopups>;
     tableInteractionLabel: {
         default: undefined;
@@ -3651,6 +3655,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: PropType<readonly EditorModule[]>;
     };
+    openAfterPaint: {
+        default: undefined;
+        type: PropType<"large" | "every">;
+    };
     popups: PropType<DocxEditorPopups>;
     tableInteractionLabel: {
         default: undefined;
@@ -3680,6 +3688,7 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
     locale: string;
     mode: "edit" | "view" | "suggesting";
     modules: readonly EditorModule[];
+    openAfterPaint: "every" | "large";
     tableInteractionLabel: ((key: "table.insertRowBelow" | "table.insertColumnRight") => string) | undefined;
     translate: ((key: string, params?: Record<string, string | number>) => string) | undefined;
     zoom: number;
@@ -3716,6 +3725,7 @@ export interface DocxEditorRootProps {
     onFontError?: (error: EditorFontError) => void;
     // (undocumented)
     onReady?: (editor: Editor) => void;
+    openAfterPaint?: 'large' | 'every';
     // (undocumented)
     popups?: DocxEditorPopups;
     // (undocumented)
