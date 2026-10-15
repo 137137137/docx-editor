@@ -24,10 +24,6 @@ import {
 } from './note-continuation-notice.ts';
 import type { OoxmlPart } from '@docx-editor.dev/core/store';
 import { fragmentOwnsPosition, fragmentParagraphs } from './line-segments.ts';
-import {
-  collectNoteReferences,
-  collectProjectedNoteReferences,
-} from '../store/package/note-references.ts';
 import type { DocumentSection } from './section-properties.ts';
 import { paragraphSectionIndexOf } from './note-paragraph-section-index.ts';
 import {
@@ -113,10 +109,7 @@ import {
   type RevisionAuthorFilter,
   type RevisionDisplayMode,
 } from './revision-projection.ts';
-import {
-  noteReferenceRevisionContextKey,
-  noteReferenceVisible,
-} from './note-reference-visibility.ts';
+import { collectBodyNoteReferences } from './note-reference-visibility.ts';
 import {
   fingerprintHits,
   fingerprintHitsIdentity,
@@ -2556,35 +2549,6 @@ export function attachNotesToLayout(
     fallbackReasons: reasons,
     noteMarks,
   };
-}
-
-function collectBodyNoteReferences(
-  part: OoxmlPart,
-  displayMode: RevisionDisplayMode,
-  authorFilter?: RevisionAuthorFilter
-): readonly {
-  readonly noteKind: NoteKind;
-  readonly noteId: number;
-  readonly paragraphId: string;
-  readonly atomOffset: number;
-  readonly customMarkFollows: boolean;
-}[] {
-  const unfiltered = displayMode === 'all-markup' && authorFilter === undefined;
-  const hits = unfiltered
-    ? collectNoteReferences(part)
-    : collectProjectedNoteReferences(part, {
-        includeReference: (_node, ancestors) =>
-          noteReferenceVisible(ancestors, displayMode, authorFilter),
-        projectionKey: `${displayMode};${authorFilter?.cacheKey ?? ''}`,
-        ancestryKey: noteReferenceRevisionContextKey,
-      });
-  return hits.map((hit) => ({
-    noteKind: hit.noteKind,
-    noteId: hit.noteId,
-    paragraphId: hit.paragraphId,
-    atomOffset: hit.atomOffset,
-    customMarkFollows: hit.customMarkFollows,
-  }));
 }
 
 // Reserve-map algebra (context key, compact/equal/grow/fingerprint) lives in

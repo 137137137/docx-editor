@@ -558,6 +558,46 @@ export function reviewItemsAtSelection(
   head: ReviewPosition,
   order: ReadonlyMap<string, number>
 ): ReviewItem[] {
+  // One render asks this twice for the same caret (the active key, then the highlights), and
+  // each answer walks every range of every item.
+  const last = selectionAnswers.get(items);
+  if (
+    last !== undefined &&
+    last.order === order &&
+    // The surface's index moves in place across a paragraph split or join.
+    last.orderSize === order.size &&
+    samePosition(last.anchor, anchor) &&
+    samePosition(last.head, head)
+  ) {
+    return [...last.answer];
+  }
+  const answer = itemsAtSelection(items, anchor, head, order);
+  selectionAnswers.set(items, { order, orderSize: order.size, anchor, head, answer });
+  return [...answer];
+}
+
+/** The last answer per queue; weak, so a closed document's queue takes its answer with it. */
+const selectionAnswers = new WeakMap<
+  readonly ReviewItem[],
+  {
+    readonly order: ReadonlyMap<string, number>;
+    readonly orderSize: number;
+    readonly anchor: ReviewPosition;
+    readonly head: ReviewPosition;
+    readonly answer: readonly ReviewItem[];
+  }
+>();
+
+function samePosition(a: ReviewPosition, b: ReviewPosition): boolean {
+  return a.paragraphId === b.paragraphId && a.offset === b.offset;
+}
+
+function itemsAtSelection(
+  items: readonly ReviewItem[],
+  anchor: ReviewPosition,
+  head: ReviewPosition,
+  order: ReadonlyMap<string, number>
+): ReviewItem[] {
   const covering = reviewItemsAt(items, head, order);
   const direction = comparePositions(anchor, head, order);
   if (direction === null || direction === 0) return covering;

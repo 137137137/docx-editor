@@ -59,4 +59,14 @@ describe('reviewItemPlacement', () => {
     expect(locked.readOnly).toBe(true);
     expect(reviewItemPlacement(item, inputs)).not.toBe(locked);
   });
+
+  test('reads with and without geometry do not evict each other', () => {
+    const fresh = { ...item } as ReviewItem;
+    const unplaced = { ...inputs, anchorY: null, pageIndex: null };
+    const placed = reviewItemPlacement(fresh, inputs);
+    const bare = reviewItemPlacement(fresh, unplaced);
+    expect(bare.anchorY).toBeNull();
+    expect(reviewItemPlacement(fresh, inputs)).toBe(placed);
+    expect(reviewItemPlacement(fresh, unplaced)).toBe(bare);
+  });
 });

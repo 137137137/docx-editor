@@ -585,6 +585,13 @@ function normalizeRetainedCommentLinks<T extends LinkableReviewItem>(
   return { ...item, replyIds: retainedReplyIds } as T;
 }
 
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return false;
+  return true;
+}
+
 /** A range as a comparable key, so "exactly these characters" is one lookup. */
 function rangeKey(range: ReviewRange): string {
   return (
@@ -675,7 +682,8 @@ export function linkRevisionReplies<T extends LinkableReviewItem>(items: readonl
   return retainedItems.map((item) => {
     if (item.kind === 'revision') {
       const replies = repliesOf.get(item.id) ?? [];
-      if (replies.length === 0 && (item.replyIds ?? []).length === 0) return item;
+      // Unchanged links keep the item, so every identity-keyed read of it stays warm.
+      if (sameIds(replies, item.replyIds ?? [])) return item;
       return registerRevisionSiteNodeIds(
         { ...item, replyIds: replies },
         revisionSiteNodeIdsOf(item)

@@ -31,7 +31,11 @@ import { WML_NAMESPACE_URI } from '../store/package/ooxml-tree.ts';
 import { paragraphOffsetIndex } from '../store/store/tree-op-segments.ts';
 import { piecesOfParagraph } from './field-projection.ts';
 import { createRecentRootCache } from '../store/store/recent-root-cache.ts';
-import type { RevisionAuthorFilter, RevisionDisplayMode } from './revision-projection.ts';
+import {
+  revisionFilterSelects,
+  type RevisionAuthorFilter,
+  type RevisionDisplayMode,
+} from './revision-projection.ts';
 import { cacheProjection } from './bounded-projection-cache.ts';
 import { markRemovedInMode, revisionRemovesParagraph } from './revision-visibility.ts';
 import { withoutHiddenMarkParagraphs } from './hidden-paragraph-mark.ts';
@@ -120,7 +124,7 @@ function withMergedParagraphs(
   displayMode: RevisionDisplayMode,
   authorFilter?: RevisionAuthorFilter
 ): readonly ParentedBlock[] {
-  if (displayMode === 'all-markup' && !authorFilter) return parented;
+  if (displayMode === 'all-markup' && !revisionFilterSelects(authorFilter)) return parented;
   const out: ParentedBlock[] = [];
   let pendingMembers: OoxmlElement[] = [];
   let pendingParent: string | null = null;

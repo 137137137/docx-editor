@@ -27,10 +27,18 @@ export interface ReviewPlacementInputs {
   readonly locked: boolean;
 }
 
-const placements = new WeakMap<
-  ReviewItem,
-  { readonly inputs: ReviewPlacementInputs; readonly placement: ReviewItemPlacement }
->();
+type CachedPlacement = {
+  readonly inputs: ReviewPlacementInputs;
+  readonly placement: ReviewItemPlacement;
+};
+
+const placements = new WeakMap<ReviewItem, CachedPlacement>();
+/**
+ * Placements without geometry, kept apart. Commands read the queue with `placement: false`
+ * between the rail's reads; sharing one slot made each read evict the other, so every
+ * keystroke rebuilt every card twice.
+ */
+const unplacedPlacements = new WeakMap<ReviewItem, CachedPlacement>();
 
 function sameInputs(a: ReviewPlacementInputs, b: ReviewPlacementInputs): boolean {
   return (
@@ -51,10 +59,12 @@ export function reviewItemPlacement(
   item: ReviewItem,
   inputs: ReviewPlacementInputs
 ): ReviewItemPlacement {
-  const cached = placements.get(item);
+  const slot =
+    inputs.anchorY === null && inputs.pageIndex === null ? unplacedPlacements : placements;
+  const cached = slot.get(item);
   if (cached && sameInputs(cached.inputs, inputs)) return cached.placement;
   const placement = buildPlacement(item, inputs);
-  placements.set(item, { inputs, placement });
+  slot.set(item, { inputs, placement });
   return placement;
 }
 
