@@ -1,7 +1,6 @@
 // The review queue of a few recent document states, so returning to one does not rebuild it.
 
-import type { OoxmlPart } from '@docx-editor.dev/core/store';
-import type { ReviewItem } from '../layout/index.ts';
+import type { OoxmlPart, ReviewItem } from '@docx-editor.dev/core/store';
 import type { CustomNodePayloadRead } from '../store/store/custom-node-writes.ts';
 
 /** Everything the queue derivation reads, by identity. */

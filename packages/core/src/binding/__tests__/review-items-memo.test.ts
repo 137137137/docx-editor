@@ -1,8 +1,7 @@
 // A document state the session returns to gets its earlier review queue back.
 
 import { describe, expect, test } from 'bun:test';
-import type { OoxmlPart } from '@docx-editor.dev/core/store';
-import type { ReviewItem } from '../../layout/index.ts';
+import type { OoxmlPart, ReviewItem } from '@docx-editor.dev/core/store';
 import { createReviewItemsMemo, type ReviewItemsInputs } from '../review-items-memo.ts';
 
 const part = (name: string) => ({ name }) as unknown as OoxmlPart;
