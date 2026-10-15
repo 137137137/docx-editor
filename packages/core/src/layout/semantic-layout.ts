@@ -287,6 +287,9 @@ function* layoutInModeSteps(
     storyBlocks(part, displayMode, authorFilter, options.styleCascade, options.numberingIndex),
     options
   );
+  // A prefix that cuts nothing IS the document: its page fields and footnote search are final.
+  if (options.bodyBlockLimit !== undefined && blocks.length === allBlocks.length)
+    options = { ...options, bodyBlockLimit: undefined };
   const sections = enumerateDocumentSectionsFromBlocks(part, blocks).sections;
   // Wrapper-only metadata (alias/tag/lock/…) lives outside flattened paragraph nodes. Fold a
   // fingerprint into the producer so incremental identity reuse cannot keep stale boundaries.

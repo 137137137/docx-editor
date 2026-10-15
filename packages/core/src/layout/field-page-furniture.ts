@@ -732,6 +732,9 @@ export function finalizePageFieldProjection(
   const pageCount = layout.pages.length;
   if (pageCount === 0) return layout;
   const provisional = options?.provisional === true;
+  // A provisional pass leaves furniture unprojected, so its memo must never pass for a final
+  // one: the full finalize that ends an open has to project every sheet it kept.
+  const memoCount = provisional ? -1 : pageCount;
 
   // PAGEREF values are a function of the WHOLE pagination, not of the page they paint on, so
   // the assignment token joins the per-page memo key: a page reused by identity while its
@@ -760,7 +763,11 @@ export function finalizePageFieldProjection(
     const project = (
       story: HeaderFooterStoryRecord | undefined
     ): HeaderFooterStoryRecord | undefined => {
-      if (!story) return story;
+      // A provisional pass (a growing prefix of an opening document) keeps the furniture it
+      // laid out under its own page context. Projecting it again under each prefix's page
+      // count laid every footer of the document out once per prefix, and the opening layout's
+      // final pass projects every page under the real count anyway.
+      if (!story || provisional) return story;
       let projector = story.pageFieldProjector;
       let dy = 0;
       if (!projector) {
@@ -806,7 +813,7 @@ export function finalizePageFieldProjection(
     // carries a `pageFieldProjector`. A story kept by identity because its RETAINED
     // projection context still holds is already published text under this exact context.
     if (header === page.header && footer === page.footer && fragments === page.fragments) {
-      finalizedPageMemos.set(page, { pageCount, pageRefToken, result: page });
+      finalizedPageMemos.set(page, { pageCount: memoCount, pageRefToken, result: page });
       return page;
     }
     if (fragments !== page.fragments) changed = true;
@@ -816,7 +823,7 @@ export function finalizePageFieldProjection(
       ...(footer !== undefined ? { footer } : {}),
       ...(fragments !== page.fragments ? { fragments } : {}),
     };
-    finalizedPageMemos.set(page, { pageCount, pageRefToken, result });
+    finalizedPageMemos.set(page, { pageCount: memoCount, pageRefToken, result });
     return result;
   });
 
