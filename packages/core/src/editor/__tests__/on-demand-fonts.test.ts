@@ -103,7 +103,8 @@ describe('on-demand font resolution', () => {
       },
     });
     await fontsSettled(editor);
-    expect(seen[0]!.families).toEqual(['Garamond', 'Wingdings']);
+    // Garamond is a serif family, so its serif fallback is requested after the document's own.
+    expect(seen[0]!.families).toEqual(['Garamond', 'Wingdings', 'Times New Roman']);
     expect(editor.snapshot().fontSubstitutions).not.toContain('Wingdings');
     expect(editor.getDocumentFonts()).toEqual(['Garamond']);
     editor.destroy();

@@ -23,7 +23,13 @@ export function resolvedFontMeasurement(
   >();
   // Report a face's execution refusal once per measurement owner. Keep the original
   // exception and the bounded fallback; observation must not change layout geometry.
-  const reportedFonts = new WeakSet<ResolvedFont>();
+  // Keyed by face and request, not by answer object: a family that falls back to the face
+  // gets its own answer object for the same refusal.
+  const reportedFonts = new Set<string>();
+  const reportKey = (font: ResolvedFont): string => {
+    const { family, weight, style } = font.request;
+    return `${font.identity}|${family}|${weight}|${style}`;
+  };
   const observed = onFontError
     ? {
         shape(input: ShapeInput) {
@@ -34,9 +40,9 @@ export function resolvedFontMeasurement(
             if (
               error instanceof HarfBuzzShapingError &&
               error.code === 'fontOverLimit' &&
-              !reportedFonts.has(font)
+              !reportedFonts.has(reportKey(font))
             ) {
-              reportedFonts.add(font);
+              reportedFonts.add(reportKey(font));
               // The face's own bytes exceed a limit: the same answer as an admission cap, not
               // a shaper that failed to initialize.
               const { family, weight, style } = font.request;

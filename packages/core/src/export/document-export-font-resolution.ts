@@ -212,7 +212,9 @@ export function fontResolutionReport(
   defaultFamily: string,
   originFailures: readonly FontOriginFailure[],
   resolve?: (request: FontRequest) => ResolvedFont | FontResolutionError,
-  droppedEmbeddedFonts: readonly DroppedEmbeddedFont[] = []
+  droppedEmbeddedFonts: readonly DroppedEmbeddedFont[] = [],
+  /** Families drawn in a stand-in reached through a host substitute; see `hostChainedDocumentFallbacks`. */
+  standInFamilies: ReadonlySet<string> = new Set()
 ): ExportFontResolutionReport {
   const familyNames = new Map<string, string>();
   for (const family of [...requestedFamilies, defaultFamily]) {
@@ -237,9 +239,13 @@ export function fontResolutionReport(
         })
       );
     }
+    // A stand-in shows in `faces` as evidence, but does not cover the family.
+    const covering = standInFamilies.has(family.trim().toLowerCase())
+      ? faces.filter((face) => face.via === 'direct').length
+      : faces.length;
     return Object.freeze({
       family,
-      coverage: faces.length === 4 ? 'complete' : faces.length > 0 ? 'partial' : 'none',
+      coverage: covering === 4 ? 'complete' : covering > 0 ? 'partial' : 'none',
       faces: Object.freeze(faces),
     });
   });

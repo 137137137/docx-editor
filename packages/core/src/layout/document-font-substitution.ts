@@ -311,3 +311,29 @@ export function applyDocumentFontSubstitutions(
     substitutions: [...substitutions, ...(configuration.substitutions ?? [])],
   });
 }
+
+/**
+ * Families whose fallback reached its face only through a host's substitute (a missing family,
+ * to Times New Roman, to the host's Liberation Serif). Their text is drawn in a stand-in, so an
+ * export reports them as uncovered, as it did before such fallbacks were followed.
+ */
+export function hostChainedDocumentFallbacks(
+  before: FontConfiguration,
+  after: FontConfiguration,
+  plan: DocumentFontSubstitutionPlan
+): ReadonlySet<string> {
+  const existing = new Set(
+    (before.substitutions ?? []).map((substitution) => fontRequestKey(substitution.from))
+  );
+  const families = new Set<string>();
+  for (const substitution of after.substitutions ?? []) {
+    if (existing.has(fontRequestKey(substitution.from))) continue;
+    const key = substitution.from.family.trim().toLowerCase();
+    const target = substitution.to.family.trim().toLowerCase();
+    const planned = [plan.alternates.get(key), plan.fallbacks.get(key)].some(
+      (candidate) => candidate?.trim().toLowerCase() === target
+    );
+    if (!planned) families.add(key);
+  }
+  return families;
+}
