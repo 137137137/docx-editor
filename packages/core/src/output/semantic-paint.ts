@@ -2188,6 +2188,7 @@ function adoptPageBlocks(
   for (const fragment of page.fragments) {
     const element =
       previousBlocks.get(fragment) ??
+      equalBlockElement(previousBlocks, fragment, elements) ??
       (fragment.kind === 'table'
         ? paintTableFragment(
             document,
@@ -2465,3 +2466,4 @@ export function paintSemanticLayoutWithAuthorSlots(
   applyHeaderFooterPaintChrome(pages, resolved);
 }
 import { tabLeaderPattern } from '../layout/tab-leader-pattern.ts';
+import { equalBlockElement } from './semantic-paint-block-reuse.ts';

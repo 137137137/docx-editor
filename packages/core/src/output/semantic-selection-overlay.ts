@@ -86,6 +86,9 @@ export interface SelectionOverlayOptions {
  * not paint out of its own subtree, and a stray child of a contenteditable is editable content
  * a keystroke could land in.
  */
+/** What a painted rect shows, so an identical rect in the next pass keeps its element. */
+const overlaySignatures = new WeakMap<Element, string>();
+
 export function paintSelectionOverlay(
   layer: HTMLElement,
   layout: SemanticLayout,
@@ -94,30 +97,60 @@ export function paintSelectionOverlay(
 ): void {
   const document = layer.ownerDocument;
   const scale = options.scale;
-  const painted: HTMLElement[] = [];
+  // Bands are repainted on every commit while almost all of them stay put. Rebuilding them
+  // restyled the layer per keystroke; an unchanged band now keeps its element.
+  const available = new Map<string, Element[]>();
+  for (const child of layer.children) {
+    const signature = overlaySignatures.get(child);
+    if (signature === undefined) continue;
+    const list = available.get(signature);
+    if (list) list.push(child);
+    else available.set(signature, [child]);
+  }
+  const painted: Element[] = [];
   for (const rect of rects) {
     const page = layout.pages[rect.pageIndex];
     if (!page) continue;
-    const element = document.createElement('div');
-    element.className = rect.className ?? options.className ?? 'docx-cell-selection-rect';
-    element.style.position = 'absolute';
+    const className = rect.className ?? options.className ?? 'docx-cell-selection-rect';
     // Page-content coordinates to the sheet space the layer is laid out in.
     const offsetX = options.pageOffsetX?.get(rect.pageIndex) ?? 0;
-    element.style.left = `${(page.contentBox.x + rect.x + offsetX) * scale}px`;
-    element.style.top = `${(page.contentBox.y + rect.y) * scale}px`;
-    element.style.width = `${rect.width * scale}px`;
-    element.style.height = `${rect.height * scale}px`;
+    const left = `${(page.contentBox.x + rect.x + offsetX) * scale}px`;
+    const top = `${(page.contentBox.y + rect.y) * scale}px`;
+    const width = `${rect.width * scale}px`;
+    const height = `${rect.height * scale}px`;
+    const author = rect.reviewAuthor;
+    const signature = [
+      className,
+      left,
+      top,
+      width,
+      height,
+      author ? `${author.author}\u0000${author.slot}\u0000${author.color}` : '',
+      rect.activeBackground ?? '',
+    ].join('\u0001');
+    const reused = available.get(signature)?.pop();
+    if (reused) {
+      painted.push(reused);
+      continue;
+    }
+    const element = document.createElement('div');
+    element.className = className;
+    element.style.position = 'absolute';
+    element.style.left = left;
+    element.style.top = top;
+    element.style.width = width;
+    element.style.height = height;
     // Author hooks, when the rect carries them. `setAttribute`/`dataset` with the raw value —
     // never interpolated into markup — because `w:author` is attacker-controlled; the colour
     // is engine-resolved or host-declared, and `setProperty` drops a value it cannot parse.
-    if (rect.reviewAuthor) {
-      element.dataset.reviewAuthor = rect.reviewAuthor.author;
+    if (author) {
+      element.dataset.reviewAuthor = author.author;
       // WRAPPED to the ramp width, as the card and the painted span both wrap it. The roster
       // slot is a raw index, so the ninth author is slot 8 — writing that here made the band
       // say `8` while the card beside it said `0`, and a rule keyed on the slot covered one
       // of them.
-      element.dataset.reviewAuthorSlot = String(rect.reviewAuthor.slot % REVIEW_AUTHOR_SLOTS);
-      element.style.setProperty('--doc-review-author-current', rect.reviewAuthor.color);
+      element.dataset.reviewAuthorSlot = String(author.slot % REVIEW_AUTHOR_SLOTS);
+      element.style.setProperty('--doc-review-author-current', author.color);
     }
     // The author's own active background, when the caller resolved one. Inline, so it beats
     // the kind tokens — and the rule with it, for the reason the style field's own comment
@@ -126,7 +159,15 @@ export function paintSelectionOverlay(
       element.style.backgroundColor = rect.activeBackground;
       element.style.boxShadow = 'none';
     }
+    overlaySignatures.set(element, signature);
     painted.push(element);
+  }
+  const children = layer.children;
+  if (
+    children.length === painted.length &&
+    painted.every((element, index) => children[index] === element)
+  ) {
+    return;
   }
   layer.replaceChildren(...painted);
 }

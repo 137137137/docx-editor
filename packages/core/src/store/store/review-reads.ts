@@ -621,13 +621,21 @@ export function linkRevisionReplies<T extends LinkableReviewItem>(items: readonl
   const retainedItems = items.map((item) =>
     normalizeRetainedCommentLinks(item, retainedCommentIds)
   );
-  const revisionBySpan = new Map<string, { readonly id: string; readonly nesting: number }>();
+  // Only a span some comment can claim is ever looked up: keying every revision's range built
+  // a string per change per keystroke on documents with thousands of changes and no answers.
+  const claimableStarts = new Set<string>();
   for (const item of retainedItems) {
+    if (item.kind === 'comment' && item.parentId === undefined && !item.orphaned && item.range)
+      claimableStarts.add(item.range.start.paragraphId);
+  }
+  const revisionBySpan = new Map<string, { readonly id: string; readonly nesting: number }>();
+  for (const item of claimableStarts.size > 0 ? retainedItems : []) {
     if (item.kind !== 'revision') continue;
     for (const range of item.ranges ?? []) {
       if (
-        range.start.paragraphId === range.end.paragraphId &&
-        range.start.offset === range.end.offset
+        !claimableStarts.has(range.start.paragraphId) ||
+        (range.start.paragraphId === range.end.paragraphId &&
+          range.start.offset === range.end.offset)
       ) {
         continue;
       }
