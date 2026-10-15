@@ -36,14 +36,11 @@ import {
   anchorLineY,
   commentBodyText,
   commentInitials,
-  documentOrder,
-  paragraphFragmentsOfBlocks,
   reviewItemGeometry,
   reviewItemKey,
   type ReviewItem,
   type ReviewParagraphAnchor,
   type ReviewRange,
-  type SemanticLayout,
   type SemanticPosition,
   type SemanticSelection,
 } from '../layout/index.ts';
@@ -105,7 +102,7 @@ import {
   searchStoriesForSurface,
   selectDocumentSearchMatch,
 } from './docx-editor-story-navigation.ts';
-import { fragmentParagraphs } from '../layout/line-segments.ts';
+import { noteScopeIndexOf, paragraphOrderOf } from './docx-editor-layout-index.ts';
 import {
   classifyCommand,
   deepFreezeValue,
@@ -502,6 +499,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     selectionChange: new Set(),
     error: new Set(),
     historyDiagnostic: new Set(),
+    paginated: new Set(),
   };
 
   function emitError(error: EditorError): void {
@@ -563,6 +561,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const result = mountPaginatedSurface(container, bytes, {
       openedSession,
+      // A document large enough to open behind a painted frame opens on a preview of its
+      // first pages and lays the rest out in short tasks.
+      progressiveLayout: openScheduler.shouldYield(bytes),
       scale: scaleOf(),
       showParagraphMarks: paragraphMarks.get(),
       onToggleParagraphMarks: paragraphMarks.toggle,
@@ -645,6 +646,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     } as PaginatedSurfaceOptions & {
       readonly onTrackedChange?: () => void;
       readonly openedSession?: ReturnType<typeof openTreeSession>;
+      readonly progressiveLayout?: boolean;
     });
     if (!result.ok) {
       parseError = result.detail ? `${result.reason}: ${result.detail}` : result.reason;
@@ -718,6 +720,18 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     emitDocumentChange({ revision: surface.session.packageRevision() });
     emitSelectionChange();
     liveFonts.schedule(true);
+    // Every page laid out: at once for most documents, after the slices for a large one. Only
+    // the second moves `isPaginating`, so only it is a snapshot change.
+    const mounted = surface;
+    const sliced = mounted.paginating();
+    void mounted.whenPaginated().then(() => {
+      if (surface !== mounted || destroyed) return;
+      if (sliced) {
+        bump();
+        emitSelectionChange();
+      }
+      for (const handler of [...handlers.paginated]) handler();
+    });
   }
 
   /** A NEW document: forget the previous document's measurer, then mount. */
@@ -1103,6 +1117,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // A supplied document on its way to painted pages. OVERLAY state only — gate
       // chrome on it, never the mount point; `isLoading` remains the gate-safe flag.
       isOpening: openScheduler.isScheduled(),
+      isPaginating: surface?.paginating() ?? false,
       parseError,
       // The LIVE mode, not only the construction-time one: hosts gate their chrome on this,
       // and it read `true` while every command was being refused with `locked`.
@@ -1284,38 +1299,6 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   const anchorIndexOf = createAnchorIndex();
 
   /**
-   * Paragraph id → note scope id, built once per LAYOUT from the painted note stories.
-   *
-   * The layout already states which note each paragraph belongs to (`NoteStoryRecord`
-   * carries `scopeId`), so this is a lookup rather than a search. The first version walked
-   * the notes part per item — O(items x notes x subtree), which measured 91 ms per
-   * `getTrackedChanges()` call on a document with 600 note revisions.
-   */
-  const noteScopeIndexCache = new WeakMap<SemanticLayout, Map<string, string>>();
-  function noteScopeIndexOf(layout: SemanticLayout): Map<string, string> {
-    const cached = noteScopeIndexCache.get(layout);
-    if (cached) return cached;
-    const index = new Map<string, string>();
-    for (const page of layout.pages) {
-      for (const area of [page.footnotes, page.endnotes]) {
-        if (!area) continue;
-        for (const note of area.notes) {
-          for (const fragment of paragraphFragmentsOfBlocks(note.fragments)) {
-            // Every paragraph the fragment DRAWS. A note whose paragraphs a resolved view
-            // merges publishes one fragment, and an absorbed member with no scope made its
-            // card look like a body card: no note to accept it in, no note to scroll to.
-            for (const paragraphId of fragmentParagraphs(fragment)) {
-              if (!index.has(paragraphId)) index.set(paragraphId, note.scopeId);
-            }
-          }
-        }
-      }
-    }
-    noteScopeIndexCache.set(layout, index);
-    return index;
-  }
-
-  /**
    * Which story a review item lives in, from the part name its ranges carry.
    *
    * `null` rId means the part is not a header/footer this document's sections resolve —
@@ -1385,17 +1368,6 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
 
   /** Word writes `@w:date` to the second; milliseconds group with nothing. */
   const secondsPrecisionNow = (): string => `${new Date().toISOString().slice(0, 19)}Z`;
-
-  /** Paragraph id to document position, memoized per layout. */
-  const paragraphOrderCache = new WeakMap<SemanticLayout, Map<string, number>>();
-  function paragraphOrderOf(layout: SemanticLayout): Map<string, number> {
-    const cached = paragraphOrderCache.get(layout);
-    if (cached) return cached;
-    const index = new Map<string, number>();
-    for (const [position, id] of documentOrder(layout).entries()) index.set(id, position);
-    paragraphOrderCache.set(layout, index);
-    return index;
-  }
 
   function commentTargetRange(): { from: SemanticPosition; to: SemanticPosition } | null {
     return commentTargetRangeOf({

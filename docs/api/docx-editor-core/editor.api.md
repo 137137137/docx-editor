@@ -1735,6 +1735,7 @@ export interface PaginatedSurface {
     exitListOnEmptyItem(): boolean;
     // (undocumented)
     exitNote(): void;
+    finishPagination(): void;
     flushPendingInput(): void;
     // (undocumented)
     focus(): void;
@@ -1785,6 +1786,7 @@ export interface PaginatedSurface {
     notePreviewText(scopeId: string): string | null;
     notePropertiesState(): NotePropertiesStateSnapshot | null;
     overlayCoordinates(): SurfaceOverlayCoordinates;
+    paginating(): boolean;
     pasteRich(text: string, html: string | null): boolean;
     proposeTextChange(kind: 'insertion' | 'deletion' | 'replacement', text: string, author?: string): boolean;
     publishedLayout(): SemanticLayout;
@@ -1894,6 +1896,7 @@ export interface PaginatedSurface {
     // (undocumented)
     type(text: string): void;
     undo(): void;
+    whenPaginated(): Promise<void>;
 }
 
 // @public

@@ -201,4 +201,14 @@ export interface SemanticLayoutOptions {
    * cached rows do not stack under the empty placeholder.
    */
   readonly emptyTocSuppressedResultParagraphIds?: ReadonlySet<string>;
+  /**
+   * Lay out only the first this many body blocks, for a preview of the first pages.
+   *
+   * The pages the cut reaches are not the document's: the last ones lack what follows the
+   * cut, and page fields count only the pages laid out. List numbering, references and note
+   * numbers still resolve over the whole body, so the pages before the cut read as they do in
+   * a full layout. Use a session of its own; a session that held a cut layout resumes nothing
+   * of value for a full one.
+   */
+  readonly bodyBlockLimit?: number;
 }

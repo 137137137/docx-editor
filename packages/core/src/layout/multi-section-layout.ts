@@ -35,6 +35,7 @@ import {
   type PageContentInsets,
 } from './page-furniture-insets.ts';
 import { SHEET_GUTTER_PT } from './section-page-furniture.ts';
+import type { LayoutSteps } from './layout-steps.ts';
 
 type MultiSectionLayoutFieldRole = 'constructed' | 'post-processed';
 
@@ -79,7 +80,7 @@ export type LayoutSectionFn = (
     readonly continuedPageInsets?: PageContentInsets;
     readonly bodyPageNumberFormat?: string;
   }
-) => SectionLayoutResult;
+) => LayoutSteps<SectionLayoutResult>;
 
 function furnitureStoryEntries(
   stories: ReadonlyMap<string, HeaderFooterStoryLayout>,
@@ -364,14 +365,16 @@ function publishSectionPage(
  *
  * An empty final section is still laid out when its break type requires a new sheet: that
  * materializes the blank page Word keeps for the section's geometry and furniture.
+ *
+ * Steps, so a caller can pause between the blocks of any section (`layout-steps.ts`).
  */
-export function layoutMultiSectionDocument(
+export function* layoutMultiSectionDocumentSteps(
   blocks: readonly OoxmlElement[],
   sections: readonly DocumentSection[],
   revision: number,
   options: SemanticLayoutOptions,
   layoutSection: LayoutSectionFn
-): SemanticLayout {
+): LayoutSteps<SemanticLayout> {
   const { session, ...rest } = options;
   const structureKey = multiSectionStructureKey(sections, options);
   const multi = ensureMultiState(session, structureKey, sections.length);
@@ -438,7 +441,7 @@ export function layoutMultiSectionDocument(
     // nextPage. When continuous, Word keeps the section on the page the last one ended,
     // resuming the column immediately below its final paragraph — only when the sheet size
     // and furniture push-down are unchanged (furniture belongs to the host sheet).
-    const continues =
+    const continues: boolean =
       sectionIndex > 0 &&
       section.properties.breakType === 'continuous' &&
       pages.length > 0 &&
@@ -490,7 +493,7 @@ export function layoutMultiSectionDocument(
         ? hostPageNumberFormat
         : sectionPageNumberFormat;
 
-    const laid = layoutSection(slice, revision, {
+    const laid: SectionLayoutResult = yield* layoutSection(slice, revision, {
       ...rest,
       retainKeys,
       geometry,
@@ -640,7 +643,7 @@ export function layoutMultiSectionDocument(
 
   if (pages.length === 0) {
     const geometry = geometryOfSection(sections[0]?.properties ?? DEFAULT_SECTION_PROPERTIES);
-    const laid = layoutSection([], revision, {
+    const laid: SectionLayoutResult = yield* layoutSection([], revision, {
       ...rest,
       retainKeys,
       geometry,

@@ -15,4 +15,10 @@ export interface EditorEvents {
   selectionChange: (snapshot: EditorSnapshot) => void;
   error: (error: EditorError) => void;
   historyDiagnostic: (diagnostic: HistoryDiagnostic) => void;
+  /**
+   * Every page of the mounted document is laid out. A large document mounts on a preview of
+   * its first pages and fires this when the rest is laid out; any other document fires it
+   * just after it mounts. See {@link EditorSnapshot.isPaginating}.
+   */
+  paginated: () => void;
 }

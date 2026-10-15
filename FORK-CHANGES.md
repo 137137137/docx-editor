@@ -23,3 +23,32 @@ Fonts and fit before the first layout:
 - `.changeset/open-once-at-fit.md` (new): the release note.
 - `.collaboration/changes/open-once-at-fit.json` (new): the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/editor/__tests__/fonts-before-first-layout.test.ts` and `open-scheduler-prepare.test.ts` (new); `font-configuration.test.ts`, `live-font-resolution.test.ts`, `zoom-controller.test.ts`, `zoom-lane.test.ts` in the same folder, and `packages/core/src/store/__tests__/sha256.test.ts`.
+
+The first layout of a large document, in slices:
+
+- `packages/core/src/layout/layout-steps.ts` (new): layout steps as generators that pause between blocks, with helpers to drain or advance them.
+- `packages/core/src/layout/semantic-layout.ts`: the body pass, its drawing-exclusion and frame-fallback passes, the section preparation and the table flow pause between blocks and rows (`layoutSemanticDocumentSteps`); `layoutSemanticDocument` drains the same steps. A `bodyBlockLimit` lays out only the first body blocks.
+- `packages/core/src/layout/semantic-layout-options.ts`: the `bodyBlockLimit` option.
+- `packages/core/src/layout/body-block-limit.ts` (new): the body prefix and its clipped sections for `bodyBlockLimit`.
+- `packages/core/src/layout/document-layout-coordinator.ts`: `layoutDocumentViewSteps`, and `bodyBlockLimit` passed through.
+- `packages/core/src/layout/column-balance-layout.ts`: the column-balancing driver runs its passes as steps.
+- `packages/core/src/layout/multi-section-layout.ts`: the multi-section driver runs its sections as steps.
+- `packages/core/src/layout/note-pagination.ts`: the footnote reserve search, the reserve computation, note attachment and endnote placement run as steps that pause between passes and pages.
+- `packages/core/src/layout/section-preparation.ts`: section preparation pauses after each block it prepares.
+- `packages/core/src/layout/table-flow-pagination.ts`: table pagination pauses between body rows.
+- `packages/core/src/export/export-session.ts`: names the new coordinator option.
+- `packages/core/src/editor/surface-opening-layout.ts` (new): a large document opens on a preview of its first pages and lays out the rest in slices; relayouts, reveals and scrolling during that time.
+- `packages/core/src/editor/paginated-surface.ts`: mounts through the opening when asked, routes relayouts, reveals and scrolling through it during the opening, and reports it (`paginating`, `whenPaginated`, `finishPagination`).
+- `packages/core/src/editor/paginated-surface-contract.ts`: documents `paginating`, `whenPaginated` and `finishPagination`.
+- `packages/core/src/editor/surface-pages.ts`: `layoutCoversView`, whether a layout reaches past the view.
+- `packages/core/src/editor/docx-editor.ts`: a document large enough to open behind a painted frame opens progressively; `snapshot().isPaginating` and the `paginated` event; two per-layout indexes moved to `docx-editor-layout-index.ts`.
+- `packages/core/src/editor/docx-editor-layout-index.ts` (new): the per-layout note-scope and paragraph-order indexes, moved from `docx-editor.ts`.
+- `packages/core/src/editor/docx-editor-equality.ts` and `packages/core/src/editor/loading-snapshot.ts`: the `isPaginating` snapshot field.
+- `packages/core/src/contracts/editor.ts`: `EditorSnapshot.isPaginating` and the `load` documentation; `HyperlinkInfo` and `PageSetup` moved to `editor-page-reads.ts`.
+- `packages/core/src/contracts/editor-page-reads.ts` (new): `HyperlinkInfo` and `PageSetup`, moved from `editor.ts` and re-exported there.
+- `packages/core/src/contracts/editor-events.ts`: the `paginated` event.
+- `docs/api/docx-editor-core/contracts-editor.api.md`, `editor.api.md`, `index.api.md`, `layout.api.md`: the API snapshots for the new members.
+- `docs/site/content/react/composition.mdx`, `docs/site/content/react/hooks.mdx`, `docs/site/content/vue/composables.mdx`: `isPaginating` and the `paginated` event.
+- `.changeset/sliced-first-layout.md` (new): the release note.
+- `.collaboration/changes/sliced-first-layout.json` (new): the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/layout/__tests__/layout-steps.test.ts`, `packages/core/src/editor/__tests__/surface-opening-layout.test.ts` and `progressive-open.test.ts` (new).

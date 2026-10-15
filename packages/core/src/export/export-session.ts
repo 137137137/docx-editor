@@ -538,6 +538,7 @@ export function openDocumentForExport(
         displayMode: mode,
         revisionAuthorFilter: undefined,
         showFieldCodes: false,
+        bodyBlockLimit: undefined,
       } satisfies LayoutDocumentViewOptions & Record<keyof LayoutDocumentViewOptions, unknown>);
       if (!layoutHasPendingImages(layout)) {
         const restartedBeforePublish = restartOnRevisionDrift();

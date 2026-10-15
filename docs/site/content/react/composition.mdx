@@ -351,6 +351,8 @@ Pass `overlay` to position the loading screen over its nearest positioned ancest
 
 Use `DocxEditor.Loading.Spinner` with `className` to style the packaged spinner. If you conditionally mount content, use `snapshot().isLoading`. Do not use `isOpening` for that condition. `DocxEditor.Content` must remain mounted while the scheduled open completes.
 
+A large document mounts on its first pages, and you can read and edit them at once. The engine then lays out the remaining pages in short tasks. Until it finishes, `snapshot().isPaginating` is true and `snapshot().page.total` counts only the pages laid out so far. The `paginated` event fires when every page is laid out. A reveal or a page jump to content that is not laid out yet lays out as far as it needs first, which can take a moment on a long document. To avoid that wait, reveal distant content after the `paginated` event.
+
 ## Custom link popover
 
 `DocxEditor.HyperLink` provides the hyperlink popover. It includes the URL, edit fields, apply, copy, and unlink actions. Its parts accept `className`, `asChild`, and `hidden`. Action parts also accept `icon`:

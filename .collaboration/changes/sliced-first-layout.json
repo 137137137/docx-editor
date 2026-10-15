@@ -1,0 +1,14 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A large document's first layout runs in one task and its pages appear when the last one is placed.",
+  "after": "A large document mounts on a layout of its first pages and lays out the rest in short tasks; an edit during that time lays the first pages out again and starts the rest over.",
+  "reason": "Only when local layout runs changes. The final layout is the same computation on the same revision, and nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/editor/__tests__/progressive-open.test.ts",
+    "packages/core/src/editor/__tests__/surface-opening-layout.test.ts",
+    "packages/core/src/layout/__tests__/layout-steps.test.ts"
+  ],
+  "changeset": "sliced-first-layout",
+  "migration": null
+}

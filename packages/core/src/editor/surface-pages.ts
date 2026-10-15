@@ -51,6 +51,27 @@ function viewportInLayout(
   return { top: topPx / scale, height: scroller.clientHeight / scale };
 }
 
+/**
+ * Whether `layout` reaches half a viewport past the bottom of the view and holds `selection`,
+ * when one is given. With no scroller to measure, two pages are enough.
+ */
+export function layoutCoversView(
+  container: HTMLElement,
+  layout: SemanticLayout,
+  scale: number,
+  selection?: SemanticSelection
+): boolean {
+  const last = layout.pages[layout.pages.length - 1];
+  if (!last) return false;
+  if (selection && (!caretAt(layout, selection.anchor) || !caretAt(layout, selection.head))) {
+    return false;
+  }
+  const scroller = surfaceScroller(container);
+  if (!scroller || scroller.clientHeight === 0) return layout.pages.length >= 2;
+  const view = viewportInLayout(container, scroller, scale);
+  return last.box.y + last.box.height >= view.top + 1.5 * view.height;
+}
+
 export function viewportPage(
   container: HTMLElement,
   layout: SemanticLayout,

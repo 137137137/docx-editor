@@ -69,11 +69,13 @@ import type { DocumentProtectionState } from '../store/package/document-protecti
 import type { SupportedImageMime } from '../store/package/image-resources.ts';
 import type { ImageCropPercent } from '../store/package/image-crop-units.ts';
 import type { ImageContext, SelectedImageState } from './editor-image-state.ts';
+import type { HyperlinkInfo, PageSetup } from './editor-page-reads.ts';
 export type * from './types';
 export type * from './interaction';
 export type * from './editor-hf-notes.ts';
 export type * from './editor-format-painter.ts';
 export type * from './editor-image-state.ts';
+export type * from './editor-page-reads.ts';
 export type { ImageCropPercent } from '../store/package/image-crop-units.ts';
 
 // Everything below is named by a signature IN this file, so it has to be nameable FROM this
@@ -343,10 +345,11 @@ export interface Editor {
    *
    * A large document mounts behind one painted frame, so a loading screen keyed on
    * `snapshot().isOpening` can show instead of a frozen page, and waits there for its fonts
-   * (for at most 1.5 seconds) so that it is laid out once, on the fonts it paints with; a
-   * small one mounts before this returns. Callers that need the document synchronously do
-   * not have to care: `save`, `exec` and `selectMatch` complete a scheduled open before they
-   * run.
+   * (for at most 1.5 seconds) so that it is laid out once, on the fonts it paints with. It
+   * mounts on its first pages and lays out the rest in short tasks, while
+   * `snapshot().isPaginating` holds. A small one mounts before this returns. Callers that
+   * need the document synchronously do not have to care: `save`, `exec` and `selectMatch`
+   * complete a scheduled open before they run.
    */
   load(document: DocumentSource): void;
   /**
@@ -1498,43 +1501,6 @@ export interface TextMatch {
 }
 
 /**
- * The hyperlink under a position: where it points, how far it reaches, and what Word shows on
- * hover.
- *
- * `href` has already been through `sanitizeHref` — it comes from a file, so a `javascript:` or
- * `data:` target is dropped at the parse boundary rather than here.
- */
-export interface HyperlinkInfo {
-  readonly href: string;
-  readonly range: DocRange;
-  /**
-   * `w:tooltip` on the `w:hyperlink` — the text Word shows on hover, and what the
-   * hyperlink dialog seeds its tooltip field with when editing an existing link.
-   */
-  readonly tooltip?: string;
-}
-
-/**
- * Section page setup — size, orientation and margins, in twips — as `getPageSetup()`
- * and `snapshot().pageSetup` report it and the `setPageSetup` command writes it. In a
- * multi-section document this is the setup of the section the SELECTION is in, which
- * is what a ruler or a dialog reflects — Word's behaviour.
- */
-export interface PageSetup {
-  readonly pageWidthTwips: number;
-  readonly pageHeightTwips: number;
-  readonly orientation: 'portrait' | 'landscape';
-  readonly marginsTwips: {
-    readonly top: number;
-    readonly right: number;
-    readonly bottom: number;
-    readonly left: number;
-  };
-  /** Binding gutter (`w:gutter`), folded into the left margin by layout. */
-  readonly gutterTwips?: number;
-}
-
-/**
  * A read model of the current editor state, safe to hand to framework
  * rendering. Named `EditorSnapshot` rather than `EditorState` so it never
  * collides with an editing engine's own state type.
@@ -1557,6 +1523,14 @@ export interface EditorSnapshot {
    * additive: absent means the implementation has not derived it, read as `false`.
    */
   readonly isOpening?: boolean;
+  /**
+   * Whether a large document is still laying out the pages after its first ones. Such a
+   * document mounts on a preview of the pages in view, which you can read and edit at once,
+   * and lays the rest out in short tasks; `page.total` counts only the laid-out pages until
+   * this turns false. The `paginated` event fires when it does. Optional and additive: absent
+   * means the implementation has not derived it, read as `false`.
+   */
+  readonly isPaginating?: boolean;
   readonly parseError: string | null;
   /** Whether the loaded document is being edited: a patchable document opened in edit mode. A
    *  read-only document (tables/SDTs/unpreservable) or `mode: 'view'` reports false. */

@@ -261,6 +261,19 @@ export interface PaginatedSurface {
    * the top of its page, so a heading deep in a page lands in view.
    */
   revealPage(pageIndex: number, options?: RevealOptions): boolean;
+  /**
+   * Whether a large document is still laying out the pages after the ones on screen.
+   *
+   * A large document opens on a preview of its first pages, which is editable at once, and
+   * lays the rest out in short tasks. Until that ends the layout holds only the previewed
+   * pages, so the page count is a lower bound. A reveal of something further in lays out as
+   * far as it needs before it scrolls.
+   */
+  paginating(): boolean;
+  /** Resolves once every page is laid out, at once when nothing is pending. */
+  whenPaginated(): Promise<void>;
+  /** Lay out every remaining page now, in this task. */
+  finishPagination(): void;
   revealParagraph(paragraphId: string, options?: RevealOptions): boolean;
   /**
    * Scroll an exact position into view — `revealParagraph` for a caret that is not at

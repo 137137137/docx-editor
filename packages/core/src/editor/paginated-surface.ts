@@ -217,9 +217,11 @@ import {
 import { createBrowserPaintImageUrlPort } from './browser-paint-image-url-port.ts';
 import { createInlineDrawingLayoutBundle } from '../layout/inline-drawing-source.ts';
 import {
-  layoutDocumentView,
+  layoutDocumentViewSteps,
   type LayoutDocumentViewOptions,
 } from '../layout/document-layout-coordinator.ts';
+import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
+import { createSurfaceOpening } from './surface-opening-layout.ts';
 import { createSurfaceCaret } from './surface-caret.ts';
 import { defaultTableLabel, type TableInteractionLabelKey } from './table-chrome.ts';
 import { createSurfaceTableInteraction } from './surface-table-interaction.ts';
@@ -375,6 +377,8 @@ export function mountPaginatedSurface(
      * before mounting it to read its fonts and page size. Never mounted twice.
      */
     readonly openedSession?: ReturnType<typeof openTreeSession>;
+    /** Open on a preview of the first pages and lay the rest out in slices. */
+    readonly progressiveLayout?: boolean;
   };
   const opened =
     runtimeOptions.openedSession ??
@@ -841,7 +845,7 @@ export function mountPaginatedSurface(
    * A single-section document has no spans and every page belongs to section 0.
    */
   const sectionAtPage = (pageIndex: number): { sectionIndex: number; sectionStart: number } => {
-    const spans = layoutSession.multi?.spans;
+    const spans = (opening?.previewSession() ?? layoutSession).multi?.spans;
     let sectionIndex = 0;
     let sectionStart = 0;
     if (spans && spans.length > 0) {
@@ -989,6 +993,8 @@ export function mountPaginatedSurface(
     readonly authorFilter?: RevisionAuthorFilter;
     readonly layoutSession: ReturnType<typeof createLayoutSession>;
     readonly furnitureSource: ReturnType<typeof createCurrentFurnitureSource>;
+    /** A preview of the first pages: lay out only this many body blocks. */
+    readonly bodyBlockLimit?: number;
   }
 
   /**
@@ -1042,7 +1048,30 @@ export function mountPaginatedSurface(
     },
   };
 
-  let currentLayout = layoutOnce();
+  // A large document opens on a preview of its first pages (`surface-opening-layout.ts`).
+  const opening = runtimeOptions.progressiveLayout
+    ? createSurfaceOpening({
+        container,
+        session,
+        layoutSession,
+        now,
+        scale: () => scale,
+        displayMode: revisionDisplayMode,
+        authorFilter: revisionFilter,
+        selection: () => selection,
+        steps: (previewSession, bodyBlockLimit) =>
+          previewSession
+            ? layoutDocumentSteps(session.packageRevision(), undefined, {
+                authorFilter: revisionFilter(),
+                layoutSession: previewSession,
+                furnitureSource,
+                bodyBlockLimit,
+              })
+            : layoutDocumentSteps(session.packageRevision()),
+        publish: publishLayout,
+      })
+    : null;
+  let currentLayout = opening ? opening.start() : layoutOnce();
   // Declared before the first paint can run — `render` reads it.
   let revisionStyles = options.revisionStyles;
   const paragraphMarks = createParagraphMarkVisibility(
@@ -1315,12 +1344,20 @@ export function mountPaginatedSurface(
     scope?: LayoutScope,
     context?: LayoutDocumentContext
   ): SemanticLayout {
+    return drainLayoutSteps(layoutDocumentSteps(revision, scope, context));
+  }
+
+  function layoutDocumentSteps(
+    revision: number,
+    scope?: LayoutScope,
+    context?: LayoutDocumentContext
+  ): LayoutSteps<SemanticLayout> {
     const activeAuthorFilter = context ? context.authorFilter : revisionFilter();
     const activeLayoutSession = context?.layoutSession ?? layoutSession;
     const activeFurnitureSource = context?.furnitureSource ?? furnitureSource;
     if (scope) attachListResolveChangeEvidence(activeLayoutSession, scope);
     drawingBundle.sync(session);
-    return layoutDocumentView({
+    return layoutDocumentViewSteps({
       view: session,
       revision,
       measurer,
@@ -1347,8 +1384,10 @@ export function mountPaginatedSurface(
       // The layout context key already folds the mode in (`|rev:<mode>`), so a surface
       // constructed `proposed` never shares cached pages with an `all-markup` one.
       displayMode: revisionDisplayMode(),
-      showFieldCodes: context ? false : showFieldCodes,
+      // A preview shows the view; any other context is the save's canonical layout.
+      showFieldCodes: context && context.bodyBlockLimit === undefined ? false : showFieldCodes,
       revisionAuthorFilter: activeAuthorFilter,
+      bodyBlockLimit: context?.bodyBlockLimit,
     } satisfies LayoutDocumentViewOptions & Record<keyof LayoutDocumentViewOptions, unknown>);
   }
 
@@ -1563,7 +1602,10 @@ export function mountPaginatedSurface(
     // layout after the first comes through here rather than through `layoutOnce`.
     run: (scope: LayoutScope) => {
       const began = now();
-      const layout = layoutDocument(scope.revision, scope);
+      // During an opening a relayout is a new preview, and the full layout starts again.
+      const layout = opening?.pending()
+        ? opening.relayout()
+        : layoutDocument(scope.revision, scope);
       lastLayoutMs = now() - began;
       return layout;
     },
@@ -1590,21 +1632,23 @@ export function mountPaginatedSurface(
       const handle = setTimeout(run, 0);
       return () => clearTimeout(handle);
     },
-    publish: (layout) => {
-      // Release the previous layout BEFORE the new one replaces it: the roster cache held
-      // it by strong reference, and a 200-page graph kept alive beside the live one is tens
-      // of megabytes of retained records. `layout: null` means "recompute on the next read"
-      // while keeping the map itself, which that read compares against to decide whether
-      // the author set actually moved.
-      // The review queue is released with it, for the same reason and by the same rule.
-      reviewAuthors.releaseLayout();
-      currentLayout = layout;
-      // Repaint from HERE, so a commit that never went through this surface — undo, or
-      // another editor sharing the store — still reaches the screen. Otherwise the painted
-      // pages keep showing a revision the model has already left.
-      renderPublishedLayout();
-    },
+    publish: (layout) => publishLayout(layout),
   });
+
+  function publishLayout(layout: SemanticLayout): void {
+    // Release the previous layout BEFORE the new one replaces it: the roster cache held
+    // it by strong reference, and a 200-page graph kept alive beside the live one is tens
+    // of megabytes of retained records. `layout: null` means "recompute on the next read"
+    // while keeping the map itself, which that read compares against to decide whether
+    // the author set actually moved.
+    // The review queue is released with it, for the same reason and by the same rule.
+    reviewAuthors.releaseLayout();
+    currentLayout = layout;
+    // Repaint from HERE, so a commit that never went through this surface — undo, or
+    // another editor sharing the store — still reaches the screen. Otherwise the painted
+    // pages keep showing a revision the model has already left.
+    renderPublishedLayout();
+  }
 
   // A settled image resource must reach the screen on its own — nothing else may ever
   // touch the document (a letterhead the user only reads). The flush is queued, not
@@ -2662,6 +2706,7 @@ export function mountPaginatedSurface(
     // deferred its pass. Safe: this runs from a scheduled frame, never inside a
     // render.
     flushPendingInputAndLayout();
+    opening?.viewMoved(currentLayout);
     const nextSet = visiblePages();
     const nextExtent = surfaceExtent(currentLayout, nextSet);
     if (
@@ -4940,12 +4985,18 @@ export function mountPaginatedSurface(
       // Flushed like its siblings below: a page the deferred pass creates is not findable
       // in the superseded layout, and "false" must mean "no such page", not "not yet".
       flushLayout();
+      opening?.reach(() => currentLayout.pages.length > pageIndex);
       const page = currentLayout.pages.find((entry) => entry.index === pageIndex);
       return page ? scrollToContentY(page.box.y, page.box.height, options) : false;
     },
 
+    paginating: () => opening?.pending() ?? false,
+    whenPaginated: () => opening?.whenComplete() ?? Promise.resolve(),
+    finishPagination: () => opening?.finish(),
+
     revealParagraph(paragraphId, options) {
       flushLayout();
+      opening?.reach(() => caretAt(currentLayout, { paragraphId, offset: 0 }) !== null);
       // The paragraph's own line, not the top of its page: a heading two thirds down a
       // page is the thing the caller asked to see.
       const caret = caretAt(currentLayout, { paragraphId, offset: 0 });
@@ -4962,6 +5013,7 @@ export function mountPaginatedSurface(
 
     revealPosition(position, options) {
       flushLayout();
+      opening?.reach(() => caretAt(currentLayout, position) !== null);
       const caret = caretAt(currentLayout, position);
       if (!caret) return false;
       const page = currentLayout.pages.find((entry) => entry.index === caret.pageIndex);
@@ -5669,6 +5721,7 @@ export function mountPaginatedSurface(
         // Drop pending layout work and stop listening BEFORE the DOM goes, or a commit from
         // another editor sharing this store would paint into a detached container.
         scheduler.cancel();
+        opening?.cancel();
         if (deferredPublishRender !== null) clearTimeout(deferredPublishRender);
         deferredPublishRender = null;
         if (cancelDerivationPrewarm) cancelDerivationPrewarm();

@@ -1,10 +1,32 @@
 /** Reconcile section preparation while keeping dependency validation with its owner. */
+
+import { drainLayoutSteps, type LayoutSteps } from './layout-steps.ts';
+
 export function prepareSectionBlocks<Node extends object, Prepared>(
   bodies: readonly Node[],
   previous: { readonly bodies: readonly Node[]; readonly prepared: readonly Prepared[] } | null,
   prepare: (body: Node) => Prepared
 ): Prepared[] {
-  if (!previous) return bodies.map(prepare);
+  return drainLayoutSteps(prepareSectionBlocksSteps(bodies, previous, prepare));
+}
+
+/**
+ * {@link prepareSectionBlocks} as steps that pause after each block it prepares, so a
+ * long section's first preparation does not hold the page (`layout-steps.ts`).
+ */
+export function* prepareSectionBlocksSteps<Node extends object, Prepared>(
+  bodies: readonly Node[],
+  previous: { readonly bodies: readonly Node[]; readonly prepared: readonly Prepared[] } | null,
+  prepare: (body: Node) => Prepared
+): LayoutSteps<Prepared[]> {
+  const prepared: Prepared[] = [];
+  if (!previous) {
+    for (const body of bodies) {
+      prepared.push(prepare(body));
+      yield;
+    }
+    return prepared;
+  }
   // Match shifted tails after insert/delete without allocating a document-sized map.
   // Equal-length edits can reuse aligned entries directly. Reorders conservatively
   // prepare moved blocks again; node IDs alone cannot prove an entry is reusable.
@@ -16,13 +38,18 @@ export function prepareSectionBlocks<Node extends object, Prepared>(
     )
       suffix += 1;
   }
-  return bodies.map((body, index) => {
-    if (body === previous.bodies[index]) return previous.prepared[index]!;
-    if (index >= bodies.length - suffix) {
-      return previous.prepared[index + previous.bodies.length - bodies.length]!;
+  for (let index = 0; index < bodies.length; index += 1) {
+    const body = bodies[index]!;
+    if (body === previous.bodies[index]) {
+      prepared.push(previous.prepared[index]!);
+    } else if (index >= bodies.length - suffix) {
+      prepared.push(previous.prepared[index + previous.bodies.length - bodies.length]!);
+    } else {
+      prepared.push(prepare(body));
+      yield;
     }
-    return prepare(body);
-  });
+  }
+  return prepared;
 }
 
 /** A text edit changes a paragraph root without changing its place in drawing order. */

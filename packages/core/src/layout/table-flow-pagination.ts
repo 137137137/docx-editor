@@ -11,6 +11,7 @@
 // story loop keeps ownership of the cursor and this module keeps the row rules.
 
 import type { OoxmlElement } from '@docx-editor.dev/core/store';
+import type { LayoutSteps } from './layout-steps.ts';
 import {
   finalizeTableRows,
   initialCellCursors,
@@ -115,11 +116,14 @@ const POSITIONED_TABLE_LAYOUT_BOTTOM_PT = Number.MAX_SAFE_INTEGER / 1024;
  * placed together, moved whole when the remainder is too short, re-emitted complete atop
  * each continuation page where the pending row can advance, and treated as ordinary rows
  * when the authored group itself exceeds a fresh content page.
+ *
+ * Steps that pause between body rows (`layout-steps.ts`): a long table is one block of the
+ * body, and laying all of its rows out in one task held the page.
  */
-export function paginateTableInFlow(
+export function* paginateTableInFlow(
   table: OoxmlElement,
   flow: TableFlowCursor
-): TableFlowPlacementResult {
+): LayoutSteps<TableFlowPlacementResult> {
   const {
     columnWidth,
     columnLeft,
@@ -384,6 +388,7 @@ export function paginateTableInFlow(
   };
 
   for (const [bodyRowIndex, row] of bodyRows.entries()) {
+    yield;
     if (initialHeaderGroupDegraded && bodyRowIndex >= headerRows.length) repeatsEnabled = true;
     admitSpans(bodyRowIndex, row);
     let cursors: CellPlaceCursor[] = initialCellCursors(row);

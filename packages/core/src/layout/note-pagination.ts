@@ -89,6 +89,7 @@ import type { PendingLine } from './paragraph-flow.ts';
 import { cascadeRunProperties, type StyleCascadeTable } from './style-cascade.ts';
 import { DEFAULT_RUN_STYLE, resolveRunStyle, type ResolvedRunStyle } from './run-style.ts';
 import { finalizePageFieldProjection } from './field-projection.ts';
+import { drainLayoutSteps, layoutStepsOf, type LayoutSteps } from './layout-steps.ts';
 import { overflowPageShellAt, type OverflowPageShell } from './page-furniture-insets.ts';
 import {
   DEFAULT_REVISION_DISPLAY_MODE,
@@ -1926,8 +1927,11 @@ function patchSectionFieldSources(
   return next;
 }
 
-/** Place collected endnotes starting at `startIndex`, creating overflow pages as needed. */
-function placeEndnotesFromPage(
+/**
+ * Place collected endnotes starting at `startIndex`, creating overflow pages as needed. Steps
+ * that pause between pages: a long document's endnotes are laid out here for the first time.
+ */
+function* placeEndnotesFromPage(
   pages: PageRecord[],
   startIndex: number,
   refs: readonly PageRefHit[],
@@ -1950,7 +1954,7 @@ function placeEndnotesFromPage(
     /** Mints an overflow sheet with the shell its own index resolves to. */
     readonly mint: OverflowSheetMinter;
   }
-): PageRecord[] {
+): LayoutSteps<PageRecord[]> {
   if (refs.length === 0 || pages.length === 0) return pages;
   // The section comes from the nearest BODY-PASS page at or before the run's start. The start
   // itself may be a sheet an earlier run minted: `lastEndnoteHostIndex` accepts an endnote
@@ -1969,6 +1973,7 @@ function placeEndnotesFromPage(
   const separatorCache = options?.separatorCache;
 
   while (pending.length > 0 || carry.size > 0) {
+    yield;
     if (index >= nextPages.length || index >= stopBefore) {
       if (overflowBudget.remaining <= 0) {
         reasons.push('note-overflow-page-limit');
@@ -2095,6 +2100,23 @@ export function computeFootnoteReserves(
   readonly stable: boolean;
   readonly reasons: readonly NotePaginationFallbackReason[];
 } {
+  return drainLayoutSteps(
+    computeFootnoteReservesSteps(layout, allRefs, input, noteMarks, passMemo, previousReserves)
+  );
+}
+
+/**
+ * {@link computeFootnoteReserves} as steps that pause between pages: the first search of a
+ * long document lays out every page-bottom note, which is too much for one task.
+ */
+function* computeFootnoteReservesSteps(
+  layout: SemanticLayout,
+  allRefs: readonly PageRefHit[],
+  input: NotesLayoutInput,
+  noteMarks: NoteMarkContext,
+  passMemo?: unknown,
+  previousReserves?: ReadonlyMap<number, number>
+): LayoutSteps<ReturnType<typeof computeFootnoteReserves>> {
   const memo = (passMemo ?? null) as NotesPassMemo | null;
   const reserves = new Map<number, number>();
   const reasons: NotePaginationFallbackReason[] = [];
@@ -2118,6 +2140,7 @@ export function computeFootnoteReserves(
     recordFootnoteReserve(reserves, pageIndex, Math.min(needed, cap));
 
   for (let pageAt = 0; pageAt < layout.pages.length; pageAt += 1) {
+    yield;
     const page = layout.pages[pageAt]!;
     // Strip any prior note-pass output so reserve height is body-only.
     const bodyPage = bodyOnlyPage(page);
@@ -2266,6 +2289,24 @@ export function attachNotesToLayout(
     readonly memo?: unknown;
   }
 ): NotesAttachResult {
+  return drainLayoutSteps(attachNotesToLayoutSteps(layout, allRefs, input, options));
+}
+
+/** {@link attachNotesToLayout} as steps that pause between pages (`layout-steps.ts`). */
+function* attachNotesToLayoutSteps(
+  layout: SemanticLayout,
+  allRefs: readonly PageRefHit[],
+  input: NotesLayoutInput,
+  options?: {
+    readonly fallbackReasons?: readonly NotePaginationFallbackReason[];
+    readonly paragraphSectionIndex?: ReadonlyMap<string, number>;
+    /**
+     * Session-carried notes memo, already validated against `allRefs` and `input`.
+     * Opaque at this boundary; the shape is owned by this module.
+     */
+    readonly memo?: unknown;
+  }
+): LayoutSteps<NotesAttachResult> {
   const memo = (options?.memo ?? null) as NotesPassMemo | null;
   const reasons: NotePaginationFallbackReason[] = [...(options?.fallbackReasons ?? [])];
   const paragraphSectionIndex = options?.paragraphSectionIndex ?? new Map<string, number>();
@@ -2317,7 +2358,7 @@ export function attachNotesToLayout(
   const endnotesBySection = new Map<number, PageRefHit[]>();
   const endnotesDoc: PageRefHit[] = [];
 
-  let pages: PageRecord[] = layout.pages.map((page) => {
+  const attachPage = (page: PageRecord): PageRecord => {
     const pageRefs = filterRefsOnPage(page, allRefs, refIndex);
     const fnRefs = pageRefs.filter((r) => r.noteKind === 'footnote');
     const enRefs = pageRefs.filter((r) => r.noteKind === 'endnote');
@@ -2410,7 +2451,12 @@ export function attachNotesToLayout(
       }
     }
     return attached;
-  });
+  };
+  let pages: PageRecord[] = [];
+  for (const page of layout.pages) {
+    yield;
+    pages.push(attachPage(page));
+  }
 
   const pageCountBeforeOverflow = pages.length;
 
@@ -2455,7 +2501,7 @@ export function attachNotesToLayout(
           break;
         }
       }
-      pages = placeEndnotesFromPage(
+      pages = yield* placeEndnotesFromPage(
         pages,
         lastIdx,
         refs,
@@ -2478,7 +2524,7 @@ export function attachNotesToLayout(
   if (endnotesDoc.length > 0 && pages.length > 0) {
     // Start on the last eligible host (body / endnote overflow), never the final
     // footnote-drain sheet — room above footnotes on the last body page is fair game.
-    pages = placeEndnotesFromPage(
+    pages = yield* placeEndnotesFromPage(
       pages,
       lastEndnoteHostIndex(pages),
       endnotesDoc,
@@ -2557,24 +2603,44 @@ function collectBodyNoteReferences(
  * Reflow keeps the session: a changed reserve set changes the layout context, so resume
  * falls through to a full pass without discarding the caller's session write-back.
  */
-export function layoutSemanticDocumentWithNotes<
-  Opts extends {
-    noteMarks?: NoteMarkContext;
-    pageBottomReserves?: ReadonlyMap<number, number>;
-    session?: {
-      previous: SemanticLayout | null;
-      multi: unknown;
-      notes: unknown;
-      notePageBottomReserves?: ReadonlyMap<number, number> | null;
-    };
-  },
->(
+export function layoutSemanticDocumentWithNotes<Opts extends NotesPassOptions>(
   part: OoxmlPart,
   sections: readonly DocumentSection[],
   optionsWithLists: Opts,
   notesInput: NotesLayoutInput,
   runBody: (opts: Opts) => SemanticLayout
 ): SemanticLayout {
+  return drainLayoutSteps(
+    layoutSemanticDocumentWithNotesSteps(part, sections, optionsWithLists, notesInput, (opts) =>
+      layoutStepsOf(() => runBody(opts))
+    )
+  );
+}
+
+/** What the notes path reads and writes on the body pass options. */
+type NotesPassOptions = {
+  noteMarks?: NoteMarkContext;
+  pageBottomReserves?: ReadonlyMap<number, number>;
+  session?: {
+    previous: SemanticLayout | null;
+    multi: unknown;
+    notes: unknown;
+    notePageBottomReserves?: ReadonlyMap<number, number> | null;
+  };
+};
+
+/**
+ * {@link layoutSemanticDocumentWithNotes} as steps: the body passes of the reserve search
+ * pause where `runBody` pauses (`layout-steps.ts`), so a caller can spread the search over
+ * several tasks. It runs the same passes in the same order.
+ */
+export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesPassOptions>(
+  part: OoxmlPart,
+  sections: readonly DocumentSection[],
+  optionsWithLists: Opts,
+  notesInput: NotesLayoutInput,
+  runBody: (opts: Opts) => LayoutSteps<SemanticLayout>
+): LayoutSteps<SemanticLayout> {
   const displayMode =
     (optionsWithLists as { displayMode?: RevisionDisplayMode }).displayMode ??
     DEFAULT_REVISION_DISPLAY_MODE;
@@ -2586,12 +2652,13 @@ export function layoutSemanticDocumentWithNotes<
       optionsWithLists.session.notes = null;
       optionsWithLists.session.notePageBottomReserves = null;
     }
-    return runBody({
+    return yield* runBody({
       ...optionsWithLists,
       noteMarks: undefined,
       pageBottomReserves: undefined,
     });
   }
+  yield;
   const paragraphSectionIndex = paragraphSectionIndexOf(
     part,
     sections,
@@ -2599,6 +2666,7 @@ export function layoutSemanticDocumentWithNotes<
     authorFilter,
     optionsWithLists.session
   );
+  yield;
   const builtHits = buildPageRefHits(packageRefs, paragraphSectionIndex);
   // The session memo hands back the previous pass's hit array by identity when nothing
   // moved, and KEEPS its mark contexts when only offsets moved (a keystroke in a
@@ -2614,7 +2682,7 @@ export function layoutSemanticDocumentWithNotes<
     ? compactFootnoteReserves(seeded)
     : new Map();
   let fallbackReasons: NotePaginationFallbackReason[] = [];
-  let bodyLayout: SemanticLayout = runBody({
+  let bodyLayout: SemanticLayout = yield* runBody({
     ...optionsWithLists,
     noteMarks,
     pageBottomReserves: usedReserves,
@@ -2662,7 +2730,7 @@ export function layoutSemanticDocumentWithNotes<
     const growthCutoff = Math.max(8, Math.ceil(previousPageCount / 16));
     let consecutiveGrowth = 0;
     for (let attempt = 0; attempt < attemptCap; attempt += 1) {
-      const computed = computeFootnoteReserves(
+      const computed = yield* computeFootnoteReservesSteps(
         bodyLayout,
         allHits,
         notesInput,
@@ -2719,7 +2787,7 @@ export function layoutSemanticDocumentWithNotes<
       adoptedThisPass += 1;
       // Keep the caller's session: reserve changes alter the layout context key, so
       // checkpoints from a different reserve set are not resumed — they are replaced.
-      bodyLayout = runBody({
+      bodyLayout = yield* runBody({
         ...optionsWithLists,
         noteMarks,
         pageBottomReserves: usedReserves,
@@ -2746,7 +2814,7 @@ export function layoutSemanticDocumentWithNotes<
     }
   }
 
-  const attached = attachNotesToLayout(bodyLayout, allHits, notesInput, {
+  const attached = yield* attachNotesToLayoutSteps(bodyLayout, allHits, notesInput, {
     fallbackReasons,
     paragraphSectionIndex,
     memo: notesMemo,

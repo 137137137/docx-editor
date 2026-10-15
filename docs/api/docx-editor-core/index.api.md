@@ -1661,6 +1661,7 @@ export interface EditorEvents {
     error: (error: EditorError) => void;
     // (undocumented)
     historyDiagnostic: (diagnostic: HistoryDiagnostic) => void;
+    paginated: () => void;
     selectionChange: (snapshot: EditorSnapshot) => void;
 }
 
@@ -1892,6 +1893,7 @@ export interface EditorSnapshot {
     readonly image: ImageContext | null;
     readonly isLoading: boolean;
     readonly isOpening?: boolean;
+    readonly isPaginating?: boolean;
     readonly lastRejection?: string | null;
     // (undocumented)
     readonly page: {
