@@ -108,3 +108,14 @@ A `wrapTopAndBottom` drawing behind the text, and one offset below its paragraph
 - `packages/core/src/layout/paragraph-flow.ts`: the text after a `wrapTopAndBottom` anchor breaks its line only when the band crosses that line.
 - `.changeset/top-and-bottom-behind-text.md` and `.collaboration/changes/top-and-bottom-behind-text.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/layout/__tests__/top-and-bottom-band.test.ts` (new).
+
+A paragraph's fixed layout work done once:
+
+- `packages/core/src/store/package/sha256.ts`: a SHA-256 over whole blocks in place, with the padding in a small scratch block (`sha256FontBytesFast`), used where there is no native hasher, and `sha256Text`, the digest of a string's UTF-8 encoded into a reused buffer.
+- `packages/core/src/layout/layout-cache.ts`: a paragraph key's memo compares the inputs before any digest is taken; a paragraph's content is written into its own token instead of a digest per element; property tokens are written without intermediate arrays, and a frozen property list's token is kept; the digest memo no longer re-inserts an entry it hits.
+- `packages/core/src/layout/canvas-measurer.ts`: the width and metrics caches keep their recency order in a linked list beside the map.
+- `packages/core/src/layout/drawing-atom-walk.ts`: a paragraph's drawing model offsets, and whether it holds any drawing atom, are kept per node.
+- `packages/core/src/layout/cell-layout-inputs.ts` (new): a table cell paragraph's resolved layout inputs and break inputs, per node and context.
+- `packages/core/src/layout/semantic-table-layout.ts`: cell paragraphs read their inputs through `cell-layout-inputs.ts`.
+- `.changeset/layout-work-once.md` and `.collaboration/changes/layout-work-once.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/store/__tests__/sha256.test.ts`.

@@ -1,0 +1,14 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "Layout recomputed per-paragraph inputs on every line or pass, digested every element of a paragraph separately, and hashed with a SHA-256 that copied its input per call.",
+  "after": "Layout keeps per-paragraph inputs per immutable node, writes a paragraph's content into one digest, and hashes into reused buffers; the digests and the pages are those of the same inputs.",
+  "reason": "Only local layout work changes. Nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/store/__tests__/sha256.test.ts",
+    "packages/core/src/layout/__tests__/layout-cache.test.ts",
+    "packages/core/src/layout/__tests__/canvas-measurer.test.ts"
+  ],
+  "changeset": "layout-work-once",
+  "migration": null
+}

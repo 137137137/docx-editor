@@ -34,6 +34,27 @@ function isDirectlyHiddenRun(node: OoxmlNode): boolean {
   return hidden;
 }
 
+const NO_ATOMS = Object.freeze([]);
+
+/**
+ * Whether a paragraph holds any drawing, MC or legacy VML atom at all, per immutable node.
+ * Placement asks for a paragraph's anchored atoms every time it places it, and nearly every
+ * paragraph has none; the answer to that does not depend on the drawing context.
+ */
+const atomsHeld = new WeakMap<OoxmlNode, boolean>();
+
+function holdsDrawingAtoms(paragraph: Exclude<OoxmlNode, { kind: 'textValue' }>): boolean {
+  let held = atomsHeld.get(paragraph);
+  if (held === undefined) {
+    held = false;
+    walkDrawingAtoms(paragraph, () => {
+      held = true;
+    });
+    atomsHeld.set(paragraph, held);
+  }
+  return held;
+}
+
 /** Run-level drawing / MC atoms carrying anchored projections in one paragraph. */
 export function anchoredDrawingAtomsInParagraph(
   paragraph: OoxmlNode,
@@ -45,6 +66,7 @@ export function anchoredDrawingAtomsInParagraph(
   readonly revisions: readonly RevisionAttribution[];
 }[] {
   if (paragraph.kind !== 'paragraph') return [];
+  if (!holdsDrawingAtoms(paragraph)) return NO_ATOMS;
   const atoms: {
     atomId: string;
     projection: DrawingProjection;
@@ -73,7 +95,21 @@ export function anchoredDrawingAtomsInParagraph(
   return Object.freeze(atoms);
 }
 
+/**
+ * The offsets, per paragraph node. A node is immutable (an edit replaces it), and placement asks
+ * once per line of the paragraph, so a long paragraph would otherwise walk itself once per line.
+ */
+const modelOffsetsByParagraph = new WeakMap<OoxmlNode, ReadonlyMap<string, number>>();
+
 export function drawingModelOffsetsInParagraph(paragraph: OoxmlNode): ReadonlyMap<string, number> {
+  const cached = modelOffsetsByParagraph.get(paragraph);
+  if (cached) return cached;
+  const offsets = readDrawingModelOffsets(paragraph);
+  modelOffsetsByParagraph.set(paragraph, offsets);
+  return offsets;
+}
+
+function readDrawingModelOffsets(paragraph: OoxmlNode): ReadonlyMap<string, number> {
   const offsets = new Map<string, number>();
   if (paragraph.kind !== 'paragraph') return offsets;
   // The shared paragraph index counts breaks, tabs, wrappers, and every modeled atom.

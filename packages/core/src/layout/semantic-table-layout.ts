@@ -67,16 +67,12 @@ import {
   paragraphBorderStrokeWidthPt,
 } from './paragraph-style.ts';
 import {
-  prepareParagraphBreakInputs,
   positionedParagraphExclusionToken,
   breakPreparedParagraph,
 } from './paragraph-break-request.ts';
 import { DEFAULT_RUN_STYLE } from './run-style.ts';
-import {
-  resolveParagraphLayoutInputs,
-  type StyleCascadeTable,
-  type TableCellStyleFormatting,
-} from './style-cascade.ts';
+import { cellParagraphBreakInputs, cellParagraphLayoutInputs } from './cell-layout-inputs.ts';
+import { type StyleCascadeTable, type TableCellStyleFormatting } from './style-cascade.ts';
 import {
   neighbourBorderGroupKey,
   paragraphBorderGroupKey,
@@ -409,13 +405,12 @@ function placeCellParagraph(
   const paragraphId = paragraph.id;
   const keyFor = deps.cache?.keyFor?.bind(deps.cache) ?? paragraphLayoutKey;
   const listItem = deps.listItems?.get(paragraphId);
-  const layoutInputs = resolveParagraphLayoutInputs(
+  const layoutInputs = cellParagraphLayoutInputs(
     paragraph,
     cellContentWidth,
     deps.styleCascade,
     listItem,
-    options?.tableCellStyle,
-    true
+    options?.tableCellStyle
   );
   const {
     props,
@@ -449,7 +444,7 @@ function placeCellParagraph(
   const topEdge = continuesAbove ? undefined : borders.top;
   // What closes the paragraph: the bottom rule, or the `between` rule when the block runs on.
   const closingEdge = continuesBelow ? borders.between : bottomBorder;
-  const { tabStops, properties: breakProperties } = prepareParagraphBreakInputs(
+  const { tabStops, properties: breakProperties } = cellParagraphBreakInputs(
     layoutInputs,
     deps.defaultTabStopPt,
     {

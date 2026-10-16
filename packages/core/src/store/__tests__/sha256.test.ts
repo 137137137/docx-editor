@@ -2,8 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   sha256BytesAsync,
   sha256FontBytes,
+  sha256FontBytesFast,
   sha256FontBytesPure,
   sha256IsNative,
+  sha256Text,
+  sha256TextFast,
   sha256WithSubtle,
 } from '../package/sha256.ts';
 
@@ -32,6 +35,42 @@ describe('sha256FontBytes', () => {
     const view = buffer.subarray(50, 120);
     expect(sha256FontBytes(view)).toBe(sha256FontBytesPure(view));
     expect(sha256FontBytes(view)).not.toBe(sha256FontBytes(buffer));
+  });
+});
+
+describe('the browser path', () => {
+  test('agrees with the reference at every padding boundary and on a view', () => {
+    for (const length of [0, 1, 3, 55, 56, 57, 63, 64, 65, 119, 120, 127, 128, 129, 1000, 70_000]) {
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i++) bytes[i] = (i * 7919 + length) & 0xff;
+      expect(sha256FontBytesFast(bytes)).toBe(sha256FontBytesPure(bytes));
+    }
+    const view = new Uint8Array(300).fill(5).subarray(17, 211);
+    expect(sha256FontBytesFast(view)).toBe(sha256FontBytesPure(view));
+  });
+
+  test('a text digest is the digest of its UTF-8 bytes, whatever the text holds', () => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const texts = [
+      '',
+      'abc',
+      'x'.repeat(55),
+      'x'.repeat(56),
+      'é'.repeat(40),
+      '\u4e2d\u6587'.repeat(500),
+      '\ud83d\ude00 emoji',
+      'lone \ud800 surrogate',
+      '\0framed\0',
+      'y'.repeat(5000),
+      'z'.repeat(400_000),
+    ];
+    for (const text of texts) {
+      const expected = sha256FontBytesPure(encode(text));
+      expect(sha256TextFast(text)).toBe(expected);
+      expect(sha256Text(text)).toBe(expected);
+    }
+    // The scratch buffer is reused: a short text after a long one hashes only its own bytes.
+    expect(sha256TextFast('abc')).toBe(sha256FontBytesPure(encode('abc')));
   });
 });
 

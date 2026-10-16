@@ -25,7 +25,7 @@
 import type { OoxmlNode } from '@docx-editor.dev/core/store';
 import type { OoxmlProperty } from '../store/store/tree-op-types.ts';
 import { registerParagraphCacheDiagnostics } from './paragraph-cache-diagnostics.ts';
-import { sha256FontBytes } from '../store/package/sha256.ts';
+import { sha256Text } from '../store/package/sha256.ts';
 
 /** A fingerprint over one paragraph's layout inputs. */
 export type ParagraphLayoutKey = string;
@@ -88,15 +88,44 @@ export interface ParagraphLayoutCache<T> {
  * cache key. XML text cannot carry U+0000, so no file-derived value can forge a boundary.
  */
 function propertyToken(property: OoxmlProperty): string {
-  const attributes = Object.entries(property.attributes ?? {})
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([name, value]) => `${name}=${value}`)
-    .join('\0,');
-  return `${property.localName}(\0${attributes}\0)`;
+  // `name=value` pairs in code-unit order of their names, `\0,` between them: written out
+  // rather than through `Object.entries`, `sort`, `map` and `join`, because every paragraph
+  // key serializes every property it carries.
+  const attributes = property.attributes;
+  let body = '';
+  if (attributes) {
+    const names = Object.keys(attributes);
+    if (names.length > 1) names.sort();
+    for (let index = 0; index < names.length; index += 1) {
+      const name = names[index]!;
+      if (index > 0) body += '\0,';
+      body += `${name}=${attributes[name]}`;
+    }
+  }
+  return `${property.localName}(\0${body}\0)`;
 }
 
+/** Tokens of frozen property lists, which cannot change under them. */
+const frozenListTokens = new WeakMap<readonly OoxmlProperty[], string>();
+
 function propertiesToken(properties: readonly OoxmlProperty[]): string {
-  return properties.map(propertyToken).join('\0;');
+  const frozen = Object.isFrozen(properties);
+  if (frozen) {
+    const known = frozenListTokens.get(properties);
+    if (known !== undefined) return known;
+  }
+  const token = writePropertiesToken(properties);
+  if (frozen) frozenListTokens.set(properties, token);
+  return token;
+}
+
+function writePropertiesToken(properties: readonly OoxmlProperty[]): string {
+  let token = '';
+  for (let index = 0; index < properties.length; index += 1) {
+    if (index > 0) token += '\0;';
+    token += propertyToken(properties[index]!);
+  }
+  return token;
 }
 
 /**
@@ -107,11 +136,9 @@ function propertiesToken(properties: readonly OoxmlProperty[]): string {
  */
 const MAX_MEMOIZED_TOKEN_LENGTH = 1 << 18;
 
-const layoutTokenEncoder = new TextEncoder();
-
 /** Collision-resistant, platform-neutral cache fingerprint over a framed string. */
 function layoutTokenDigest(token: string): string {
-  return sha256FontBytes(layoutTokenEncoder.encode(token));
+  return sha256Text(token);
 }
 
 interface CachedLayoutDigest {
@@ -124,13 +151,14 @@ const MAX_CACHED_LAYOUT_DIGEST_BYTES = 2 * 1024 * 1024;
 const cachedLayoutDigests = new Map<string, CachedLayoutDigest>();
 let cachedLayoutDigestBytes = 0;
 
+/**
+ * A digest from the bounded memo, oldest entry dropped first. A hit does not move its entry:
+ * re-inserting on every hit cost more than the digests it saved, and a dropped digest is only
+ * computed again.
+ */
 function reusableLayoutTokenDigest(token: string): string {
   const cached = cachedLayoutDigests.get(token);
-  if (cached) {
-    cachedLayoutDigests.delete(token);
-    cachedLayoutDigests.set(token, cached);
-    return cached.digest;
-  }
+  if (cached) return cached.digest;
   const digest = layoutTokenDigest(token);
   const bytes = token.length * 2;
   if (bytes <= MAX_CACHED_LAYOUT_DIGEST_BYTES) {
@@ -239,13 +267,14 @@ export function aggregateParagraphTokensForTableBlock(
 }
 
 /**
- * One fixed-width digest per immutable element subtree.
+ * One fixed-width digest per immutable element subtree, down to paragraphs.
  *
  * Tree edits are copy-on-write: every changed ancestor gets a new identity, while untouched
  * siblings keep theirs. Caching at each element therefore makes rehashing proportional to the
- * changed path instead of the size of an enclosing table. Text values stay inline in their
- * parent's token, avoiding a WeakMap entry for every leaf. No inherited/contextual state enters
- * this digest; every field below belongs to the node itself, so identity reuse is always sound.
+ * changed path instead of the size of an enclosing table. A paragraph's content and text
+ * values stay inline in its token, avoiding a digest and a WeakMap entry for every run. No
+ * inherited/contextual state enters this digest; every field below belongs to the node itself,
+ * so identity reuse is always sound.
  */
 interface LayoutKeyMemoMap<K extends object, V> {
   get(key: K): V | undefined;
@@ -325,7 +354,8 @@ function nodeLayoutIdentity(node: OoxmlNode, scope: LayoutKeyMemoScope): string 
 
 function computeNodeToken(
   node: OoxmlNode,
-  scope: LayoutKeyMemoScope = sharedLayoutKeyMemoScope
+  scope: LayoutKeyMemoScope = sharedLayoutKeyMemoScope,
+  inline = false
 ): string {
   if (nodeTokenTestObserver) nodeTokenTestObserver.nodeVisits += 1;
   if (node.kind === 'textValue') return framedTokenJoin(['text', node.value]);
@@ -341,14 +371,20 @@ function computeNodeToken(
   }
   attributes.sort();
   const children: string[] = [];
+  // Inside a paragraph the content is written out in the paragraph's own token: a paragraph
+  // is the unit an edit replaces, so a digest per run and per property bought nothing but
+  // a hash of every element in the document. Above a paragraph, a digest per immutable child
+  // keeps an edit's rehash to its copy-on-write path instead of the whole enclosing table.
+  const writeOut = inline || node.kind === 'paragraph';
   for (const child of node.children) {
-    // A digest is fixed-width and collision-resistant, so retaining one per immutable child
-    // avoids both the old whole-table rewalk and quadratic retained recursive token strings.
-    // Frame its role as well as its value: a text token cannot masquerade as a child digest.
+    // Frame each child's role as well as its value: a text token, a written-out element and
+    // a child digest cannot masquerade as one another.
     children.push(
       child.kind === 'textValue'
         ? computeNodeToken(child)
-        : framedTokenJoin(['child-digest', nodeLayoutIdentity(child, scope)])
+        : writeOut
+          ? framedTokenJoin(['child', computeNodeToken(child, scope, true)])
+          : framedTokenJoin(['child-digest', nodeLayoutIdentity(child, scope)])
     );
   }
   return framedTokenJoin([
@@ -419,11 +455,11 @@ export const PARAGRAPH_KEY_INPUT_ROLES = {
 >;
 
 interface ParagraphKeyMemoEntry {
-  readonly producerIdentity: string;
+  readonly producer: string;
   readonly width: number;
-  readonly drawingIdentity: string;
-  readonly projectionIdentity: string;
-  readonly exclusionIdentity: string;
+  readonly drawingToken: string;
+  readonly projectionToken: string;
+  readonly exclusionToken: string;
   readonly propertiesToken: string;
   readonly key: ParagraphLayoutKey;
 }
@@ -433,12 +469,15 @@ interface ParagraphKeyMemo {
 }
 
 /**
- * Small digest-match memo of compact keys per immutable paragraph/table node.
+ * Small memo of compact keys per immutable paragraph/table node.
  *
  * The canonical tree is immutable: an edit replaces the affected node, while unchanged nodes
  * preserve identity. SHA-256 fingerprints every layout-affecting input without serializing an
  * entire OOXML subtree into every cache key. A few slots preserve the common prepass/placement
  * widths; eviction only causes a safe miss.
+ *
+ * The memo compares the inputs themselves, so a hit digests nothing: two inputs are equal
+ * exactly when their digests are, and the key a miss builds is the one a hit returns.
  */
 const MAX_PARAGRAPH_KEY_SLOTS = 8;
 
@@ -460,45 +499,45 @@ function paragraphLayoutKeyInScope(
   // cannot move a break, and keying on the raw float would miss on every scroll that
   // recomputes it.
   const width = Math.round(inputs.width * 1000);
+  const producer = inputs.producer;
   const drawingToken = inputs.drawingToken ?? '';
   const projectionToken = inputs.projectionToken ?? '';
   const exclusionToken = inputs.exclusionToken ?? '';
-  const properties = reusableLayoutTokenDigest(propertiesToken(inputs.properties));
-  const nodeIdentity = nodeLayoutIdentity(inputs.paragraph, scope);
-  const producerIdentity = reusableLayoutTokenDigest(inputs.producer);
-  const drawingIdentity = reusableLayoutTokenDigest(drawingToken);
-  const projectionIdentity = reusableLayoutTokenDigest(projectionToken);
-  const exclusionIdentity = reusableLayoutTokenDigest(exclusionToken);
+  const properties = propertiesToken(inputs.properties);
   let memo = scope.paragraphKeys.get(inputs.paragraph);
   const entryIndex = memo?.entries.findIndex(
     (entry) =>
-      entry.producerIdentity === producerIdentity &&
       entry.width === width &&
-      entry.drawingIdentity === drawingIdentity &&
-      entry.projectionIdentity === projectionIdentity &&
-      entry.exclusionIdentity === exclusionIdentity &&
+      entry.producer === producer &&
+      entry.drawingToken === drawingToken &&
+      entry.projectionToken === projectionToken &&
+      entry.exclusionToken === exclusionToken &&
       entry.propertiesToken === properties
   );
   if (memo && entryIndex !== undefined && entryIndex >= 0) {
     const [entry] = memo.entries.splice(entryIndex, 1);
-    memo.entries.push(entry);
-    return entry.key;
+    memo.entries.push(entry!);
+    return entry!.key;
   }
-  const key = `plk:${nodeIdentity}:${producerIdentity}:${width}:${drawingIdentity}:${projectionIdentity}:${exclusionIdentity}:${properties}`;
+  const nodeIdentity = nodeLayoutIdentity(inputs.paragraph, scope);
+  const key = `plk:${nodeIdentity}:${reusableLayoutTokenDigest(producer)}:${width}:${reusableLayoutTokenDigest(drawingToken)}:${reusableLayoutTokenDigest(projectionToken)}:${reusableLayoutTokenDigest(exclusionToken)}:${reusableLayoutTokenDigest(properties)}`;
   if (!memo) {
     memo = { entries: [] };
     scope.paragraphKeys.set(inputs.paragraph, memo);
   }
-  const sharedProperties =
-    memo.entries.find((entry) => entry.propertiesToken === properties)?.propertiesToken ??
-    properties;
+  // Entries that agree on an input share one copy of its text.
+  const entries = memo.entries;
+  const shared = (read: (entry: ParagraphKeyMemoEntry) => string, value: string): string => {
+    const match = entries.find((entry) => read(entry) === value);
+    return match ? read(match) : value;
+  };
   memo.entries.push({
-    producerIdentity,
+    producer,
     width,
-    drawingIdentity,
-    projectionIdentity,
-    exclusionIdentity,
-    propertiesToken: sharedProperties,
+    drawingToken: shared((entry) => entry.drawingToken, drawingToken),
+    projectionToken: shared((entry) => entry.projectionToken, projectionToken),
+    exclusionToken: shared((entry) => entry.exclusionToken, exclusionToken),
+    propertiesToken: shared((entry) => entry.propertiesToken, properties),
     key,
   });
   if (memo.entries.length > MAX_PARAGRAPH_KEY_SLOTS) memo.entries.shift();
