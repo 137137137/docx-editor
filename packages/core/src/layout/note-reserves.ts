@@ -77,6 +77,39 @@ export function notesReserveContextKey(
 }
 
 /**
+ * The first section-LOCAL page slot at which two passes read different reserves, or
+ * `Infinity` when they read the same everywhere.
+ *
+ * Each map is read the way {@link notesReserveContextKey} reads it: at the pass's own
+ * `pageIndexStart` plus the local slot, a missing entry reading as zero. A pass reads a slot
+ * only while that page is the one it is filling, so everything a pass placed before it
+ * opened the returned slot read only reserves the two passes share.
+ */
+export function firstDifferingReserveSlot(
+  before: ReadonlyMap<number, number> | undefined,
+  beforeStart: number,
+  after: ReadonlyMap<number, number> | undefined,
+  afterStart: number
+): number {
+  let first = Infinity;
+  if (before) {
+    for (const [pageSlot, height] of before) {
+      const localSlot = pageSlot - beforeStart;
+      if (localSlot < 0 || localSlot >= first) continue;
+      if ((after?.get(afterStart + localSlot) ?? 0) !== height) first = localSlot;
+    }
+  }
+  if (after) {
+    for (const [pageSlot, height] of after) {
+      const localSlot = pageSlot - afterStart;
+      if (localSlot < 0 || localSlot >= first) continue;
+      if ((before?.get(beforeStart + localSlot) ?? 0) !== height) first = localSlot;
+    }
+  }
+  return first;
+}
+
+/**
  * Merge one entry into a reserve map: monotonic per-slot maximum, and non-positive heights
  * are OMITTED rather than stored — convergence compares maps by key set, and body layout
  * treats a missing slot as zero.

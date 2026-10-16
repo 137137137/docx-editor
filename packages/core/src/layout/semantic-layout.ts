@@ -163,6 +163,7 @@ import {
   notesReserveContextKey,
 } from './note-pagination.ts';
 import { passProducerOf, producerWithControlContext } from './pass-producer.ts';
+import { passReserveReads, recordPassReserves, reserveResumeIndex } from './reserve-resume.ts';
 
 let exclusionLayoutPassObserverForTest: (() => void) | null = null;
 
@@ -1310,17 +1311,24 @@ function* layoutBlocksPass(
   // break; resuming from one would place new content against a stale flow. A parity flip
   // only matters when the previous pass actually read parity (even/odd headers or an
   // inside/outside-anchored drawing).
-  const comparable =
+  const sameFlow =
     previous !== null &&
     session !== undefined &&
-    session.context === context &&
     session.producer === producer &&
     (!session.parityDependent || session.startPageParity === startPageParity);
+  const comparable = sameFlow && session.context === context;
   const resumable = columns.count === 1 && comparable;
-
+  // Only the footnote reserves moved: the pages before the first that did still hold.
+  const reserveComparable = sameFlow && !comparable && columns.count === 1;
+  const reserveReads = passReserveReads(
+    contextFor(''),
+    pageBottomReserves,
+    pageIndexStart,
+    options
+  );
   /** The first paragraph whose layout inputs differ from the previous pass. */
   let firstChanged = 0;
-  if (comparable) {
+  if (comparable || reserveComparable) {
     const limit = Math.min(flowKeys.length, session.keys.length);
     while (firstChanged < limit && flowKeys[firstChanged] === session.keys[firstChanged]) {
       firstChanged += 1;
@@ -1450,8 +1458,13 @@ function* layoutBlocksPass(
   // document still agrees with, so the pages completed by then are carried over by
   // REFERENCE — unchanged pages keep their identity, which is what lets a consumer skip
   // repainting them.
-  if (resumable && firstChanged > 0 && firstChanged < session.checkpoints.length) {
-    const checkpoint = session.checkpoints[firstChanged]!;
+  const resumeAt = resumable
+    ? firstChanged
+    : reserveComparable
+      ? reserveResumeIndex(session.checkpoints, reserveReads, firstChanged)
+      : 0;
+  if (session && resumeAt > 0 && resumeAt < session.checkpoints.length) {
+    const checkpoint = session.checkpoints[resumeAt]!;
     pages.push(...previous!.pages.slice(0, checkpoint.pageCount));
     ({
       pageFragments,
@@ -1463,10 +1476,10 @@ function* layoutBlocksPass(
       previousSpaceAfter,
     } = checkpointOwner.restore(checkpoint));
     columnIndex = flowColumnIndex;
-    startIndex = firstChanged;
+    startIndex = resumeAt;
     firstParagraphOfSection = false;
     reusedPages = pages.length;
-    checkpoints.push(...session.checkpoints.slice(0, firstChanged));
+    checkpoints.push(...session.checkpoints.slice(0, resumeAt));
   }
 
   const publishParagraphFrames = (anchorId: string, anchorY: number): void => {
@@ -2966,6 +2979,7 @@ function* layoutBlocksPass(
             ),
         ]
       : checkpoints;
+    recordPassReserves(session.checkpoints, reserveReads);
     session.keys = flowKeys;
     // Re-sliced with the page count THIS pass produced: a pass that grew past the start-time
     // bound read reserve slots the start-time key never folded, and the next comparison must

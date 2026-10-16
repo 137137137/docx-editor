@@ -17,6 +17,7 @@ import { createDocxEditor, type DocxEditorInstance } from '../docx-editor.ts';
 import { mountPaginatedSurface, type PaginatedSurface } from '../paginated-surface.ts';
 import { updateSurfaceMeasurement } from '../surface-measurement.ts';
 import { createFixedMeasurer } from '../../layout/index.ts';
+import { suspendReserveResumeForTest } from '../../layout/reserve-resume.ts';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
@@ -133,7 +134,14 @@ describe('a progressive open', () => {
   test('the fixture needs several body passes to settle its footnote reserves', () => {
     expect(plain.paginating()).toBe(false);
     expect(plainTexts.length).toBeGreaterThan(6);
-    expect(plain.state().perf.fullPasses).toBeGreaterThan(2);
+    // Counted with every reserve round laid out from the first page: a round that resumes
+    // below the first reserve it moved is not a full pass.
+    const restore = suspendReserveResumeForTest();
+    try {
+      expect(mount(BYTES, false).state().perf.fullPasses).toBeGreaterThan(2);
+    } finally {
+      restore();
+    }
   });
 
   test('previews the first pages, then publishes every page a plain mount lays out', async () => {

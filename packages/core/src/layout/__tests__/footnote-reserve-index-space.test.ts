@@ -208,13 +208,15 @@ describe('multi-section reserve index space (#460)', () => {
 
     // The reuse half of the local-slot key: section 2 holds no readable reserve entry at
     // its old OR new position, so its key is '' in both and the shift must not re-lay it.
-    // (Sections 0 and 1 legitimately re-place — one changed, the other reads a changed
-    // reserve slice — so only section 2 pins the document-index-free key property.)
+    // (Section 0 changed and re-places. Section 1 reads a changed reserve slice, but only
+    // from the page the reserve moved to: it resumes there, not at its first block.)
     const sections = enumerateDocumentSections(grownPart);
     expect(sections.length).toBe(3);
     const reserveFreeSectionBlocks = sections[2]!.blockEndExclusive - sections[2]!.blockStart;
+    const sectionZeroBlocks = sections[0]!.blockEndExclusive - sections[0]!.blockStart;
     expect(reserveFreeSectionBlocks).toBeGreaterThan(0);
-    expect(session.stats.placed).toBe(session.stats.total - reserveFreeSectionBlocks);
+    expect(session.stats.placed).toBeGreaterThan(sectionZeroBlocks);
+    expect(session.stats.placed).toBeLessThan(session.stats.total - reserveFreeSectionBlocks);
     expect(session.stats.reusedPages).toBeGreaterThanOrEqual(1);
 
     const clean = layoutSemanticDocument(grownPart, 2, {

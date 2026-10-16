@@ -1,0 +1,15 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "Each round of the footnote reserve search laid the body out from its first page.",
+  "after": "A round resumes from the last checkpoint taken on a page before the first reserve that moved, and lays out the same pages.",
+  "reason": "Only local layout work changes. Nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/layout/__tests__/reserve-resume.test.ts",
+    "packages/core/src/layout/__tests__/footnote-reserves.test.ts",
+    "packages/core/src/layout/__tests__/footnote-reserve-index-space.test.ts",
+    "packages/core/src/editor/__tests__/progressive-open.test.ts"
+  ],
+  "changeset": "reserve-round-resume",
+  "migration": null
+}
