@@ -251,6 +251,8 @@ worker.onmessage = async (event) => {
 
 `receiveParsedDocumentInSlices` rebuilds the read on the page in short tasks; `receiveParsedDocument` does it in one, and the editor does it on open if neither has run. The worker applies the same size, zip and XML limits as an open from bytes, and a file it refuses is reported the same way. The parsed document keeps the file's bytes, so `save()`, embedded fonts and images work as they do for bytes.
 
+A host that knows the document will be opened soon (a file picked, and the reader still choosing what to do with it) can also take the open's next step early. `prepareParsedDocument(parsed)` from `@docx-editor.dev/core/editor` opens the document's session on the page and reads the font families the open asks its font resolver for. The editor that is later handed the same parsed document opens from that session, so its open starts at the fonts. It is main-thread work, as much as the open itself would do at that point. The session is taken once, and an editor with a review module opens its own.
+
 ### Swapping documents at runtime
 
 To replace the document without remounting the component, use the ref:

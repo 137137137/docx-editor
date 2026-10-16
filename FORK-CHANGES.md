@@ -134,3 +134,13 @@ A document search that builds each paragraph's text once per revision:
 - `packages/core/src/binding/document-search-frames.ts`: `searchStoryParagraphs`, a story's paragraphs kept per story root, used by the text-box expansion and the scan.
 - `.changeset/search-text-once.md` and `.collaboration/changes/search-text-once.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/binding/__tests__/document-search.test.ts`.
+
+A parsed document's session opened ahead of its editor:
+
+- `packages/core/src/editor/opened-ahead.ts` (new): `prepareParsedDocument`, which opens a parsed document's session and reads the font families its open asks for, and keeps the session for the editor that opens the same document.
+- `packages/core/src/editor/docx-editor-support.ts`: `createDocumentSources` opens from a session prepared ahead for the bytes, when the editor has no review module.
+- `packages/core/src/editor/index.ts`: exports `prepareParsedDocument` and the `ParsedDocument` type.
+- `docs/api/docx-editor-core/editor.api.md`: the API snapshot.
+- `docs/site/content/guides/loading-and-saving.mdx`: opening the session ahead.
+- `.changeset/open-ahead-session.md` and `.collaboration/changes/open-ahead-session.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/editor/__tests__/opened-ahead.test.ts` (new).

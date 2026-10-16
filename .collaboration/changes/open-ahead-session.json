@@ -1,0 +1,10 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "An editor opens the session of a parsed document itself, when its open runs.",
+  "after": "A host may open that session earlier (prepareParsedDocument). The editor then takes it instead of opening its own; it is the same session, opened from the same read with the same options.",
+  "reason": "Only when the session is opened changes. Nothing about it enters shared state, operations, snapshots or protocol messages.",
+  "tests": ["packages/core/src/editor/__tests__/opened-ahead.test.ts"],
+  "changeset": "open-ahead-session",
+  "migration": null
+}

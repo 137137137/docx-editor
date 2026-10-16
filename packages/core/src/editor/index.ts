@@ -179,6 +179,10 @@ export {
   type EquationChromeHandlers,
   type HyperlinkChromeHandlers,
 } from './docx-editor.ts';
+// Opening a parsed document ahead of the editor that shows it (`parseDocument` reads it, often
+// on a worker; this opens its session on the page before the editor asks).
+export { prepareParsedDocument } from './opened-ahead.ts';
+export type { ParsedDocument } from '../store/package/parsed-document.ts';
 // `DocxEditorInstance.fontMeasurement()` returns it, so the lane that exports the instance
 // has to export the answer too.
 export type { FontMeasurementState } from './docx-editor-types.ts';

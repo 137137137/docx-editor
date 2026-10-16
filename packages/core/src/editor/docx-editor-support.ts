@@ -28,6 +28,7 @@ import {
   type OpenTreeSessionResult,
 } from '../binding/tree-session.ts';
 import { isParsedDocument, parsedDocumentRead } from '../store/package/parsed-document.ts';
+import { takeOpenedAhead } from './opened-ahead.ts';
 import { tableCommandCanSupport } from './table-command-plan.ts';
 
 /** Recursively freeze plain objects and arrays (idempotent). */
@@ -235,7 +236,8 @@ export function selectionsMatch(a: SurfaceSelection | null, b: SurfaceSelection 
 /**
  * The facade's sources: each resolved to the bytes it opens, and the read a parsed document
  * carries (`parseDocument`, typically on a worker) kept by those bytes for their open — which
- * then skips reading them. A package is immutable, so a remount of the same bytes (fonts,
+ * then skips reading them, or takes the session opened ahead from that read
+ * (`prepareParsedDocument`). A package is immutable, so a remount of the same bytes (fonts,
  * `attach`) opens from the same read again, exactly as a fresh read of them would.
  */
 export function createDocumentSources(): {
@@ -252,6 +254,9 @@ export function createDocumentSources(): {
       return bytes;
     },
     open(bytes, options) {
+      // A session the host opened ahead for these bytes (`prepareParsedDocument`) is this one.
+      const ahead = takeOpenedAhead(bytes, options);
+      if (ahead) return ahead;
       const read = reads.get(bytes);
       return openTreeSession(bytes, read ? { ...options, read } : options);
     },
