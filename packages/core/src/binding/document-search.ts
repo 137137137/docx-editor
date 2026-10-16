@@ -40,12 +40,19 @@ import {
   type NoteKind,
 } from '../store/package/note-nodes.ts';
 import { isFldSimple } from '../store/package/field-nodes.ts';
-import { bodyStoryRoot, storyParagraphs, storyRootsOf } from '../store/package/story-blocks.ts';
+import { bodyStoryRoot, storyRootsOf } from '../store/package/story-blocks.ts';
 import { walkParagraphInline } from '../store/package/content-control-walk.ts';
 import type { OoxmlParagraphNode, OoxmlPart } from '../store/package/ooxml-tree.ts';
-import { projectVisibleParagraphText } from '../store/store/text-projection.ts';
+import {
+  projectVisibleParagraphText,
+  type ProjectedParagraphText,
+} from '../store/store/text-projection.ts';
 import { paragraphOffsetIndex } from '../store/store/tree-op-segments.ts';
-import { expandSelectableTextboxStories, type SearchStory } from './document-search-frames.ts';
+import {
+  expandSelectableTextboxStories,
+  searchStoryParagraphs,
+  type SearchStory,
+} from './document-search-frames.ts';
 
 export { SEARCH_MATCH_LIMIT, SEARCH_QUERY_MAX };
 
@@ -248,6 +255,33 @@ function resultRunAddressAt(
   return index < 0 ? null : { index, offset };
 }
 
+/**
+ * Each paragraph's searchable text, per part. A part and its nodes are frozen, and an edit
+ * makes a new part and new nodes for what it changes, so an entry never goes stale. A search
+ * reads every paragraph of every story, and building this text was nearly all of its cost: a
+ * caller asking many queries of one revision paid the whole document again for each.
+ */
+const searchableTextCache = new WeakMap<
+  OoxmlPart,
+  WeakMap<OoxmlParagraphNode, ProjectedParagraphText>
+>();
+
+/** `paragraph`'s text in `part` as a search reads it, built once per part and paragraph. */
+function searchableTextOf(part: OoxmlPart, paragraph: OoxmlParagraphNode): ProjectedParagraphText {
+  let byParagraph = searchableTextCache.get(part);
+  if (!byParagraph) {
+    byParagraph = new WeakMap();
+    searchableTextCache.set(part, byParagraph);
+  }
+  let projected = byParagraph.get(paragraph);
+  if (!projected) {
+    const rawText = paragraphTextOf(part, paragraph.id) ?? '';
+    projected = projectVisibleParagraphText(paragraph, rawText);
+    byParagraph.set(paragraph, projected);
+  }
+  return projected;
+}
+
 /** Bound and flatten one file-derived string on its way out of this module. */
 function bounded(raw: string, max: number): string {
   return raw.replace(CONTROL_CHARS_ALL, ' ').slice(0, max);
@@ -282,12 +316,11 @@ export function collectTextMatches(
   const searchableSources = options.stories === 'body' ? undefined : sources;
   for (const story of searchStories(part, searchableSources)) {
     let paragraphIndex = 0;
-    for (const paragraph of storyParagraphs(story.root)) {
+    for (const paragraph of searchStoryParagraphs(story.root)) {
       if (paragraph.kind !== 'paragraph') continue;
       const index = paragraphIndex;
       paragraphIndex += 1;
-      const rawText = paragraphTextOf(story.part, paragraph.id) ?? '';
-      const projected = projectVisibleParagraphText(paragraph, rawText);
+      const projected = searchableTextOf(story.part, paragraph);
       if (projected.text.length === 0) continue;
 
       // One global budget, not one per paragraph or story.

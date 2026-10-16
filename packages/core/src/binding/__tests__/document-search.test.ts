@@ -366,6 +366,27 @@ describe('collectTextMatches', () => {
     expect(search(para(run('a'.repeat(64))), '(a+)+$').matches).toEqual([]);
   });
 
+  test('answers from the text as it stands after an edit, not as it was searched before', () => {
+    const session = open(docx(para(run('Exhibit A')) + para(run('Exhibit B'))));
+    const [firstId, secondId] = session.paragraphIds();
+    expect(session.findText('Exhibit A!', { matchCase: true }).matches).toEqual([]);
+    expect(session.findText('Exhibit', { matchCase: true }).matches).toHaveLength(2);
+
+    const edited = session.applyTreeOps([
+      { op: 'insertText', paragraphId: firstId!, offset: 9, text: '!' },
+    ]);
+    expect(edited.committed).toBe(true);
+
+    const after = session.findText('Exhibit A!', { matchCase: true }).matches;
+    expect(after.map((match) => [match.blockId, match.start, match.length])).toEqual([
+      [firstId, 0, 10],
+    ]);
+    // The paragraph the edit did not touch is still found where it was.
+    expect(
+      session.findText('Exhibit B', { matchCase: true }).matches.map((m) => m.blockId)
+    ).toEqual([secondId]);
+  });
+
   test('keeps offsets aligned when case folding would otherwise expand the text', () => {
     // U+0130 lowercases to TWO code units. Folding must not slide the offsets after it,
     // or the match is reported where the editor would select the wrong text.

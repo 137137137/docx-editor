@@ -127,3 +127,10 @@ A footnote reserve round resumed below the first reserve it moved:
 - `packages/core/src/layout/semantic-layout.ts`: a pass whose previous pass differs only in its reserves resumes from the last checkpoint taken on a page before the first reserve that moved.
 - `.changeset/reserve-round-resume.md` and `.collaboration/changes/reserve-round-resume.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/layout/__tests__/reserve-resume.test.ts` (new); `footnote-reserves.test.ts` and `footnote-reserve-index-space.test.ts` in the same folder, and `packages/core/src/editor/__tests__/progressive-open.test.ts`.
+
+A document search that builds each paragraph's text once per revision:
+
+- `packages/core/src/binding/document-search.ts`: a paragraph's searchable text is kept per part and paragraph node, so a second query of the same revision does not build it again.
+- `packages/core/src/binding/document-search-frames.ts`: `searchStoryParagraphs`, a story's paragraphs kept per story root, used by the text-box expansion and the scan.
+- `.changeset/search-text-once.md` and `.collaboration/changes/search-text-once.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/binding/__tests__/document-search.test.ts`.
