@@ -85,6 +85,7 @@ import {
   snapXToAvailableInterval,
   synthesizeParagraphTopAndBottomZones,
   synthesizeParagraphWrapExclusionZones,
+  topAndBottomSkipBeforeLine,
   type ExclusionZone,
 } from './drawing-exclusion.ts';
 import { createEquationLayouter } from './equation-layout.ts';
@@ -862,7 +863,9 @@ export function breakParagraph(
         modelStart >= zone.anchorModelStart
     );
     if (zones.length === 0) return;
-    if (line.spans.length > 0 || line.drawings.length > 0) closeLine();
+    // A line the band does not cross keeps the text after the anchor, as Word does.
+    const crossed = topAndBottomSkipBeforeLine(currentLineTopY(), line.height, zones) > 0.001;
+    if (crossed && (line.spans.length > 0 || line.drawings.length > 0)) closeLine();
     applyTopAndBottomSkipIfNeeded();
   };
 

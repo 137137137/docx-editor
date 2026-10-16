@@ -100,3 +100,11 @@ A document parsed off the page's thread, and opened from that read:
 - `docs/site/content/guides/loading-and-saving.mdx`: parsing in a worker.
 - `.changeset/parse-off-thread.md` and `.collaboration/changes/parse-off-thread.json` (new): the release note and the collaboration compatibility decision (no impact).
 - Tests: `packages/core/src/store/__tests__/parsed-document.test.ts`, `same-graph.ts` and `packages/core/src/editor/__tests__/parsed-document-open.test.ts` (new).
+
+A `wrapTopAndBottom` drawing behind the text, and one offset below its paragraph:
+
+- `packages/core/src/layout/top-and-bottom-band.ts` (new): `behindDoc` takes a drawing out of the text flow for every wrap but `wrapTopAndBottom`, and a band offset from its paragraph or line sits at that offset.
+- `packages/core/src/layout/drawing-exclusion.ts`: a `wrapTopAndBottom` drawing behind the text publishes its exclusion zone, so the lines of the paragraphs after it clear its band; the band synthesized for the anchor's own paragraph sits where the drawing is published.
+- `packages/core/src/layout/paragraph-flow.ts`: the text after a `wrapTopAndBottom` anchor breaks its line only when the band crosses that line.
+- `.changeset/top-and-bottom-behind-text.md` and `.collaboration/changes/top-and-bottom-behind-text.json` (new): the release note and the collaboration compatibility decision (no impact).
+- Tests: `packages/core/src/layout/__tests__/top-and-bottom-band.test.ts` (new).

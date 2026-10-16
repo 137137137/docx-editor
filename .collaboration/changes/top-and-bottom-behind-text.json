@@ -1,0 +1,10 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A wrapTopAndBottom drawing with behindDoc set carved no band, and the band synthesized for its own paragraph sat at the anchor line's top whatever its vertical offset.",
+  "after": "A wrapTopAndBottom drawing carves its band whatever behindDoc says, at the drawing's own paragraph- or line-relative offset.",
+  "reason": "Only local layout changes. Nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": ["packages/core/src/layout/__tests__/top-and-bottom-band.test.ts"],
+  "changeset": "top-and-bottom-behind-text",
+  "migration": null
+}

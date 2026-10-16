@@ -14,6 +14,7 @@ import {
   type InlineDrawingLayoutContext,
 } from './drawing-layout.ts';
 import { drawingGeometryFromProjection } from './drawing-geometry.ts';
+import { behindDocumentSkipsWrap, topAndBottomBandOffset } from './top-and-bottom-band.ts';
 import {
   DEFAULT_REVISION_DISPLAY_MODE,
   revisionsVisible,
@@ -206,7 +207,7 @@ export function exclusionZoneFromAnchoredDrawing(options: {
   readonly columnIndex?: number;
   readonly yOverride?: number;
 }): ExclusionZone | null {
-  if (options.drawing.behindDocument) return null;
+  if (behindDocumentSkipsWrap(options.drawing.behindDocument, options.drawing.wrap)) return null;
   if (!wrapProducesExclusion(options.drawing.wrap)) return null;
   const y = options.yOverride ?? options.drawing.y;
   const input = wrapExclusionInputForProjection({
@@ -637,13 +638,12 @@ export function synthesizeParagraphTopAndBottomZones(options: {
   for (const atom of atoms) {
     // Same rule as the wrap zones above: no record, no hole.
     if (!revisionsVisible(atom.revisions, displayMode, options.revisionAuthorFilter)) continue;
-    if (atom.projection.anchor?.behindDocument) continue;
     if (atom.projection.wrap !== 'topAndBottom') continue;
     const modelStart = offsets.get(atom.atomId);
     if (modelStart === undefined) continue;
     const lineTop = options.anchorLineTopByModelStart.get(modelStart);
     if (lineTop === undefined) continue;
-    const anchorY = options.paragraphStartY + lineTop;
+    const anchorY = options.paragraphStartY + topAndBottomBandOffset(atom.projection, lineTop);
     const measure = measureInlineDrawing(atom.projection);
     const geometry = drawingGeometryFromProjection({
       projection: atom.projection,
