@@ -19,6 +19,23 @@ export interface TextboxStoryExpansionWork {
   indexedFrames: number;
 }
 
+/**
+ * A story's paragraphs, walked once per story root. A root is frozen and an edit makes a new
+ * one for any story it changes, so the list never goes stale; every search walked each story
+ * twice, here and to scan it.
+ */
+const paragraphsByRoot = new WeakMap<OoxmlNode, readonly OoxmlNode[]>();
+
+/** `storyParagraphs(root)`, remembered for `root`. */
+export function searchStoryParagraphs(root: OoxmlNode): readonly OoxmlNode[] {
+  let paragraphs = paragraphsByRoot.get(root);
+  if (!paragraphs) {
+    paragraphs = storyParagraphs(root);
+    paragraphsByRoot.set(root, paragraphs);
+  }
+  return paragraphs;
+}
+
 type FrameIndex = ReadonlyMap<string, readonly TextboxStoryRoot[]>;
 type TextboxStoriesOf = (part: OoxmlPart) => readonly TextboxStoryRoot[];
 
@@ -47,7 +64,7 @@ function framesInStory(
   work?: TextboxStoryExpansionWork
 ): readonly TextboxStoryRoot[] {
   const frames: TextboxStoryRoot[] = [];
-  for (const paragraph of storyParagraphs(story.root)) {
+  for (const paragraph of searchStoryParagraphs(story.root)) {
     if (work) work.hostLookups += 1;
     const atHost = index.get(paragraph.id);
     if (!atHost) continue;
