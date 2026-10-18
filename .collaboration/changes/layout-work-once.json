@@ -1,0 +1,14 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A paragraph key digested its producer, drawing, projection, exclusion and property inputs before its memo could answer, and the canvas measurer's cache deleted and re-inserted every entry it hit.",
+  "after": "The memo compares those inputs before any digest is taken, key text is encoded into a reused buffer without a native hasher, and the canvas cache keeps its recency in a linked list; the keys and the pages are those of the same inputs.",
+  "reason": "Only local layout work changes. Nothing about layout enters shared state, operations, snapshots or protocol messages.",
+  "tests": [
+    "packages/core/src/store/__tests__/sha256.test.ts",
+    "packages/core/src/layout/__tests__/layout-cache.test.ts",
+    "packages/core/src/layout/__tests__/canvas-measurer.test.ts"
+  ],
+  "changeset": "layout-work-once",
+  "migration": null
+}

@@ -174,3 +174,31 @@ export const sha256IsNative = nativeSha256 !== null;
 export const sha256FontBytes: (bytes: Uint8Array) => string = nativeSha256
   ? (bytes) => `sha256:${nativeSha256(bytes)}`
   : sha256FontBytesPure;
+
+const textEncoder = new TextEncoder();
+/** Reused UTF-8 scratch for {@link sha256TextPure}; texts larger than its ceiling encode afresh. */
+let textScratch = new Uint8Array(4096);
+const MAX_TEXT_SCRATCH_BYTES = 1 << 20;
+
+/** {@link sha256Text} without a native hasher. Exported for tests. */
+export function sha256TextPure(text: string): string {
+  // UTF-8 never takes more than three bytes per UTF-16 code unit.
+  const most = text.length * 3;
+  if (most > MAX_TEXT_SCRATCH_BYTES) return sha256FontBytesPure(textEncoder.encode(text));
+  if (textScratch.length < most) {
+    let size = textScratch.length;
+    while (size < most) size *= 2;
+    textScratch = new Uint8Array(size);
+  }
+  const { written } = textEncoder.encodeInto(text, textScratch);
+  return sha256FontBytesPure(textScratch.subarray(0, written));
+}
+
+/**
+ * {@link sha256FontBytes} of the UTF-8 encoding of `text` (as `TextEncoder` encodes it, a lone
+ * surrogate as U+FFFD). Without a native hasher the text is encoded into a reused buffer
+ * instead of a new one per call.
+ */
+export const sha256Text: (text: string) => string = nativeSha256
+  ? (text) => `sha256:${nativeSha256(textEncoder.encode(text))}`
+  : sha256TextPure;

@@ -29,7 +29,7 @@ import { registerParagraphCachePeek } from './paragraph-cache-peek.ts';
 import type { OoxmlNode } from '@docx-editor.dev/core/store';
 import type { OoxmlProperty } from '../store/store/tree-op-types.ts';
 import { registerParagraphCacheDiagnostics } from './paragraph-cache-diagnostics.ts';
-import { sha256FontBytes } from '../store/package/sha256.ts';
+import { sha256Text } from '../store/package/sha256.ts';
 import {
   DRAWINGML_MAIN_NAMESPACE_URI,
   MC_NAMESPACE_URI,
@@ -139,11 +139,9 @@ export function rememberLayoutProperties(properties: readonly OoxmlProperty[]): 
   immutablePropertyDigests.set(properties, reusableLayoutTokenDigest(propertiesToken(properties)));
 }
 
-const layoutTokenEncoder = new TextEncoder();
-
 /** Collision-resistant, platform-neutral cache fingerprint over a framed string. */
 function layoutTokenDigest(token: string): string {
-  return sha256FontBytes(layoutTokenEncoder.encode(token));
+  return sha256Text(token);
 }
 
 interface CachedLayoutDigest {
@@ -449,12 +447,15 @@ export const PARAGRAPH_KEY_INPUT_ROLES = {
 >;
 
 interface ParagraphKeyMemoEntry {
-  readonly producerIdentity: string;
+  readonly producer: string;
   readonly width: number;
-  readonly drawingIdentity: string;
-  readonly projectionIdentity: string;
-  readonly exclusionIdentity: string;
-  readonly propertiesToken: string;
+  readonly drawingToken: string;
+  readonly projectionToken: string;
+  readonly exclusionToken: string;
+  /** The remembered digest of an immutable property list, else the list's token. */
+  readonly properties: string;
+  /** The digest of the property list, as it enters the key. */
+  readonly propertiesIdentity: string;
   readonly key: ParagraphLayoutKey;
 }
 
@@ -469,6 +470,9 @@ interface ParagraphKeyMemo {
  * preserve identity. SHA-256 fingerprints every layout-affecting input without serializing an
  * entire OOXML subtree into every cache key. A few slots preserve the common prepass/placement
  * widths; eviction only causes a safe miss.
+ *
+ * The memo compares the inputs themselves, so a hit digests nothing: two inputs are equal
+ * exactly when their digests are, and the key a miss builds is the one a hit returns.
  */
 // Keep the current probe and placement widths; older states can rebuild their keys.
 const MAX_PARAGRAPH_KEY_SLOTS = 2;
@@ -494,23 +498,20 @@ function paragraphLayoutKeyInScope(
   const drawingToken = inputs.drawingToken ?? '';
   const projectionToken = inputs.projectionToken ?? '';
   const exclusionToken = inputs.exclusionToken ?? '';
-  const properties =
-    immutablePropertyDigests.get(inputs.properties) ??
-    reusableLayoutTokenDigest(propertiesToken(inputs.properties));
-  const nodeIdentity = nodeLayoutIdentity(inputs.paragraph, scope);
-  const producerIdentity = reusableLayoutTokenDigest(inputs.producer);
-  const drawingIdentity = reusableLayoutTokenDigest(drawingToken);
-  const projectionIdentity = reusableLayoutTokenDigest(projectionToken);
-  const exclusionIdentity = reusableLayoutTokenDigest(exclusionToken);
+  const producer = inputs.producer;
+  // A remembered digest (`sha256:` and hex) never equals a property list's token, which is
+  // empty or holds `(\0`, so the two forms cannot match each other in the comparison below.
+  const rememberedProperties = immutablePropertyDigests.get(inputs.properties);
+  const properties = rememberedProperties ?? propertiesToken(inputs.properties);
   let memo = scope.paragraphKeys.get(inputs.paragraph);
   const entryIndex = memo?.entries.findIndex(
     (entry) =>
-      entry.producerIdentity === producerIdentity &&
       entry.width === width &&
-      entry.drawingIdentity === drawingIdentity &&
-      entry.projectionIdentity === projectionIdentity &&
-      entry.exclusionIdentity === exclusionIdentity &&
-      entry.propertiesToken === properties
+      entry.producer === producer &&
+      entry.drawingToken === drawingToken &&
+      entry.projectionToken === projectionToken &&
+      entry.exclusionToken === exclusionToken &&
+      entry.properties === properties
   );
   if (memo && entryIndex !== undefined && entryIndex >= 0) {
     const entry = memo.entries[entryIndex]!;
@@ -520,21 +521,27 @@ function paragraphLayoutKeyInScope(
     }
     return entry.key;
   }
-  const key = `plk:${nodeIdentity}:${producerIdentity}:${width}:${drawingIdentity}:${projectionIdentity}:${exclusionIdentity}:${properties}`;
+  const nodeIdentity = nodeLayoutIdentity(inputs.paragraph, scope);
+  const propertiesIdentity = rememberedProperties ?? reusableLayoutTokenDigest(properties);
+  const key = `plk:${nodeIdentity}:${reusableLayoutTokenDigest(producer)}:${width}:${reusableLayoutTokenDigest(drawingToken)}:${reusableLayoutTokenDigest(projectionToken)}:${reusableLayoutTokenDigest(exclusionToken)}:${propertiesIdentity}`;
   if (!memo) {
     memo = { entries: [] };
     scope.paragraphKeys.set(inputs.paragraph, memo);
   }
-  const sharedProperties =
-    memo.entries.find((entry) => entry.propertiesToken === properties)?.propertiesToken ??
-    properties;
-  memo.entries.push({
-    producerIdentity,
+  // Entries that agree on an input share one copy of its text.
+  const entries = memo.entries;
+  const shared = (read: (entry: ParagraphKeyMemoEntry) => string, value: string): string => {
+    const match = entries.find((entry) => read(entry) === value);
+    return match ? read(match) : value;
+  };
+  entries.push({
+    producer,
     width,
-    drawingIdentity,
-    projectionIdentity,
-    exclusionIdentity,
-    propertiesToken: sharedProperties,
+    drawingToken: shared((entry) => entry.drawingToken, drawingToken),
+    projectionToken: shared((entry) => entry.projectionToken, projectionToken),
+    exclusionToken: shared((entry) => entry.exclusionToken, exclusionToken),
+    properties: shared((entry) => entry.properties, properties),
+    propertiesIdentity,
     key,
   });
   if (memo.entries.length > MAX_PARAGRAPH_KEY_SLOTS) memo.entries.shift();
@@ -800,11 +807,11 @@ export function createBudgetedParagraphLayoutCache<T>(
       for (const entry of memo!.entries) {
         if (
           entry === current ||
-          entry.producerIdentity !== current.producerIdentity ||
-          entry.drawingIdentity !== current.drawingIdentity ||
-          entry.projectionIdentity !== current.projectionIdentity ||
-          entry.exclusionIdentity !== current.exclusionIdentity ||
-          entry.propertiesToken !== current.propertiesToken
+          entry.producer !== current.producer ||
+          entry.drawingToken !== current.drawingToken ||
+          entry.projectionToken !== current.projectionToken ||
+          entry.exclusionToken !== current.exclusionToken ||
+          entry.propertiesIdentity !== current.propertiesIdentity
         )
           continue;
         const existing = entries.get(entry.key);

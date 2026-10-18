@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { sha256FontBytes, sha256FontBytesPure, sha256IsNative } from '../package/sha256.ts';
+import {
+  sha256FontBytes,
+  sha256FontBytesPure,
+  sha256IsNative,
+  sha256Text,
+  sha256TextPure,
+} from '../package/sha256.ts';
 
 describe('sha256FontBytes', () => {
   test('matches the FIPS 180-4 vectors', () => {
@@ -91,5 +97,31 @@ describe('sha256FontBytes', () => {
     // The padding uses shared scratch storage; nothing copies the caller's view.
     expect(allocations.every((size) => size <= 128)).toBe(true);
     expect(storage).toEqual(original);
+  });
+});
+
+describe('sha256Text', () => {
+  test('is the digest of the UTF-8 bytes, whatever the text holds', () => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const texts = [
+      '',
+      'abc',
+      'x'.repeat(55),
+      'x'.repeat(56),
+      'é'.repeat(40),
+      '中文'.repeat(500),
+      '😀 emoji',
+      'lone \ud800 surrogate',
+      '\0framed\0',
+      'y'.repeat(5000),
+      'z'.repeat(400_000),
+    ];
+    for (const text of texts) {
+      const expected = `sha256:${createHash('sha256').update(encode(text)).digest('hex')}`;
+      expect(sha256TextPure(text)).toBe(expected);
+      expect(sha256Text(text)).toBe(expected);
+    }
+    // The scratch buffer is reused: a short text after a long one hashes only its own bytes.
+    expect(sha256TextPure('abc')).toBe(sha256FontBytesPure(encode('abc')));
   });
 });
