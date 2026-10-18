@@ -215,6 +215,7 @@ import type {
 } from './paginated-surface-contract.ts';
 import type { ExecResult, SelectionPin, ViewScope } from '../contracts/editor.ts';
 import type { TableCommandPlan } from './table-command-plan.ts';
+import { suggestingStructureRefusal } from './surface-suggesting-structure.ts';
 import {
   clampedToDocument,
   collapsedAt,
@@ -2981,22 +2982,7 @@ export function mountPaginatedSurface(
     }
     // Without an author, refuse every suggested edit instead of writing untracked changes.
     if (editingMode === 'suggest' && !author?.trim() && edits) return AUTHOR_WRITE_REFUSAL;
-    // Deleting a note is a package-level removal with no tracked form: the reference and
-    // the body go outright, with no `w:del` and no card, while every insertion around it
-    // is a proposal. Striking the reference (Backspace over it) IS the tracked deletion —
-    // the body follows when the strike is accepted — so the outright lane is refused
-    // rather than left as a silent destructive edit in suggesting mode. Note CONVERSION
-    // and note properties stay direct on purpose: they destroy nothing, OOXML has no
-    // revision markup for them, and Word applies them the same way with tracking on.
-    if (editingMode === 'suggest' && ops.some((op) => op.op === 'deleteNote')) {
-      return 'suggesting cannot delete a note outright; strike its reference to propose the deletion';
-    }
-    // Removing a control with its content has no tracked form either; refuse it the same way.
-    const removesControl = (op: TreeDocOp) =>
-      op.op === 'removeContentControl' && op.keepContent === false;
-    if (editingMode === 'suggest' && ops.some(removesControl)) {
-      return 'suggesting cannot remove a content control outright';
-    }
+    if (editingMode === 'suggest') return suggestingStructureRefusal(ops);
     return null;
   }
 
