@@ -86,6 +86,11 @@ export interface DocxEditorRootProps {
   zoom?: number;
   zoomMode?: ZoomMode | 'auto';
   /**
+   * Which documents open behind a painted frame: `'large'` (the default) or `'every'`, which
+   * opens each document on its first pages while the rest is laid out. Sampled at mount.
+   */
+  openAfterPaint?: 'large' | 'every';
+  /**
    * Controlled viewer markup settings. Omitted fields use defaults.
    * Save callback values into this prop to accept API and dialog changes.
    * Omit this prop for uncontrolled settings. Use one configuration source.
@@ -309,6 +314,7 @@ export function useDocxEditorRootOwner(
       ...(p.modules !== undefined ? { modules: p.modules } : {}),
       ...(p.zoom !== undefined ? { zoom: p.zoom } : {}),
       ...(p.zoomMode !== undefined ? { zoomMode: p.zoomMode } : {}),
+      ...(p.openAfterPaint !== undefined ? { openAfterPaint: p.openAfterPaint } : {}),
       ...(p.tableInteractionLabel ? { tableInteractionLabel: p.tableInteractionLabel } : {}),
       ...(p.imageDecodePort ? { imageDecodePort: p.imageDecodePort } : {}),
       onFontError: fireFontError,

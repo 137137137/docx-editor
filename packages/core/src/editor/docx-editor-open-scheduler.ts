@@ -7,9 +7,14 @@
 // screen. Documents past {@link OPEN_PAINT_YIELD_CONTENT_BYTES} of CONTENT therefore
 // schedule the mount behind one painted frame, and `snapshot().isOpening` is true for
 // exactly that window. Small documents keep the synchronous path: they need no loading
-// flash, and every existing synchronous caller stays as it was. So does every
-// environment without `requestAnimationFrame` — headless and server hosts mount
-// synchronously by definition.
+// flash, and every existing synchronous caller stays as it was — unless the host asks for
+// every document to open this way (`openAfterPaint: 'every'`). Every environment without
+// `requestAnimationFrame` mounts synchronously: headless and server hosts by definition.
+//
+// PAGE ONE FIRST. The mount lays out the first pages only, and `isOpening` ends with it: the
+// rest of the document is laid out after, in short tasks of their own, while the pages on
+// screen are read, edited and scrolled (`snapshot().isPaginating`, then the `paginated`
+// event; see `surface-progressive-open.ts`).
 
 import { hostTimers, hostWindowOf } from './host-realm.ts';
 import { queueTask } from './sliced-steps.ts';
@@ -71,6 +76,17 @@ function zipContentExceeds(bytes: Uint8Array, limit: number): boolean {
 }
 
 /**
+ * Whether `bytes` are large enough to open behind a painted frame on their own, without
+ * `openAfterPaint: 'every'`: the documents the editor opened that way before the option.
+ */
+export function opensAfterPaintBySize(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= OPEN_PAINT_YIELD_CONTENT_BYTES ||
+    zipContentExceeds(bytes, OPEN_PAINT_YIELD_CONTENT_BYTES)
+  );
+}
+
+/**
  * The longest a mount waits for its prepare work. The page stays responsive while it waits,
  * and a mount that starts without the work still completes; it only pays for it later.
  */
@@ -104,10 +120,14 @@ export interface OpenSchedulerHooks {
   readonly scheduled: () => void;
   /**
    * Optional slices after `mount`: advance the opening layout for a short while and answer
-   * whether it is complete. Each runs in its own task, and the open stays scheduled
-   * (`isOpening`) until one answers true. `flush` runs the rest at once.
+   * whether it is complete. Each runs in its own task, after the open has ended
+   * (`isOpening` is false once `mount` returns), until one answers true; then `paginated`.
    */
   readonly continueOpen?: (budgetMs: number) => boolean;
+  /** Called once the slices after a mount answered true, or ended by throwing. */
+  readonly paginated?: () => void;
+  /** Whether every document opens behind a painted frame, not only a large one. */
+  readonly every?: () => boolean;
   /**
    * The element the document will paint in. Its window's frames and timers pace the open: a
    * frame requested from a hidden opener never comes, and its timers are throttled. Pending
@@ -123,8 +143,12 @@ interface ScheduledOpen {
   cancel(): void;
 }
 
-/** The work one opening slice aims to do, in milliseconds. */
-const OPEN_SLICE_MS = 40;
+/**
+ * The work one pagination slice aims to do, in milliseconds: with the browser's own work for
+ * the frame, one slice still fits in a frame or two. What a slice lays out never depends on
+ * it; see `surface-progressive-open.ts`.
+ */
+const PAGINATE_SLICE_MS = 16;
 
 /** The deferred-mount window, owned by the facade. See the module comment. */
 export interface OpenScheduler {
@@ -146,8 +170,38 @@ export interface OpenScheduler {
 
 export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
   let scheduled: ScheduledOpen | null = null;
+  /** The slices laying out the mounted document's later pages; see `paginate`. */
+  let pagination: { cancelled: boolean } | null = null;
   const viewOf = (): Window => hostWindowOf(hooks.node?.() ?? null);
 
+  const stopPagination = (): void => {
+    if (pagination) pagination.cancelled = true;
+    pagination = null;
+  };
+
+  /** Lay out the mounted document's later pages, a slice per task, then report it. */
+  const paginate = (): void => {
+    stopPagination();
+    const continueOpen = hooks.continueOpen;
+    if (!continueOpen) return;
+    const run = { cancelled: false };
+    pagination = run;
+    const slice = () => {
+      if (run.cancelled) return;
+      let done = true;
+      try {
+        done = continueOpen(PAGINATE_SLICE_MS);
+      } finally {
+        if (done && pagination === run) pagination = null;
+        if (done) hooks.paginated?.();
+      }
+      if (!done) queueTask(slice, viewOf());
+    };
+    queueTask(slice, viewOf());
+  };
+
+  // Not the pagination: the document on screen goes on laying out its pages until another
+  // one is scheduled or mounted (an attach that only moves it cancels nothing of it).
   const cancel = (): Uint8Array | null => {
     if (!scheduled) return null;
     const { bytes } = scheduled;
@@ -162,8 +216,7 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
     shouldYield: (bytes) =>
       typeof viewOf().requestAnimationFrame === 'function' &&
       typeof viewOf().cancelAnimationFrame === 'function' &&
-      (bytes.byteLength >= OPEN_PAINT_YIELD_CONTENT_BYTES ||
-        zipContentExceeds(bytes, OPEN_PAINT_YIELD_CONTENT_BYTES)),
+      (hooks.every?.() === true || opensAfterPaintBySize(bytes)),
 
     // `requestAnimationFrame` fires BEFORE the pending paint, so the heavy work goes
     // into a task queued from inside it — the first slot guaranteed to run after the
@@ -172,6 +225,7 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
     // plain-timer fallback mounts anyway: a document opened in the background must be
     // there when the tab is next looked at, not still waiting for a frame.
     schedule(bytes) {
+      stopPagination();
       const timers = hostTimers(() => hooks.node?.() ?? null);
       let timer: number | null = null;
       let fallback: number | null = null;
@@ -227,17 +281,12 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
         }
         mounted = true;
         endOnThrow(() => hooks.mount(bytes));
-        const slice = () => {
-          if (cancelled || scheduled !== entry) return;
-          if (hooks.continueOpen && !endOnThrow(() => hooks.continueOpen!(OPEN_SLICE_MS))) {
-            queueTask(slice, viewOf());
-            return;
-          }
-          scheduled = null;
-          if (hooks.continueOpen) hooks.scheduled();
-        };
-        if (hooks.continueOpen) queueTask(slice, viewOf());
-        else scheduled = null;
+        // Page one is up: the open ends here, and the later pages follow in slices.
+        scheduled = null;
+        if (hooks.continueOpen) {
+          hooks.scheduled();
+          paginate();
+        }
       };
       const raf = timers.requestAnimationFrame(() => {
         if (fallback !== null) timers.clearTimeout(fallback);
@@ -264,6 +313,8 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
 
     cancel,
 
+    // Mounts only: a caller that needs the document needs its first pages, and the later
+    // ones follow in their slices as after any open.
     flush() {
       const entry = scheduled;
       if (!entry) return;
@@ -271,13 +322,15 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
       cancel();
       try {
         if (!alreadyMounted) hooks.mount(entry.bytes);
-        if (hooks.continueOpen) while (!hooks.continueOpen(Number.POSITIVE_INFINITY));
       } catch (error) {
         // `isOpening` already cleared above; publish it beside the refusal, then rethrow.
         hooks.scheduled();
         throw error;
       }
-      if (alreadyMounted) hooks.scheduled();
+      if (hooks.continueOpen) {
+        hooks.scheduled();
+        paginate();
+      } else if (alreadyMounted) hooks.scheduled();
     },
 
     isScheduled: () => scheduled !== null,

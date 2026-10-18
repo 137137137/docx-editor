@@ -138,51 +138,65 @@ function unslicedSignature(bytes: Uint8Array): string[] {
 }
 
 describe('a large open laid out in slices', () => {
-  test('finishes with exactly the layout of an unsliced mount', async () => {
+  test('mounts on its first pages, then finishes with exactly the layout of an unsliced mount', async () => {
     const bytes = docx();
     const stepsBefore = progressiveOpenStepCount();
     const editor = createDocxEditor({ document: bytes });
     const container = document.createElement('div');
-    editor.attach(container);
-    const marked = () =>
-      container.hasAttribute('data-docx-opening-preview') ||
-      container.querySelector('[data-docx-opening-preview]') !== null;
-    // Before the mount the overlay must stay opaque, so nothing is marked yet.
-    expect(marked()).toBe(false);
-    // The mounted document is marked for the preview while its slices run. Recorded at the
-    // call: the slices are queued tasks that can run before any polling timer.
-    let sawPreview = false;
-    const setAttribute = container.setAttribute.bind(container);
-    container.setAttribute = (name: string, value: string) => {
-      if (name === 'data-docx-opening-preview') sawPreview = true;
-      setAttribute(name, value);
-    };
-    // No surface is handed out while slices remain.
-    await until(() => {
-      if (editor.snapshot().isOpening) expect(editor.surface).toBeNull();
-      return editor.surface !== null && !editor.snapshot().isOpening;
+    let paginatedEvents = 0;
+    editor.on('paginated', () => {
+      paginatedEvents += 1;
     });
-    expect(sawPreview).toBe(true);
-    expect(marked()).toBe(false);
-    // The open continued in a task after the mount. How many depends on machine speed and
-    // on what earlier files left in the shared digest caches; the preview above proves a
-    // partial layout was shown between tasks.
+    // Recorded at the event: the slices are queued tasks that can run before a poll.
+    const seen: { opening: boolean; paginating: boolean; pages: number }[] = [];
+    editor.on('selectionChange', (snapshot) => {
+      seen.push({
+        opening: snapshot.isOpening === true,
+        paginating: snapshot.isPaginating === true,
+        pages: editor.surface?.layout().pages.length ?? 0,
+      });
+    });
+    editor.attach(container);
+    expect(editor.snapshot().isOpening).toBe(true);
+    expect(editor.surface).toBeNull();
+    await until(() => editor.surface !== null && !editor.snapshot().isOpening);
+    // The open ended on the first pages: the rest were still to be laid out.
+    const firstShown = seen.find((entry) => !entry.opening && entry.pages > 0);
+    expect(firstShown?.paginating).toBe(true);
+    // The live pages are not muted behind the preview mark.
+    expect(container.hasAttribute('data-docx-opening-preview')).toBe(false);
+    await until(() => editor.snapshot().isPaginating !== true && paginatedEvents > 0);
     expect(progressiveOpenStepCount() - stepsBefore).toBeGreaterThanOrEqual(1);
     const sliced = signature(editor.surface!.layout());
     expect(sliced.length).toBeGreaterThan(400);
     expect(sliced).toEqual(unslicedSignature(bytes));
+    expect(firstShown!.pages).toBeLessThan(editor.surface!.layout().pages.length);
+    // Once per document.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(paginatedEvents).toBe(1);
     editor.destroy();
   }, 60_000);
 
-  test('a save during the slices finishes the layout at once', async () => {
+  test('a save while paginating saves, and the pages still end as an unsliced mount lays them out', async () => {
     const bytes = docx();
     const editor = createDocxEditor({ document: bytes });
+    // Saved from the first report of the open ending, while its later pages are pending: the
+    // slices are queued tasks a polling timer can miss.
+    let saving: Promise<Uint8Array> | null = null;
+    let paginatingAtSave = false;
+    editor.on('selectionChange', (snapshot) => {
+      if (saving || snapshot.isOpening || !snapshot.isPaginating) return;
+      paginatingAtSave = true;
+      saving = editor.save();
+    });
     editor.attach(document.createElement('div'));
-    await until(() => editor.snapshot().isOpening && editor.fontMeasurement().resolving);
-    const saved = await editor.save();
+    await until(() => saving !== null);
+    const saved = await saving!;
+    expect(paginatingAtSave).toBe(true);
     expect(saved.byteLength).toBeGreaterThan(0);
     expect(editor.snapshot().isOpening).toBe(false);
     expect(editor.surface).not.toBeNull();
+    await until(() => editor.snapshot().isPaginating !== true);
     expect(signature(editor.surface!.layout())).toEqual(unslicedSignature(bytes));
     editor.destroy();
   }, 60_000);

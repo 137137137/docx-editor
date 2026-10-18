@@ -1494,6 +1494,7 @@ export interface DocxEditorRootProps {
     onFontError?: (error: EditorFontError) => void;
     onReady?: (editor: Editor) => void;
     onRevisionMarkupChange?: (settings: ResolvedRevisionMarkup) => void;
+    openAfterPaint?: 'large' | 'every';
     popups?: DocxEditorPopups;
     reviewDisplayMode?: ReviewDisplayMode;
     revisionMarkup?: RevisionMarkupOptions;

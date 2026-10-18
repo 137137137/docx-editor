@@ -1,9 +1,14 @@
 // The internal seam a large open uses to finish its first layout in slices.
 //
 // The surface mounts with a layout of only the first body blocks. Each step lays out more of
-// the body, resuming from the previous pass, until the limit no longer cuts anything; the
-// last step publishes the normal full layout. Kept off the public surface contract, like
-// `surface-measurement.ts`.
+// the body, resuming from the previous pass, until the limit no longer cuts anything; then
+// the normal full layout runs, and its pages after the first ones are laid out in further
+// steps (`surface-deferred-layout.ts`, opening mode). The opening is pending until that full
+// layout is published. Kept off the public surface contract, like `surface-measurement.ts`.
+//
+// WHAT A STEP RUNS NEVER DEPENDS ON THE CLOCK. The prefixes are sized by content and the full
+// layout is the same pass however it is sliced, so a document paginates the same whether its
+// slices are short or long, and whether a reveal ran some of them at once.
 
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
 import { showOpeningIndicator } from './surface-opening-indicator.ts';
@@ -106,18 +111,64 @@ export interface OpeningSlicesHost {
   bodyBlockCount(): number | undefined;
   /** A prefix layout to `limit` body blocks, as steps that may pause inside a long table. */
   prefixPass(limit: number): LayoutSteps<unknown>;
-  /** The normal full layout, resumed from the last prefix; it ends the opening. */
+  /**
+   * Show a finished prefix layout, so the pages it completed can be read and scrolled to while
+   * the rest is laid out. Painting only: the next prefix resumes from the session either way.
+   */
+  publishPrefix?(layout: unknown): void;
+  /**
+   * Start the normal full layout, resumed from the last prefix; it ends the prefixes. It may
+   * leave its later pages to {@link OpeningSlicesHost.advance}.
+   */
   finish(): void;
+  /**
+   * Whether a pass left its later pages deferred: the mount's first pass, the full layout
+   * `finish` starts, or a relayout during the opening.
+   */
+  deferred(): boolean;
+  /** Advance the deferred pass for about `budgetMs`. True once it ended. */
+  advance(budgetMs: number): boolean;
+  /**
+   * Whether a relayout arrived during the opening that nobody waited for (an image decoded,
+   * fonts landed). It runs as one more pass once the prefixes are over.
+   */
+  relayoutPending?(): boolean;
+  /** Run that relayout: one more pass over the session, its later pages deferred. */
+  relayout?(): void;
   /** The body block at `index` of the last pass, for sizing the next step. */
   bodyBlock(index: number): unknown;
+}
+
+/** How one opening runs; see {@link startOpeningSlices}. */
+export interface OpeningSlicesOptions {
+  /**
+   * The live editor's pages, shown as they are laid out. They are not muted and take input;
+   * the indicator on the first page (`surface-opening-indicator.ts`) says the rest is still
+   * being laid out. A preview fork leaves this off and shows its first pages muted under the
+   * indicator until the rest is laid out.
+   */
+  readonly live?: boolean;
+  /**
+   * Go from the mounted prefix straight to the full layout, without the growing prefixes in
+   * between: the order an open takes when its fit moves the scale right after the mount.
+   */
+  readonly fullAfterFirst?: boolean;
+  /**
+   * Lay the document out whole from the mount, in one pass from a new session whose pages
+   * after the first ones follow in the slices, instead of growing prefixes. The pages are the
+   * ones a document laid out in one task gets, and the ones the background one-pass check
+   * (`surface-canonical-layout.ts`) would settle on. For a document the editor would
+   * otherwise have mounted in one task.
+   */
+  readonly whole?: boolean;
 }
 
 /**
  * Lay a mounted surface's body out in growing prefixes (see {@link PREFIX_STEP_CHARACTERS}):
  * each extends the prefix and resumes from the previous one, and a prefix pass pauses between the
- * rows of a long table instead of laying it out in one task. Marks `container` while it runs,
- * so the loading overlay shows the document muted, and shows the loading indicator on the first
- * page.
+ * rows of a long table instead of laying it out in one task. Then the full layout, whose later
+ * pages are laid out in further slices. A preview marks `container` while it runs, so the
+ * loading overlay shows the document muted, and shows the loading indicator on the first page.
  *
  * Answers a function that finishes a paused prefix pass at once. Any other layout of the same
  * session must call it first, because the paused pass holds that session mid-flow.
@@ -126,9 +177,11 @@ export function startOpeningSlices(
   surface: object,
   container: HTMLElement,
   host: OpeningSlicesHost,
-  firstGrowth: number
+  firstGrowth: number,
+  options: OpeningSlicesOptions = {}
 ): () => void {
   let growth = firstGrowth;
+  let fullNext = options.fullAfterFirst === true;
   let pass: LayoutSteps<unknown> | null = null;
   const finishPaused = (): void => {
     const paused = pass;
@@ -137,13 +190,28 @@ export function startOpeningSlices(
   };
   const step = (budgetMs: number): boolean => {
     const deadline = host.now() + budgetMs;
-    while (host.limit() !== null && !host.destroyed()) {
+    while (!host.destroyed()) {
+      // A pass that deferred its later pages ends first: the next one resumes from it.
+      if (host.deferred()) {
+        if (!host.advance(Math.max(0, deadline - host.now()))) return false;
+        if (host.now() >= deadline) return false;
+        continue;
+      }
+      // The prefixes are over, by the full layout below or by any other full layout of the
+      // session. A relayout nobody waited for is one more pass, in these slices.
+      if (host.limit() === null) {
+        if (!host.relayoutPending?.()) return true;
+        host.relayout?.();
+        if (host.now() >= deadline) return false;
+        continue;
+      }
       if (!pass) {
         const limit = host.limit()!;
         const total = host.bodyBlockCount();
-        if (total !== undefined && limit >= total) {
+        if (fullNext || (total !== undefined && limit >= total)) {
+          fullNext = false;
           host.finish();
-          return true;
+          continue;
         }
         const next =
           total === undefined
@@ -152,11 +220,12 @@ export function startOpeningSlices(
         host.setLimit(next);
         pass = host.prefixPass(next);
       }
-      let done = false;
-      do done = pass.next().done === true;
-      while (!done && host.now() < deadline);
-      if (!done) return false;
+      let result: IteratorResult<unknown, unknown>;
+      do result = pass.next();
+      while (!result.done && host.now() < deadline);
+      if (!result.done) return false;
       pass = null;
+      host.publishPrefix?.(result.value);
       // Before the first pass reports the block count, steps double; see the constants above.
       growth = Math.min(MAX_PREFIX_STEP, growth * 2);
       if (host.now() >= deadline) return false;
@@ -164,8 +233,9 @@ export function startOpeningSlices(
     return true;
   };
   container.removeAttribute('data-docx-opening-preview');
-  if (host.limit() !== null) {
-    container.setAttribute('data-docx-opening-preview', '');
+  if (host.limit() !== null || host.deferred()) {
+    // Live pages take input; a preview's show muted until they are all laid out.
+    if (!options.live) container.setAttribute('data-docx-opening-preview', '');
     const indicator = showOpeningIndicator(surface, container);
     registerProgressiveOpen(surface, (budgetMs) => {
       const done = step(budgetMs);

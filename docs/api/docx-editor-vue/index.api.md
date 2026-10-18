@@ -4234,6 +4234,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: PropType<readonly EditorModule[]>;
     };
+    openAfterPaint: {
+        default: undefined;
+        type: PropType<'large' | 'every'>;
+    };
     popups: PropType<DocxEditorPopups>;
     reviewDisplayMode: PropType<ReviewDisplayMode>;
     revisionMarkup: PropType<RevisionMarkupOptions>;
@@ -4305,6 +4309,10 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
         default: undefined;
         type: PropType<readonly EditorModule[]>;
     };
+    openAfterPaint: {
+        default: undefined;
+        type: PropType<'large' | 'every'>;
+    };
     popups: PropType<DocxEditorPopups>;
     reviewDisplayMode: PropType<ReviewDisplayMode>;
     revisionMarkup: PropType<RevisionMarkupOptions>;
@@ -4341,6 +4349,7 @@ export const DocxEditorRoot: vue.DefineComponent<vue.ExtractPropTypes<{
     lockedControlNavigation: LockedControlNavigation;
     mode: "edit" | "suggesting" | "view";
     modules: readonly EditorModule[];
+    openAfterPaint: "every" | "large";
     tableInteractionLabel: ((key: 'table.insertRowBelow' | 'table.insertColumnRight') => string) | undefined;
     translate: ((key: string, params?: Record<string, string | number>) => string) | undefined;
     zoom: number;
@@ -4384,6 +4393,7 @@ export interface DocxEditorRootProps {
     // (undocumented)
     onReady?: (editor: Editor) => void;
     onRevisionMarkupChange?: (settings: ResolvedRevisionMarkup) => void;
+    openAfterPaint?: 'large' | 'every';
     // (undocumented)
     popups?: DocxEditorPopups;
     reviewDisplayMode?: ReviewDisplayMode;

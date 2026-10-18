@@ -59,6 +59,21 @@ export interface EditorEvents {
    */
   reviewItemReveal: (event: ReviewItemRevealEvent) => void;
   /**
+   * Every page of the mounted document is laid out. A document that opens behind a painted
+   * frame shows its first pages as soon as they are laid out and lays the rest out in short
+   * tasks, then fires this once (see {@link EditorSnapshot.isPaginating}); a document that
+   * mounts before `load()` returns fires it just after the mount. It fires once per mounted
+   * document, and again only for the next document.
+   *
+   * @example
+   * ```ts
+   * editor.on('paginated', () => {
+   *   console.log(`${editor.snapshot().page.total} pages`);
+   * });
+   * ```
+   */
+  paginated: () => void;
+  /**
    * The editor's pages are now in another document: it was attached for the first time, moved
    * into another element or window, detached (`document` is `null`), or found its element
    * moved to another window by the host. Custom chrome that listens on the editor's document

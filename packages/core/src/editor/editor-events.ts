@@ -27,6 +27,7 @@ export function createEditorEvents(
     revisionMarkupChange: new Set(),
     reviewItemReveal: new Set(),
     hostChange: new Set(),
+    paginated: new Set(),
   };
   /**
    * Report a new host document. Every attach, move, heal and detach also re-publishes the
@@ -120,6 +121,11 @@ export function createEditorEvents(
       dispatch(() => {
         const value = Object.freeze({ ...event });
         for (const handler of [...handlers.reviewItemReveal]) handler(value);
+      });
+    },
+    emitPaginated() {
+      dispatch(() => {
+        for (const handler of [...handlers.paginated]) handler();
       });
     },
     hasErrorHandlers: () => handlers.error.size > 0,

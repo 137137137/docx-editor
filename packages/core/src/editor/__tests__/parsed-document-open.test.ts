@@ -105,7 +105,10 @@ async function opened(document: Uint8Array | ParsedDocument): Promise<DocxEditor
   window.document.body.appendChild(container);
   editor.attach(container);
   const deadline = Date.now() + 20_000;
-  while ((editor.surface === null || editor.snapshot().isOpening) && Date.now() < deadline) {
+  while (
+    (editor.surface === null || editor.snapshot().isOpening || editor.snapshot().isPaginating) &&
+    Date.now() < deadline
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   if (!editor.surface) throw new Error(`no surface: ${editor.snapshot().parseError ?? ''}`);

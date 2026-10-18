@@ -14,6 +14,13 @@
 // dropped: a footnote search then stops after its current round, and the next pass continues
 // it. A document
 // whose pass finishes within its budget, or that never reports pages, lays out as before.
+//
+// While a document is still being paginated after its opening (`surface-progressive-open.ts`),
+// a pass runs in OPENING mode: it hands its later pages to the background as soon as the pages
+// before the view are complete, however few pages the previous layout had, and the opening's
+// own slices advance it (`advance`) instead of a background task of its own. So a relayout
+// during the opening, an image that decoded or an edit, is one more pass over the session the
+// opening laid out, and never a whole-document pass in one task.
 
 import { drainLayoutSteps, type LayoutProgress, type LayoutSteps } from '../layout/layout-steps.ts';
 import type { SemanticLayout } from '../layout/semantic-records.ts';
@@ -64,9 +71,21 @@ export interface DeferredLayoutHost {
 export interface DeferredLayout {
   /**
    * Lay out `steps` for `revision`: the finished layout, or an interim one. A pass with
-   * `timed: false` reports no time through `passTimed`.
+   * `timed: false` reports no time through `passTimed`. With `opening`, the pass defers as
+   * soon as the pages before the view are complete, and only {@link DeferredLayout.advance}
+   * (or `finish`) moves it on; see the module comment.
    */
-  run(steps: LayoutSteps<SemanticLayout>, revision: number, timed?: boolean): SemanticLayout;
+  run(
+    steps: LayoutSteps<SemanticLayout>,
+    revision: number,
+    timed?: boolean,
+    opening?: boolean
+  ): SemanticLayout;
+  /**
+   * Advance a pass deferred in opening mode for about `budgetMs`. True once no pass is
+   * deferred, which is also the answer when none was.
+   */
+  advance(budgetMs: number): boolean;
   /** Finish a deferred pass now. Its layout is published only if still current. */
   finish(): void;
   /**
@@ -119,6 +138,8 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     readonly restorable: boolean;
     /** Asks a pass that is not restorable to end early; see {@link LayoutProgress.wrapUp}. */
     wrapUp: (() => void) | undefined;
+    /** An opening pass: `advance` moves it, never a background task of its own. */
+    readonly opening: boolean;
   };
   let paused: Paused | null = null;
   /** Time of dropped passes, owed to the next pass. */
@@ -136,11 +157,10 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     if (host.revision() === revision) host.publish(layout);
   };
 
-  const drive = (): void => {
-    const pass = paused;
-    if (!pass) return;
+  /** Step the paused pass for `budgetMs`. True once it ended (and was settled). */
+  const stepPaused = (pass: Paused, budgetMs: number): boolean => {
     const began = host.now();
-    const deadline = began + BACKGROUND_SLICE_MS;
+    const deadline = began + budgetMs;
     for (;;) {
       const next = pass.steps.next();
       if (!next.done && next.value?.wrapUp) pass.wrapUp = next.value.wrapUp;
@@ -148,12 +168,18 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
         setPaused(null);
         settle(next.value, pass.revision);
         report(pass.timed, pass.spent + host.now() - began);
-        return;
+        return true;
       }
       if (host.now() >= deadline) break;
     }
     pass.spent += host.now() - began;
-    queueTask(drive, host.view?.());
+    return false;
+  };
+
+  const drive = (): void => {
+    const pass = paused;
+    if (!pass || pass.opening) return;
+    if (!stepPaused(pass, BACKGROUND_SLICE_MS)) queueTask(drive, host.view?.());
   };
 
   const finish = (): void => {
@@ -166,7 +192,7 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
   };
 
   return {
-    run(steps, revision, timed = true) {
+    run(steps, revision, timed = true, opening = false) {
       const restore = host.snapshot();
       const began = host.now();
       // Only the report takes the replaced passes' time; the budget below starts now, so
@@ -174,7 +200,8 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
       const owed = timed ? carried : 0;
       if (timed) carried = 0;
       const deadline = began + foregroundMs;
-      const after = pageAfterViewForTest ?? host.pageAfterView();
+      // An opening defers after the first page when no view says which pages show.
+      const after = pageAfterViewForTest ?? host.pageAfterView() ?? (opening ? 1 : undefined);
       const previous = host.current();
       let progress: LayoutProgress | null = null;
       for (;;) {
@@ -189,13 +216,18 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
           !progress?.finalize ||
           progress.pages.length <= after ||
           host.now() < deadline ||
-          !previous ||
-          previous.pages.length - progress.pages.length < MIN_DEFERRED_PAGES
+          (!previous && !opening) ||
+          (!opening &&
+            previous !== null &&
+            previous.pages.length - progress.pages.length < MIN_DEFERRED_PAGES)
         )
           continue;
         // The completed pages, then the previous layout's pages after them, until the pass
-        // ends. Each keeps the index it is painted at.
-        const pages = [...progress.pages, ...previous.pages.slice(progress.pages.length)];
+        // ends. Each keeps the index it is painted at. An opening's first pass has no
+        // previous layout: its completed pages are all there is to show.
+        const pages = previous
+          ? [...progress.pages, ...previous.pages.slice(progress.pages.length)]
+          : [...progress.pages];
         setPaused({
           steps,
           revision,
@@ -204,12 +236,17 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
           timed,
           restorable: progress.restorable !== false,
           wrapUp: progress.wrapUp,
+          opening,
         });
-        afterPaint(drive, host.view?.());
+        if (!opening) afterPaint(drive, host.view?.());
         return progress.finalize(pages);
       }
     },
     finish,
+    advance(budgetMs) {
+      const pass = paused;
+      return !pass || stepPaused(pass, budgetMs);
+    },
     abandon() {
       const pass = paused;
       if (!pass) return;

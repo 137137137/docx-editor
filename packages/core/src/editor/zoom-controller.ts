@@ -66,6 +66,12 @@ export interface ZoomController {
   refitIfPageResized(): void;
   /** Stop observing and cancel any pending frame. */
   detach(): void;
+  /**
+   * The scale the active fit would choose for a page `pageWidthPx` wide (CSS pixels at 100%),
+   * or null for a fixed mode or a container that cannot be measured. Applies nothing: for a
+   * document whose first page is known before it is laid out.
+   */
+  fitFor(pageWidthPx: number): number | null;
 }
 
 /**
@@ -150,31 +156,40 @@ export function createZoomController(host: ZoomControllerHost): ZoomController {
     frame = null;
   }
 
-  function refit(): void {
+  /**
+   * The fit for a page `pageWidthPx` wide in the container now: `undefined` when there is no
+   * fit to compute (a fixed mode, or a container that cannot be measured), else `fitZoom`'s
+   * answer. Applies nothing.
+   */
+  function fitIn(pageWidthPx: () => number | null): number | null | undefined {
     const mode = host.mode();
-    if (!isFitMode(mode)) return;
+    if (!isFitMode(mode)) return undefined;
     const container = host.container();
-    if (!container) return;
+    if (!container) return undefined;
     // A capped fit keeps its size beside the review pane under `overflow: 'scroll'`. An
     // uncapped fit still fills the padded box.
     const reviewPaneScrolls =
       host.reviewPaneScrolls?.() === true && reviewPaneEntitledZoom(mode, host.zoom()) !== null;
     const width = availableWidth(container, reviewPaneScrolls);
-    if (width === null) return;
-    const pageWidthPx = host.pageWidthPx();
-    if (pageWidthPx === null) return;
-    fittedPageWidthTwips = host.pageWidthTwips();
-
-    const next = fitZoom({
+    if (width === null) return undefined;
+    const pagePx = pageWidthPx();
+    if (pagePx === null) return undefined;
+    return fitZoom({
       availableWidthPx: width,
-      pageWidthPx,
+      pageWidthPx: pagePx,
       ...(mode.minZoom !== undefined ? { minZoom: mode.minZoom } : {}),
       ...(mode.maxZoom !== undefined ? { maxZoom: mode.maxZoom } : {}),
     });
+  }
+
+  function refit(): void {
+    const next = fitIn(host.pageWidthPx);
+    if (next === undefined) return;
+    fittedPageWidthTwips = host.pageWidthTwips();
     if (next === null || next === host.zoom()) return;
     // A rescale keeps the viewport centre in place, which scrolls sideways once the page is
     // wider than the box (`overflow: 'scroll'`). A reader at the start edge stays there.
-    const scroller = surfaceScroller(container);
+    const scroller = surfaceScroller(host.container()!);
     const atStart = scroller !== null && scroller.scrollLeft === 0;
     host.applyZoom(next);
     if (atStart && scroller && scroller.scrollLeft !== 0) scroller.scrollLeft = 0;
@@ -220,6 +235,7 @@ export function createZoomController(host: ZoomControllerHost): ZoomController {
       refit();
     },
     refit,
+    fitFor: (pageWidthPx) => fitIn(() => pageWidthPx) ?? null,
     detach(): void {
       cancelFrame();
       observer?.disconnect();

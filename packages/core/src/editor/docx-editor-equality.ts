@@ -213,6 +213,7 @@ const SNAPSHOT_FIELDS = {
   scope: 'compared',
   isLoading: 'compared',
   isOpening: 'compared',
+  isPaginating: 'compared',
   parseError: 'compared',
   openFailure: 'compared',
   editable: 'compared',
