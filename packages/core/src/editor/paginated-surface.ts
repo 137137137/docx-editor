@@ -158,6 +158,8 @@ import { attachListResolveChangeEvidence } from '../layout/list-resolve.ts';
 import { rangesOnPages } from '../layout/selection-rects.ts';
 import { refreshSurfaceRefFieldResults } from './surface-ref-field-refresh.ts';
 import { type RevisionAuthorFilter } from '../layout/revision-projection.ts';
+import { surfaceRevisionFilter } from './surface-unlisted-filter.ts';
+import { createFurnitureFilterMemo } from './surface-furniture-filter.ts';
 import { createRevisionAuthorVisibility } from './revision-author-visibility.ts';
 import type { PaginatedSurfaceRuntimeOptions } from './surface-runtime-options.ts';
 import { scopeSession, surfaceFieldResultsScope } from './field-results-scope.ts';
@@ -956,7 +958,7 @@ export function mountPaginatedSurface(
   });
   const markupSettings = createSurfaceRevisionMarkup(
     options.revisionMarkup,
-    () => reviewView.filter(revisionAuthorVisibility.filterForSession(session)),
+    () => surfaceRevisionFilter(reviewView, revisionAuthorVisibility, session),
     () => flushPendingInputAndLayout(),
     () => {
       furnitureSource = createCurrentFurnitureSource(revisionFilter());
@@ -995,11 +997,12 @@ export function mountPaginatedSurface(
    */
   const fieldLinks = createFieldLinkRegistry();
   type SurfaceFurnitureOptions = Parameters<typeof createFurnitureSource>[0];
+  const furnitureFilters = createFurnitureFilterMemo();
   const createCurrentFurnitureSource = (
     authorFilter?: RevisionAuthorFilter,
     fieldCodes = showFieldCodes
-  ): ReturnType<typeof createFurnitureSource> =>
-    createFurnitureSource({
+  ): ReturnType<typeof createFurnitureSource> => {
+    const source = createFurnitureSource({
       session,
       measurer,
       producer,
@@ -1018,6 +1021,9 @@ export function mountPaginatedSurface(
       linkProjectors,
       projectFieldLink: (spec) => fieldLinks.project(spec),
     } satisfies SurfaceFurnitureOptions & Record<keyof SurfaceFurnitureOptions, unknown>);
+    furnitureFilters.record(source, authorFilter);
+    return source;
+  };
   furnitureSource = createCurrentFurnitureSource(revisionFilter());
 
   interface LayoutDocumentContext {
@@ -1397,8 +1403,11 @@ export function mountPaginatedSurface(
     bodyBlockLimit?: number
   ): LayoutSteps<SemanticLayout> {
     const activeAuthorFilter = context ? context.authorFilter : revisionFilter();
+    const usesLive = !context || context.furnitureSource === furnitureSource;
+    if (usesLive && furnitureFilters.moved(furnitureSource, activeAuthorFilter))
+      furnitureSource = createCurrentFurnitureSource(activeAuthorFilter);
     const activeLayoutSession = context?.layoutSession ?? layoutSession;
-    const activeFurnitureSource = context?.furnitureSource ?? furnitureSource;
+    const activeFurnitureSource = usesLive || !context ? furnitureSource : context.furnitureSource;
     if (scope) attachListResolveChangeEvidence(activeLayoutSession, scope);
     // Any full layout of the live session completes an opening still in slices.
     if (!context && bodyBlockLimit === undefined) openingBlockLimit = null;
