@@ -23,6 +23,7 @@
 
 import { advanceClock, resetClock } from './scenario-clock.ts';
 import { TypedTokens } from './scenario-tokens.ts';
+import { DecisionOracle } from './scenario-decisions.ts';
 import { CaretWatch } from './scenario-presence.ts';
 import * as Y from 'yjs';
 import {
@@ -162,8 +163,11 @@ class Simulation {
   readonly network: Network;
   readonly refused: Record<string, number> = {};
   readonly sequence: Addressed[] = [];
+  /** The replica that made each edit of `sequence`: the actor a solo replay applies it as. */
+  readonly sequenceReplicas: number[] = [];
   readonly trail: string[] = [];
   private readonly tokens = new TypedTokens();
+  private readonly decisions = new DecisionOracle();
   /** Each replica's open undo group, and its undo stack's height when it opened. */
   private readonly groups = new Map<number, { readonly end: () => void; readonly steps: number }>();
   private readonly carets: CaretWatch;
@@ -353,6 +357,7 @@ class Simulation {
         const pendingBefore = shownOrPending(replica);
         if (action.kind === 'redo' ? session.redo() : session.undo()) {
           this.undos += 1;
+          this.decisions.undone(action.replica);
           this.tokens.undoOn(action.replica, sharedBefore, sharedTextOf(replica.ydoc), {
             before: pendingBefore,
             after: shownOrPending(replica),
@@ -382,6 +387,7 @@ class Simulation {
             break;
           }
           const removing = this.tokens.beforeEdit(editor.store, op);
+          const decision = this.decisions.before(editor.store, op, editor.index);
           const result = applyOp(editor.store, op, `replica-${editor.index}`);
           if (!result.ok) {
             const reason = result.reason ?? 'refused';
@@ -389,6 +395,7 @@ class Simulation {
             break;
           }
           this.tokens.afterEdit(editor.store, removing, editor.index);
+          this.decisions.applied(decision);
           editor.handle.session.flushPendingJournals();
           this.applied += 1;
           // A transient refusal takes the edit back in the same tick; its token never existed.
@@ -403,6 +410,7 @@ class Simulation {
             this.carets.moved(editor);
           }
           this.sequence.push(tagged.addressed);
+          this.sequenceReplicas.push(editor.index);
           this.followLockstep(editor, tagged.addressed);
         } catch (error) {
           this.problems.push(`replica ${editor.index} threw ${(error as Error).stack ?? error}`);
@@ -516,6 +524,8 @@ class Simulation {
 
     // Typing that no one removed shows exactly once.
     problems.push(...this.tokens.check(packages));
+    // A decision on a pending change reached all of the change its author saw.
+    if (packages[0]) problems.push(...this.decisions.check(packages[0]));
 
     // Save and reopen, and the server's view of the shared state.
     try {
@@ -543,7 +553,8 @@ class Simulation {
       const solo = storeFrom(document);
       for (const [index, addressed] of this.sequence.entries()) {
         const op = bindIds(solo, addressed);
-        const result = op ? applyOp(solo, op, 'solo') : { ok: false as const, reason: 'unbound' };
+        const actor = `replica-${this.sequenceReplicas[index]}`;
+        const result = op ? applyOp(solo, op, actor) : { ok: false as const, reason: 'unbound' };
         if (!result.ok) {
           problems.push(`solo replay refused operation ${index} (${result.reason})`);
           break;
@@ -695,7 +706,7 @@ export async function runScenario(options: ScenarioOptions): Promise<ScenarioRep
       if (options.undoChance && random() < options.undoChance) {
         await perform({ kind: random() < 0.4 ? 'redo' : 'undo', replica: editor.index });
       } else {
-        const addressed = planEdit(editor.store, random, weights);
+        const addressed = planEdit(editor.store, random, weights, `Author ${editor.index}`);
         if (addressed) await perform({ kind: 'edit', replica: editor.index, addressed });
       }
       if (options.delivery !== 'in-order') {
