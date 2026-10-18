@@ -636,7 +636,8 @@ export function synthesizeParagraphTopAndBottomZones(options: {
       pageFramed ??
       topAndBottomBandAnchorY(
         options.paragraphStartY + lineTop,
-        atom.projection.position?.vertical ?? null
+        atom.projection.position?.vertical ?? null,
+        options.paragraphStartY
       );
     const measure = measureInlineDrawing(atom.projection);
     const geometry = drawingGeometryFromProjection({
