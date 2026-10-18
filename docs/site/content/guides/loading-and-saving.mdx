@@ -312,6 +312,8 @@ worker.onmessage = async (event) => {
 
 A parsed document is meant to come from `parseDocument` in a same-origin worker you start yourself. It is not a format to accept from a server, another origin or storage. The editor does not take the read on trust either: it uses it only when the wire version is its own, the read names the bytes it travels with (their length and a fingerprint of the zip's central directory), and the rebuilt package is within the reader's own limits (entries, expanded size and ratio, XML parts and their size, relationships, tree depth and node count). Anything else opens from the bytes through the ordinary bounded read, so no value can open a package the reader would have refused.
 
+A host that knows the document will be opened soon (a file picked, and the reader still choosing what to do with it) can also take the open's next step early. `prepareParsedDocument(parsed)` from `@docx-editor.dev/core/editor` opens the document's session on the page and reads the font families the open asks its font resolver for. The editor that is later handed the same parsed document opens from that session, so its open starts at the fonts. It is main-thread work, as much as the open itself would do at that point. The session is taken once; an editor with a review module or a content-lock policy opens its own from the read, and an editor handed the plain bytes reads them as usual.
+
 ### Replace a document at runtime
 
 To replace the document without remounting the component, use the ref:

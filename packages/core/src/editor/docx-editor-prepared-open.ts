@@ -3,8 +3,9 @@
 // Keyed by the exact bytes object, and taken once: a session is live editing state, so two
 // mounts must never share one. An entry whose mount never comes dies with its bytes.
 //
-// The OPTIONAL parsed-document path (`@docx-editor.dev/core/parse`) joins here and nowhere
-// else: a read held for bytes stands in for the package read. Bytes without one — every ordinary source — take the same
+// The OPTIONAL parsed-document path (`@docx-editor.dev/core/parse`, `prepareParsedDocument`)
+// joins here and nowhere else: a read held for bytes, or a session opened ahead from it,
+// stands in for the package read. Bytes with neither — every ordinary source — take the same
 // steps as before; the only addition on their path is a WeakMap miss.
 
 import { openTreeSession, type OpenTreeSessionResult } from '@docx-editor.dev/core/binding';
@@ -13,6 +14,7 @@ import {
   type OpenTreeSessionOptions,
 } from '../binding/tree-session.ts';
 import { readOoxmlPackageSteps, type OoxmlPackageResult } from '../store/package/ooxml-package.ts';
+import { takeOpenedAhead } from './opened-ahead.ts';
 import {
   isParsedDocument,
   parsedDocumentRead,
@@ -60,9 +62,10 @@ export function holdParsedRead(source: unknown, bytes: Uint8Array): void {
 }
 
 /**
- * The open of `bytes` from the read a parsed document left for them, claimed now: removed at
- * once — a session is live editing state and owns its package — and `null` (no held read)
- * means the bytes are read as usual.
+ * The open of `bytes` from what a parsed document left for them, claimed now: the session
+ * opened ahead (`prepareParsedDocument`) when `options` are the ones it was opened with, else
+ * a session opened from the held read. Both are removed at once — a session is live editing
+ * state and owns its package — and `null` (no held read) means the bytes are read as usual.
  */
 function takeParsedOpen(
   bytes: Uint8Array,
@@ -72,7 +75,8 @@ function takeParsedOpen(
   if (!read) return null;
   parsedReads.delete(bytes);
   const resolved = options();
-  return () => openTreeSessionFromPackage(read, resolved);
+  const ahead = takeOpenedAhead(bytes, resolved);
+  return ahead ? () => ahead : () => openTreeSessionFromPackage(read, resolved);
 }
 
 /** The session options a prepared open must share with the mount it stands in for. */

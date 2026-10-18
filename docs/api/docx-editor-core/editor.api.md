@@ -2904,6 +2904,14 @@ export interface ParagraphTabStop {
 }
 
 // @public
+export interface ParsedDocument {
+    readonly bytes: Uint8Array;
+    readonly kind: 'docx-editor.parsed-document';
+    readonly read: unknown;
+    readonly version: number;
+}
+
+// @public
 export function parseIsoDate(value: string): Date | null;
 
 // @public
@@ -2946,6 +2954,9 @@ export function positionInputFromPropertiesCommand(command: {
 }, selected: {
     readonly position?: DrawingPositionInput | null;
 } | null): DrawingPositionInput;
+
+// @public
+export function prepareParsedDocument(parsed: ParsedDocument): boolean;
 
 // @public
 export function probeTableChromeCommand(slot: TableChromeSlotId, draft?: TableChromeDraft): EditorCommand | null;

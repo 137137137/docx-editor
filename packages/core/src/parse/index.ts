@@ -4,7 +4,8 @@
  * OPTIONAL, for prefetching. Reading a package is most of what an open costs before layout.
  * This entry does that read before any editor exists and where it cannot hold up the page — a
  * Web Worker — and hands back a `ParsedDocument` that crosses `postMessage`; the editor opens
- * from it without reading the file again. An editor handed plain bytes never comes here.
+ * from it without reading the file again (and `prepareParsedDocument` from the editor entry
+ * can open its session ahead too). An editor handed plain bytes never comes here.
  *
  * Trust model: a parsed document comes from `parseDocument` in a same-origin worker the host
  * started itself, never from a server, another origin or storage. The editor checks it all the
