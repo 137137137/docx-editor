@@ -709,7 +709,10 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // default (`all-markup`), which is what the review rail annotates.
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
       ...diagnostics.surfaceHooks(suggesting, () => surface),
-      ...preparedOpen.takePreparedOpen(bytes),
+      ...preparedOpen.takePreparedOpen(
+        bytes,
+        preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config)
+      ),
       ...(modules.collaboration ? { collaborationModel: modules.collaboration } : {}),
       onHostMoved: followHost,
       onTrackedChange: () => {
@@ -1367,8 +1370,10 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
 
   if (config.document) {
     const bytes = normalizeSource(config.document);
-    if (bytes) loadBytes(bytes);
-    else {
+    if (bytes) {
+      preparedOpen.holdParsedRead(config.document, bytes);
+      loadBytes(bytes);
+    } else {
       emitError(editorError('unsupported', openFailure.refuseSource(config.document)));
       diagnostics.openRejected('unsupported');
     }
@@ -1940,6 +1945,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       }
       refreshHost?.invalidate();
       highlights.reset();
+      preparedOpen.holdParsedRead(document, bytes);
       loadBytes(bytes);
     },
 
