@@ -1595,7 +1595,7 @@ export interface DocumentShape {
 }
 
 // @public
-export type DocumentSource = ArrayBuffer | Uint8Array | DocumentHandle | 'blank';
+export type DocumentSource = ArrayBuffer | Uint8Array | DocumentHandle | ParsedDocument | 'blank';
 
 // @public
 export interface DocxDocument {
@@ -3247,6 +3247,14 @@ export interface ParagraphTabStop {
     readonly leader?: 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
     // (undocumented)
     readonly positionTwips: number;
+}
+
+// @public
+export interface ParsedDocument {
+    readonly bytes: Uint8Array;
+    readonly kind: 'docx-editor.parsed-document';
+    readonly read: unknown;
+    readonly version: number;
 }
 
 // @public

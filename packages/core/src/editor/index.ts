@@ -235,6 +235,11 @@ export {
   type HyperlinkChromeHandlers,
   type BookmarkChromeHandlers,
 } from './docx-editor.ts';
+// OPTIONAL: adopt a document read ahead of its editor. `parseDocument`
+// (`@docx-editor.dev/core/parse`) reads it, typically in a worker the host starts; this opens
+// its session on the page before the editor asks. An editor handed bytes never uses either.
+export { prepareParsedDocument } from './opened-ahead.ts';
+export type { ParsedDocument } from '../store/package/parsed-document.ts';
 // `DocxEditorInstance.fontMeasurement()` returns it, so the lane that exports the instance
 // has to export the answer too.
 export type {
