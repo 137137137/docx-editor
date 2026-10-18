@@ -2,13 +2,22 @@
 //
 // Keyed by the exact bytes object, and taken once: a session is live editing state, so two
 // mounts must never share one. An entry whose mount never comes dies with its bytes.
+//
+// The OPTIONAL parsed-document path (`@docx-editor.dev/core/parse`) joins here and nowhere
+// else: a read held for bytes stands in for the package read. Bytes without one — every ordinary source — take the same
+// steps as before; the only addition on their path is a WeakMap miss.
 
 import { openTreeSession, type OpenTreeSessionResult } from '@docx-editor.dev/core/binding';
 import {
   openTreeSessionFromPackage,
   type OpenTreeSessionOptions,
 } from '../binding/tree-session.ts';
-import { readOoxmlPackageSteps } from '../store/package/ooxml-package.ts';
+import { readOoxmlPackageSteps, type OoxmlPackageResult } from '../store/package/ooxml-package.ts';
+import {
+  isParsedDocument,
+  parsedDocumentRead,
+  type ParsedDocument,
+} from '../store/package/parsed-document.ts';
 import type { TreeDocxSessionView } from '../binding/tree-session-contract.ts';
 import type { OoxmlElement, OoxmlNode } from '../store/package/ooxml-tree.ts';
 import { nodeIndexSteps } from '../store/package/ooxml-edit.ts';
@@ -34,6 +43,37 @@ export type FontSession = Pick<
 >;
 
 const prepared = new WeakMap<Uint8Array, OpenTreeSessionResult>();
+/** The package read a parsed document carries, by the bytes it opens; taken once, like a session. */
+const parsedReads = new WeakMap<Uint8Array, OoxmlPackageResult>();
+
+/**
+ * Keep the read a {@link ParsedDocument} carries beside the bytes it opens, so their open skips
+ * reading them. Any other source, and a parsed document whose read this engine will not use
+ * (another wire version, a damaged stream, a read that does not name these bytes or exceeds
+ * the reader's limits; see `parsedDocumentRead`), opens from its bytes as before — through
+ * the bounded reader, so no source skips its limits.
+ */
+export function holdParsedRead(source: unknown, bytes: Uint8Array): void {
+  if (!isParsedDocument(source)) return;
+  const read = parsedDocumentRead(source as ParsedDocument);
+  if (read) parsedReads.set(bytes, read);
+}
+
+/**
+ * The open of `bytes` from the read a parsed document left for them, claimed now: removed at
+ * once — a session is live editing state and owns its package — and `null` (no held read)
+ * means the bytes are read as usual.
+ */
+function takeParsedOpen(
+  bytes: Uint8Array,
+  options: () => PreparedOpenOptions
+): (() => OpenTreeSessionResult) | null {
+  const read = parsedReads.get(bytes);
+  if (!read) return null;
+  parsedReads.delete(bytes);
+  const resolved = options();
+  return () => openTreeSessionFromPackage(read, resolved);
+}
 
 /** The session options a prepared open must share with the mount it stands in for. */
 export type PreparedOpenOptions = Pick<OpenTreeSessionOptions, 'reviewModel' | 'contentLockPolicy'>;
@@ -70,6 +110,15 @@ export function prepareOpenSteps(
   options: PreparedOpenOptions,
   then: (opened: OpenTreeSessionResult) => ReturnType<Step>
 ): Step {
+  // A parsed document's package is read already: the first step opens its session.
+  const parsed = takeParsedOpen(bytes, () => options);
+  if (parsed) {
+    return () => {
+      const opened = parsed();
+      prepared.set(bytes, opened);
+      return then(opened);
+    };
+  }
   const reader = readOoxmlPackageSteps(bytes);
   const step: Step = () => {
     const deadline = performance.now() + FONT_WARM_STEP_MS;
@@ -88,14 +137,22 @@ export function prepareOpenSteps(
 
 /**
  * The mount options for a prepared open of `bytes`, or nothing. Removes the entry. A prepared
- * open is a large one, so its first layout also runs in slices after the mount.
+ * open is a large one, so its first layout also runs in slices after the mount. `options` is
+ * asked only for a parsed document's open, so an ordinary mount computes nothing more.
  */
-export function takePreparedOpen(bytes: Uint8Array): {
+export function takePreparedOpen(
+  bytes: Uint8Array,
+  options: () => PreparedOpenOptions = () => ({})
+): {
   readonly openedSession?: OpenTreeSessionResult;
   readonly progressiveOpen?: boolean;
 } {
   const openedSession = prepared.get(bytes);
-  if (openedSession === undefined) return {};
+  if (openedSession === undefined) {
+    // A parsed document opened without a prepare: its session opens from the held read.
+    const parsed = takeParsedOpen(bytes, options);
+    return parsed ? { openedSession: parsed() } : {};
+  }
   prepared.delete(bytes);
   return { openedSession, progressiveOpen: true };
 }
