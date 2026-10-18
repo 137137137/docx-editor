@@ -102,7 +102,7 @@ import type { PendingLine } from './paragraph-flow.ts';
 import { cascadeRunProperties, type StyleCascadeTable } from './style-cascade.ts';
 import { DEFAULT_RUN_STYLE, resolveRunStyle, type ResolvedRunStyle } from './run-style.ts';
 import { finalizePageFieldProjection } from './field-projection.ts';
-import type { LayoutSteps } from './layout-steps.ts';
+import { drainLayoutSteps, type LayoutSteps } from './layout-steps.ts';
 import { withNoteAreasOnProgress, type NotesBodyOptions } from './note-progress.ts';
 import { overflowPageShellAt, type OverflowPageShell } from './page-furniture-insets.ts';
 import { resettleParitySheets } from './page-parity-sheet.ts';
@@ -2081,6 +2081,15 @@ export function computeFootnoteReserves(
   );
 }
 
+/** What one reserve computation answers; see {@link computeFootnoteReserves}. */
+interface FootnoteReservesResult {
+  readonly reserves: ReadonlyMap<number, number>;
+  readonly stable: boolean;
+  readonly reasons: readonly NotePaginationFallbackReason[];
+  /** Any reference sits on an orphan pair, so the refinement phase is worth running. */
+  readonly orphanCandidates: boolean;
+}
+
 function computeFootnoteReservesWithPolicy(
   layout: SemanticLayout,
   allRefs: readonly PageRefHit[],
@@ -2089,13 +2098,34 @@ function computeFootnoteReservesWithPolicy(
   passMemo: unknown,
   previousReserves: ReadonlyMap<number, number> | undefined,
   allowOrphanDeferral: boolean
-): {
-  readonly reserves: ReadonlyMap<number, number>;
-  readonly stable: boolean;
-  readonly reasons: readonly NotePaginationFallbackReason[];
-  /** Any reference sits on an orphan pair, so the refinement phase is worth running. */
-  readonly orphanCandidates: boolean;
-} {
+): FootnoteReservesResult {
+  return drainLayoutSteps(
+    computeFootnoteReservesSteps(
+      layout,
+      allRefs,
+      input,
+      noteMarks,
+      passMemo,
+      previousReserves,
+      allowOrphanDeferral
+    )
+  );
+}
+
+/**
+ * {@link computeFootnoteReservesWithPolicy} as steps that pause between pages: a long
+ * document's reserve scan lays out every page's notes, and took a few hundred milliseconds
+ * in one task between two rounds of the reserve search.
+ */
+function* computeFootnoteReservesSteps(
+  layout: SemanticLayout,
+  allRefs: readonly PageRefHit[],
+  input: NotesLayoutInput,
+  noteMarks: NoteMarkContext,
+  passMemo: unknown,
+  previousReserves: ReadonlyMap<number, number> | undefined,
+  allowOrphanDeferral: boolean
+): LayoutSteps<FootnoteReservesResult> {
   const memo = (passMemo ?? null) as NotesPassMemo | null;
   const reserves = new Map<number, number>();
   const reasons: NotePaginationFallbackReason[] = [];
@@ -2119,6 +2149,7 @@ function computeFootnoteReservesWithPolicy(
     recordFootnoteReserve(reserves, pageIndex, Math.min(needed, cap));
 
   for (let pageAt = 0; pageAt < layout.pages.length; pageAt += 1) {
+    if (pageAt > 0) yield;
     const page = layout.pages[pageAt]!;
     // A blank parity sheet holds no notes; a continuation carries on past it.
     if (page.parityBlank) continue;
@@ -2307,6 +2338,16 @@ export function attachNotesToLayout(
     readonly partial?: boolean;
   }
 ): NotesAttachResult {
+  return drainLayoutSteps(attachNotesToLayoutSteps(layout, allRefs, input, options));
+}
+
+/** {@link attachNotesToLayout} as steps that pause between pages, like the reserve scan. */
+function* attachNotesToLayoutSteps(
+  layout: SemanticLayout,
+  allRefs: readonly PageRefHit[],
+  input: NotesLayoutInput,
+  options?: Parameters<typeof attachNotesToLayout>[3]
+): LayoutSteps<NotesAttachResult> {
   const memo = (options?.memo ?? null) as NotesPassMemo | null;
   const partial = options?.partial === true;
   const reasons: NotePaginationFallbackReason[] = [...(options?.fallbackReasons ?? [])];
@@ -2359,7 +2400,7 @@ export function attachNotesToLayout(
   const endnotesBySection = new Map<number, PageRefHit[]>();
   const endnotesDoc: PageRefHit[] = [];
 
-  let pages: PageRecord[] = layout.pages.map((page) => {
+  const attachPage = (page: PageRecord): PageRecord => {
     if (page.parityBlank) return page;
     const pageRefs = filterRefsOnPage(page, allRefs, refIndex);
     const fnRefs = pageRefs.filter((r) => r.noteKind === 'footnote');
@@ -2453,7 +2494,12 @@ export function attachNotesToLayout(
       }
     }
     return attached;
-  });
+  };
+  let pages: PageRecord[] = [];
+  for (const page of layout.pages) {
+    if (pages.length > 0) yield;
+    pages.push(attachPage(page));
+  }
 
   if (partial) {
     const shown = reprojectBodyNoteMarks({ ...layout, pages }, noteMarks);
@@ -2724,7 +2770,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
     const growthCutoff = Math.max(8, Math.ceil(previousPageCount / 16));
     let consecutiveGrowth = 0;
     for (let attempt = 0; attempt < attemptCap; attempt += 1) {
-      const computed = computeFootnoteReservesWithPolicy(
+      const computed = yield* computeFootnoteReservesSteps(
         bodyLayout,
         allHits,
         notesInput,
@@ -2865,7 +2911,7 @@ export function* layoutSemanticDocumentWithNotesSteps<Opts extends NotesBodyOpti
   }
 
   noteBodyGeometryChanged(optionsWithLists.session, bodyLayout, part);
-  const attached = attachNotesToLayout(bodyLayout, allHits, notesInput, {
+  const attached = yield* attachNotesToLayoutSteps(bodyLayout, allHits, notesInput, {
     fallbackReasons,
     paragraphSectionIndex,
     memo: notesMemo,
