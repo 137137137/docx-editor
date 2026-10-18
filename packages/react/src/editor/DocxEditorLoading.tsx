@@ -171,7 +171,9 @@ function DocxEditorLoadingImpl({
   const pageSize = useEditorState(selectLoadingPageSize, sameLoadingPageSize);
   const firstPage = useFirstPageIndicator(overlay);
   const { t } = useTranslation();
-  if (!when && !showLoading) return null;
+  // The open ends on the first pages (`isOpening` false) while the rest is laid out: the
+  // indicator stays on the first page for exactly as long as the engine publishes it there.
+  if (!when && !showLoading && !firstPage) return null;
 
   const status = indicator ?? (
     <>

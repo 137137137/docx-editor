@@ -120,7 +120,11 @@ describe('the loading indicator on the first page', () => {
     const container = document.createElement('div');
     editor.attach(container);
     // Recorded at the call: the slices are queued tasks that can end the open before a poll.
-    await until(() => !editor.snapshot().isOpening && editor.surface !== null);
+    // The indicator stays while the pages after the first ones are laid out.
+    await until(
+      () =>
+        !editor.snapshot().isOpening && !editor.snapshot().isPaginating && editor.surface !== null
+    );
     expect(published.length).toBe(2);
     expect(published[0]!.closest('.docx-opening-indicator')).not.toBeNull();
     expect(published[1]).toBeNull();

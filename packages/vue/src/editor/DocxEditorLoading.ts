@@ -122,7 +122,9 @@ const DocxEditorLoadingImpl = defineComponent({
     const { t } = useTranslation();
 
     return () => {
-      if (!props.when && !showLoading.value) return null;
+      // The open ends on the first pages while the rest is laid out: the indicator stays on
+      // the first page for exactly as long as the engine publishes it there.
+      if (!props.when && !showLoading.value && !firstPage.value) return null;
       const status = () =>
         slots.indicator?.() ?? [
           h(DocxEditorLoadingSpinner),

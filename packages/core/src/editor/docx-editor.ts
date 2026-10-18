@@ -122,7 +122,7 @@ import { createMountHistoryGroups } from './editor-history-groups.ts';
 import { createPublishSignal } from './surface-publish-signal.ts';
 import { FORMAT_PAINTER_OFF } from './surface-format-painter-contract.ts';
 import { resolveDocTargetSelection } from './doc-target-resolution.ts';
-import { createOpenScheduler } from './docx-editor-open-scheduler.ts';
+import { createOpenScheduler, opensAfterPaintBySize } from './docx-editor-open-scheduler.ts';
 import * as preparedOpen from './docx-editor-prepared-open.ts';
 import { configSurfaceOptions } from './docx-editor-surface-config.ts';
 import type { TreeDocxSessionView } from '../binding/tree-session-contract.ts';
@@ -205,7 +205,7 @@ import {
   type RemoteCaretLabelHost,
 } from './paginated-surface.ts';
 import { scrollToDocumentStart } from './surface-pages.ts';
-import { createZoomLane, zoomFacadeMembers } from './docx-editor-zoom.ts';
+import { createZoomLane, openingAtFit, zoomFacadeMembers } from './docx-editor-zoom.ts';
 import {
   type CommandRefusal,
   createSuggestingConfigurationReporter,
@@ -265,8 +265,19 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   /** The opening document's session between the prepare and mount tasks, for font work. */
   let preparedFontSession: TreeDocxSessionView | null = null;
   let mountedSeq = -1;
-  const stillOpening = () =>
-    preparedFontSession !== null || (!!surface && preparedOpen.stillOpening(surface));
+  /** Whether the mounted document still lays out its later pages; see `isPaginating`. */
+  const paginating = (): boolean => !!surface && preparedOpen.stillOpening(surface);
+  /** The surface the `paginated` event last fired for: once per mounted document. */
+  let paginatedFor: object | null = null;
+  /** Fire `paginated` for the mounted document once all of its pages are laid out. */
+  function notePaginated(): void {
+    const current = surface;
+    if (!current || destroyed || paginatedFor === current || paginating()) return;
+    paginatedFor = current;
+    bump();
+    emitSelectionChange();
+    events.emitPaginated();
+  }
   const hostConfig = createDocxEditorHostConfigState(config);
   let author = normalizeEditorAuthor(config.author);
   let container: HTMLElement | null = config.container ?? null;
@@ -320,6 +331,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         return true;
       }
     },
+    paginated: () => notePaginated(),
+    every: () => config.openAfterPaint === 'every',
     // Fonts resolved before the mount are laid out once, by the mount; see `preparedOpenHook`.
     prepare: preparedOpen.preparedOpenHook(
       () => preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
@@ -695,6 +708,22 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     diagnostics.openMounting();
     teardownSurface();
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
+    const prepared = preparedOpen.takePreparedOpen(bytes);
+    // An open in slices settles its fit before its first layout, so page one is laid out at
+    // the scale it is painted at (`docx-editor-zoom.ts`, `prefit`). A document only
+    // `openAfterPaint: 'every'` deferred is laid out whole, as its mount in one task did.
+    // An external refresh opens as a preview: its pages take no input until every one is laid
+    // out and the refresh reports its result (`mountBytes`), so no edit races the result.
+    const opening = prepared.progressiveOpen
+      ? openingAtFit(
+          zoomLane,
+          prepared.openedSession,
+          reviewEnabled ? reviewDisplayMode : 'proposed',
+          !opensAfterPaintBySize(bytes),
+          refreshHost?.source === undefined
+        )
+      : null;
+    if (opening?.fullAfterFirst) bump();
     const result = mountPaginatedSurface(container, bytes, {
       ...displaySurfaceOptions(),
       ...views.surfaceOptions(),
@@ -708,7 +737,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // default (`all-markup`), which is what the review rail annotates.
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
       ...diagnostics.surfaceHooks(suggesting, () => surface),
-      ...preparedOpen.takePreparedOpen(bytes),
+      ...(prepared.openedSession ? { openedSession: prepared.openedSession } : {}),
+      ...(opening ? { progressiveOpen: opening } : {}),
       ...(modules.collaboration ? { collaborationModel: modules.collaboration } : {}),
       onHostMoved: followHost,
       onTrackedChange: () => {
@@ -813,6 +843,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     });
     emitSelectionChange();
     liveFonts.schedule(true);
+    // A document laid out whole at its mount: every page is there, after this task's listeners.
+    if (!paginating()) queueMicrotask(notePaginated);
   }
 
   /** A NEW document: forget the previous document's measurer, then mount. */
@@ -1245,6 +1277,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // A supplied document on its way to painted pages. OVERLAY state only — gate
       // chrome on it, never the mount point; `isLoading` remains the gate-safe flag.
       isOpening: openScheduler.isScheduled() && !refreshHost?.source,
+      isPaginating: paginating(),
       parseError: openFailure.parseError,
       openFailure: openFailure.failure,
       // The LIVE mode, not only the construction-time one: hosts gate their chrome on this,
@@ -1813,7 +1846,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       return mountGeneration;
     },
     get surface() {
-      return surface && preparedOpen.stillOpening(surface) ? null : surface;
+      return surface;
     },
 
     ...views.popupChrome.setters,
@@ -1821,9 +1854,12 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     stateVersion: () => stateVersion,
 
     fontMeasurement: () => ({
-      measurer: shapedMeasurer && !stillOpening() ? ('shaped' as const) : ('fixed' as const),
-      resolving: fontsResolving || stillOpening(),
-      ...(shapedMeasurer && shapedProducer && !stillOpening() ? { producer: shapedProducer } : {}),
+      measurer:
+        shapedMeasurer && preparedFontSession === null ? ('shaped' as const) : ('fixed' as const),
+      resolving: fontsResolving || preparedFontSession !== null,
+      ...(shapedMeasurer && shapedProducer && preparedFontSession === null
+        ? { producer: shapedProducer }
+        : {}),
     }),
 
     async setFonts(fonts) {

@@ -294,8 +294,9 @@ export interface Editor extends EditorAnchorNavigation, EditorHighlights, Editor
    *
    * A large document mounts behind one painted frame, so a loading screen keyed on
    * `snapshot().isOpening` can show instead of a frozen page; a small one mounts before
-   * this returns. Callers that need the document synchronously do not have to care:
-   * `save`, `exec` and `selectMatch` complete a scheduled open before they run.
+   * this returns (unless `openAfterPaint: 'every'`), and one behind the frame mounts on its
+   * first pages (`snapshot().isPaginating`). Callers that need the document synchronously do
+   * not have to care: `save`, `exec` and `selectMatch` complete a scheduled open first.
    */
   load(document: DocumentSource): void;
   /**
@@ -1465,12 +1466,20 @@ export interface EditorSnapshot {
    * Whether a supplied document is still on its way to painted pages. Opening a large
    * document mounts behind one painted frame so a loading screen can show instead of a
    * frozen page; this is true for exactly that window, and across it the previous
-   * document (if any) stays on screen. Show a loading overlay while it holds — but gate
-   * only chrome on it, never the mount point, which must stay mounted for the open to
-   * complete ({@link EditorSnapshot.isLoading} is the gate-safe flag). Optional and
-   * additive: absent means the implementation has not derived it, read as `false`.
+   * document (if any) stays on screen. It ends once the first pages are laid out. Show a
+   * loading overlay while it holds — but gate only chrome on it, never the mount point,
+   * which must stay mounted for the open to complete ({@link EditorSnapshot.isLoading} is
+   * the gate-safe flag). Optional and additive: absent means the implementation has not
+   * derived it, read as `false`.
    */
   readonly isOpening?: boolean;
+  /**
+   * Whether the pages after the first ones are still being laid out, in short tasks, after
+   * an open behind a painted frame. The pages shown can be read, edited and searched;
+   * `page.total` counts the pages laid out so far, and a reveal lays out as far as its
+   * target. The `paginated` event fires when this turns false. Optional and additive.
+   */
+  readonly isPaginating?: boolean;
   readonly parseError: string | null;
   /**
    * Why the last supplied document did not open, or `null` while it opens or after it opened.

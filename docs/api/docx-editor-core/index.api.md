@@ -1634,6 +1634,7 @@ export interface DocxEditorConfig {
     modules?: readonly EditorModule[];
     // (undocumented)
     onFontError?: (error: EditorFontError) => void;
+    openAfterPaint?: 'large' | 'every';
     reviewDisplayMode?: ReviewDisplayMode;
     revisionMarkup?: RevisionMarkupOptions;
     revisionStyles?: RevisionStyles;
@@ -2191,6 +2192,7 @@ export interface EditorEvents {
     // (undocumented)
     historyDiagnostic: (diagnostic: HistoryDiagnostic) => void;
     hostChange: (event: EditorHostChange) => void;
+    paginated: () => void;
     reviewItemReveal: (event: ReviewItemRevealEvent) => void;
     revisionMarkupChange: (settings: ResolvedRevisionMarkup) => void;
     selectionChange: (snapshot: EditorSnapshot) => void;
@@ -2452,6 +2454,7 @@ export interface EditorSnapshot {
     readonly image: ImageContext | null;
     readonly isLoading: boolean;
     readonly isOpening?: boolean;
+    readonly isPaginating?: boolean;
     readonly lastRejection?: string | null;
     readonly openFailure?: DocumentOpenFailure | null;
     // (undocumented)

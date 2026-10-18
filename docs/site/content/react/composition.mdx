@@ -78,6 +78,7 @@ The editor reads construction props when it creates the instance. Changes to `do
 | `mode` | `'edit' \| 'view' \| 'suggesting'` | Sets the editing mode. When omitted, `w:trackRevisions` can select suggesting mode. |
 | `modules` | `readonly EditorModule[]` | Registers modules during construction. Remount with a different `key` to change them. |
 | `zoom` / `zoomMode` | `number` / `ZoomMode \| 'auto'` | Sets the display scale and its source. `'auto'` fits the page width. |
+| `openAfterPaint` | `'large' \| 'every'` | Which documents open behind a painted frame, on their first pages while the rest is laid out. `'large'` (the default) opens only a large document this way; `'every'` opens every document this way. Read at mount. |
 | `onReady` | `(editor: Editor) => void` | Runs once per instance after `Content` attaches. |
 | `onChange` | `(change: DocumentChange) => void` | Reports revision and identity changes after mutations. |
 | `onFontError` | `(error: EditorFontError) => void` | Reports typed font-resolution failures. |
@@ -381,7 +382,7 @@ The pane takes its labels from its `t` prop. Without `t`, it uses the `translate
 
 ## Custom loading screen
 
-`DocxEditor.Loading` renders before document bytes arrive. It also renders while a large document opens. The engine reports the second state through `snapshot().isOpening`.
+`DocxEditor.Loading` renders before document bytes arrive. It also renders while a large document opens. The engine reports the second state through `snapshot().isOpening`, which turns false as soon as the first pages are laid out. The rest of the document is laid out after that while `snapshot().isPaginating` holds, and the editor fires `paginated` when every page is laid out.
 
 This example replaces the packaged loading content:
 

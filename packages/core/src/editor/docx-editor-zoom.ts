@@ -12,7 +12,15 @@
 // percentage.
 
 import type { ExecResult, ZoomMode } from '../contracts/editor.ts';
+import type { OpenTreeSessionResult } from '../binding/tree-session-options.ts';
+import {
+  DEFAULT_SECTION_PROPERTIES,
+  enumerateDocumentSections,
+  geometryOfSection,
+} from '../layout/section-properties.ts';
+import { layoutProjectionOf, type ReviewDisplayMode } from '../layout/revision-projection.ts';
 import type { PaginatedSurface } from './paginated-surface.ts';
+import type { OpeningSlicesOptions } from './surface-progressive-open.ts';
 import { setPaginatedSurfaceScale } from './surface-scale.ts';
 import { createZoomController } from './zoom-controller.ts';
 import {
@@ -53,6 +61,13 @@ export interface ZoomLane {
   refit(): void;
   /** Recompute only if the page's own width moved. Cheap enough for the commit path. */
   refitIfPageResized(): void;
+  /**
+   * Settle a fit mode's scale for a document whose first page is `pageWidthPx` wide (CSS
+   * pixels at 100%) BEFORE it is laid out, so its first layout is at the scale the fit would
+   * move it to. Leaves any mounted surface alone, because the one mounted now belongs to the
+   * document being replaced, and publishes nothing; answers whether the scale moved.
+   */
+  prefit(pageWidthPx: number): boolean;
 }
 
 export interface ZoomLaneConfig {
@@ -151,6 +166,12 @@ export function createZoomLane(config: ZoomLaneConfig, host: ZoomLaneHost): Zoom
     detach: () => controller.detach(),
     refit: () => controller.refit(),
     refitIfPageResized: () => controller.refitIfPageResized(),
+    prefit(pageWidthPx) {
+      const next = controller.fitFor(pageWidthPx);
+      if (next === null || next === zoom) return false;
+      zoom = next;
+      return true;
+    },
 
     setZoom(next: number): ExecResult {
       // Refused rather than clamped: a caller that asked for
@@ -300,4 +321,37 @@ export function zoomFacadeMembers(
         : [];
     },
   };
+}
+
+/**
+ * The first page's width of an opened session, in CSS pixels at 100%: its first section's
+ * page size, in the projection the surface lays it out in. A prediction of what the fit
+ * reads from the laid-out page; the fit after the mount still reads the page itself.
+ */
+export function firstPageWidthPx(
+  opened: OpenTreeSessionResult,
+  displayMode: ReviewDisplayMode
+): number | null {
+  if (!opened.ok) return null;
+  const [first] = enumerateDocumentSections(opened.session.part(), layoutProjectionOf(displayMode));
+  return geometryOfSection(first?.properties ?? DEFAULT_SECTION_PROPERTIES).width * (96 / 72);
+}
+
+/**
+ * How a document opened in slices opens: at the fit its first page asks for, `live` or as a
+ * preview (`OpeningSlicesOptions.live`). A `whole` opening lays the document out in one pass
+ * (`OpeningSlicesOptions.whole`). Otherwise, when the fit moves the scale, the opening goes
+ * from its first pages straight to the full layout, the order an open took when its fit moved
+ * the scale right after the mount.
+ */
+export function openingAtFit(
+  lane: Pick<ZoomLane, 'prefit'>,
+  opened: OpenTreeSessionResult | undefined,
+  displayMode: ReviewDisplayMode,
+  whole: boolean,
+  live: boolean
+): OpeningSlicesOptions {
+  const width = opened ? firstPageWidthPx(opened, displayMode) : null;
+  const moved = width !== null && lane.prefit(width);
+  return whole ? { live, whole: true, fullAfterFirst: moved } : { live, fullAfterFirst: moved };
 }

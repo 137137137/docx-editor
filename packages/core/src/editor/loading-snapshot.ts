@@ -17,6 +17,7 @@ export const LOADING_SNAPSHOT: EditorSnapshot = Object.freeze({
   scope: Object.freeze({ kind: 'body' as const }),
   isLoading: true,
   isOpening: false,
+  isPaginating: false,
   parseError: null,
   openFailure: null,
   editable: false,

@@ -55,7 +55,11 @@ import {
   writeRejectionReason,
 } from './command-protection.ts';
 import { registerSurfaceMeasurement } from './surface-measurement.ts';
-import { startOpeningSlices } from './surface-progressive-open.ts';
+import {
+  continueProgressiveOpen,
+  progressiveOpenPending,
+  startOpeningSlices,
+} from './surface-progressive-open.ts';
 import { createDeferredLayout } from './surface-deferred-layout.ts';
 import { createCanonicalLayout } from './surface-canonical-layout.ts';
 import { drainLayoutSteps, type LayoutSteps } from '../layout/layout-steps.ts';
@@ -349,6 +353,8 @@ import { revisionDateNow } from '../automation/revision-date.ts';
 
 /** Body blocks a sliced opening lays out at mount, before its first yield. */
 const PROGRESSIVE_OPEN_FIRST_BLOCKS = 64;
+/** Work between two looks for a reveal's target while the opening lays it out, in ms. */
+const REVEAL_SLICE_MS = 16;
 
 /**
  * Mount a paginated surface over DOCX bytes.
@@ -1086,18 +1092,35 @@ export function mountPaginatedSurface(
     },
   };
 
-  /** The body block limit of an opening still in slices; null once a full layout ran. */
   /** Finishes a paused opening prefix pass; see `startOpeningSlices`. */
   let finishOpeningPass = (): void => undefined;
+  /** This surface once its opening slices are registered; see {@link paginating}. */
+  let openingSurface: object | null = null;
+  /**
+   * Whether the opening is still laying out pages: its prefixes, or the later pages of a full
+   * layout it deferred. Layouts in this time run in the opening's mode, and a relayout nobody
+   * waits for is left to the opening's slices; see `surface-progressive-open.ts`.
+   */
+  const paginating = (): boolean =>
+    openingSurface !== null && progressiveOpenPending(openingSurface);
+  /** Lay the opening out until `found` holds or every page is laid out: a reveal's target. */
+  function layOutUntil(found: () => boolean): boolean {
+    for (;;) {
+      if (found()) return true;
+      if (!paginating()) return false;
+      continueProgressiveOpen(openingSurface!, REVEAL_SLICE_MS);
+    }
+  }
   // The pages after the screen finish after the commit; see `surface-deferred-layout.ts`.
   const deferredLayout = createDeferredLayout({
     now,
     view: () => hostWindowOf(pagesLayer),
     pageAfterView: () => {
+      if (!firstLayoutDone) return undefined;
       const visible = visiblePages();
       return visible && visible.size > 0 ? Math.max(...visible) + 1 : undefined;
     },
-    current: () => currentLayout,
+    current: () => (firstLayoutDone ? currentLayout : null),
     revision: () => session.packageRevision(),
     publish: (layout) => fieldScope.wrap(() => publishLayout(layout))(),
     // A pass replaces the session's fields and never mutates them, so a shallow copy restores it.
@@ -1109,10 +1132,14 @@ export function mountPaginatedSurface(
     pendingChanged: (pending) => container.toggleAttribute('data-docx-layout-pending', pending),
     passTimed: (ms) => options.onTiming?.('layout', ms),
   });
-  let openingBlockLimit: number | null = runtimeOptions.progressiveOpen
-    ? PROGRESSIVE_OPEN_FIRST_BLOCKS
-    : null;
+  const openingMode =
+    typeof runtimeOptions.progressiveOpen === 'object' ? runtimeOptions.progressiveOpen : {};
+  let openingBlockLimit: number | null =
+    runtimeOptions.progressiveOpen && !openingMode.whole ? PROGRESSIVE_OPEN_FIRST_BLOCKS : null;
+  /** False until the mount's own layout returns: nothing before it is on screen. */
+  let firstLayoutDone = false;
   let currentLayout = layoutOnce();
+  firstLayoutDone = true;
   // Declared before the first paint can run — `render` reads it.
   let revisionStyles = options.revisionStyles;
   const paragraphMarks = createParagraphMarkVisibility(
@@ -1457,12 +1484,26 @@ export function mountPaginatedSurface(
 
   function layoutOnce(): SemanticLayout {
     const began = now();
-    const layout = layoutDocument(
-      session.packageRevision(),
-      undefined,
-      undefined,
-      openingBlockLimit ?? undefined
-    );
+    // A live opening's first pass shows its first pages, and the pages after them follow in
+    // the opening's slices: the first prefix, or for a whole opening the whole document.
+    const layout = openingMode.live
+      ? deferredLayout.run(
+          layoutDocumentSteps(
+            session.packageRevision(),
+            undefined,
+            undefined,
+            openingBlockLimit ?? undefined
+          ),
+          session.packageRevision(),
+          true,
+          true
+        )
+      : layoutDocument(
+          session.packageRevision(),
+          undefined,
+          undefined,
+          openingBlockLimit ?? undefined
+        );
     lastLayoutMs = now() - began;
     return layout;
   }
@@ -1706,7 +1747,7 @@ export function mountPaginatedSurface(
       finishOpeningPass();
       deferredLayout.abandon();
       const steps = layoutDocumentSteps(scope.revision, scope);
-      const layout = deferredLayout.run(steps, scope.revision, timedLayout(scope));
+      const layout = deferredLayout.run(steps, scope.revision, timedLayout(scope), paginating());
       lastLayoutMs = now() - began;
       return layout;
     },
@@ -1729,8 +1770,15 @@ export function mountPaginatedSurface(
     // A timer rather than an animation frame, like the rest of this file: rAF does not fire
     // in a background tab, and a document that stops repainting when the tab is hidden is
     // the same stale-paint failure by another route.
+    // While the opening lays out pages it runs pending work itself, as one more pass after the
+    // one in progress (`surface-progressive-open.ts`), instead of a whole-document pass here.
     schedule: (run) => {
-      const handle = timers.setTimeout(fieldScope.wrap(run), 0);
+      const handle = timers.setTimeout(
+        fieldScope.wrap(() => {
+          if (!paginating()) run();
+        }),
+        0
+      );
       return () => timers.clearTimeout(handle);
     },
     publish: (layout) => publishLayout(layout),
@@ -1764,7 +1812,7 @@ export function mountPaginatedSurface(
     revision: () => session.packageRevision(),
     live: () => layoutSession,
     current: () => currentLayout,
-    busy: () => deferredLayout.pending() || openingBlockLimit !== null,
+    busy: () => deferredLayout.pending() || openingBlockLimit !== null || paginating(),
     pass: (revision, fresh) =>
       layoutDocumentSteps(revision, undefined, {
         authorFilter: revisionFilter(),
@@ -1791,7 +1839,8 @@ export function mountPaginatedSurface(
     timers.setTimeout(
       fieldScope.wrap(() => {
         resourceFlushQueued = false;
-        flushLayout();
+        // The opening's slices run it as one more pass once the pass in progress ends.
+        if (!paginating()) flushLayout();
       }),
       0
     );
@@ -5013,12 +5062,15 @@ export function mountPaginatedSurface(
       // Flushed like its siblings below: a page the deferred pass creates is not findable
       // in the superseded layout, and "false" must mean "no such page", not "not yet".
       flushLayout();
+      // A page the opening has not laid out yet: lay out as far as it.
+      layOutUntil(() => currentLayout.pages.some((entry) => entry.index === pageIndex));
       const page = currentLayout.pages.find((entry) => entry.index === pageIndex);
       return page ? scrollToContentY(page.box.y, page.box.height, options) : false;
     },
 
     revealParagraph(paragraphId, options) {
       flushLayout();
+      layOutUntil(() => caretAt(editingLayout(), { paragraphId, offset: 0 }) !== null);
       // The paragraph's own line, not the top of its page: a heading two thirds down a
       // page is the thing the caller asked to see.
       const caret = caretAt(editingLayout(), { paragraphId, offset: 0 });
@@ -5035,6 +5087,7 @@ export function mountPaginatedSurface(
 
     revealPosition(position, options) {
       flushLayout();
+      layOutUntil(() => caretAt(editingLayout(), position) !== null);
       const caret = caretAt(editingLayout(), position);
       if (!caret) return false;
       const page = currentLayout.pages.find((entry) => entry.index === caret.pageIndex);
@@ -6258,7 +6311,8 @@ export function mountPaginatedSurface(
       materializedExtent = undefined;
       commentRectCache = null;
       scheduler.invalidateAll(session.packageRevision(), 'fonts');
-      scheduler.flush();
+      // During the opening, a pass after the one in progress, in its slices.
+      if (!paginating()) scheduler.flush();
     }
   );
   registerRefreshComposition(surface, () => selectionSync.isComposing());
@@ -6274,13 +6328,25 @@ export function mountPaginatedSurface(
       bodyBlock: (index) => bodyBlocksOf(layoutSession)?.[index],
       prefixPass: (limit) =>
         layoutDocumentSteps(session.packageRevision(), undefined, undefined, limit),
+      ...(openingMode.live
+        ? {
+            publishPrefix: (layout: unknown) =>
+              fieldScope.wrap(() => publishLayout(layout as SemanticLayout))(),
+          }
+        : {}),
       finish: fieldScope.wrap(() => {
         scheduler.invalidateAll(session.packageRevision(), 'opening');
         scheduler.flush();
         openingBlockLimit = null;
       }),
+      deferred: () => deferredLayout.pending(),
+      advance: (budgetMs) => deferredLayout.advance(budgetMs),
+      relayoutPending: () => scheduler.pending() !== null,
+      relayout: () => void fieldScope.wrap(() => scheduler.flush())(),
     },
-    PROGRESSIVE_OPEN_FIRST_BLOCKS
+    PROGRESSIVE_OPEN_FIRST_BLOCKS,
+    openingMode
   );
+  if (progressiveOpenPending(surface)) openingSurface = surface;
   return { ok: true, surface: fieldScope.methods(surface) };
 }

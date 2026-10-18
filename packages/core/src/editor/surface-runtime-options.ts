@@ -11,6 +11,7 @@ import type {
 } from './paginated-surface-contract.ts';
 import type { RevisionAuthorVisibility } from './revision-author-visibility.ts';
 import type { PendingTextFormInput } from './surface-text-form-fields.ts';
+import type { OpeningSlicesOptions } from './surface-progressive-open.ts';
 
 /** The public mount options plus the engine-internal ones. @internal */
 export type PaginatedSurfaceRuntimeOptions = PaginatedSurfaceOptions & {
@@ -30,6 +31,9 @@ export type PaginatedSurfaceRuntimeOptions = PaginatedSurfaceOptions & {
    * document does not parse and lay out in one blocking task. Used once.
    */
   readonly openedSession?: OpenTreeSessionResult;
-  /** Lay the body out in slices after mount; see `surface-progressive-open.ts`. */
-  readonly progressiveOpen?: boolean;
+  /**
+   * Lay the body out in slices after mount; see `surface-progressive-open.ts`. `true` is a
+   * preview's opening; the live editor passes its options.
+   */
+  readonly progressiveOpen?: boolean | OpeningSlicesOptions;
 };
