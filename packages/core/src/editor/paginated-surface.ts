@@ -253,6 +253,7 @@ import {
   visiblePageSet,
   viewportPage,
   type SurfaceExtent,
+  laidOutPastView,
 } from './surface-pages.ts';
 import {
   tryCreateBrowserImageDecodePort,
@@ -1111,6 +1112,17 @@ export function mountPaginatedSurface(
       continueProgressiveOpen(openingSurface!, REVEAL_SLICE_MS);
     }
   }
+  /** A scroll to pages the opening has not laid out yet lays out as far as them, and one more. */
+  let layingOutToView = false;
+  function layOutToView(): void {
+    if (layingOutToView || !paginating()) return;
+    layingOutToView = true;
+    try {
+      layOutUntil(() => laidOutPastView(container, currentLayout, scale));
+    } finally {
+      layingOutToView = false;
+    }
+  }
   // The pages after the screen finish after the commit; see `surface-deferred-layout.ts`.
   const deferredLayout = createDeferredLayout({
     now,
@@ -1122,6 +1134,7 @@ export function mountPaginatedSurface(
     },
     current: () => (firstLayoutDone ? currentLayout : null),
     revision: () => session.packageRevision(),
+    inputPending: () => browserInputPending(container, false),
     publish: (layout) => fieldScope.wrap(() => publishLayout(layout))(),
     // A pass replaces the session's fields and never mutates them, so a shallow copy restores it.
     snapshot: () => {
@@ -1134,8 +1147,9 @@ export function mountPaginatedSurface(
   });
   const openingMode =
     typeof runtimeOptions.progressiveOpen === 'object' ? runtimeOptions.progressiveOpen : {};
-  let openingBlockLimit: number | null =
-    runtimeOptions.progressiveOpen && !openingMode.whole ? PROGRESSIVE_OPEN_FIRST_BLOCKS : null;
+  let openingBlockLimit: number | null = runtimeOptions.progressiveOpen
+    ? PROGRESSIVE_OPEN_FIRST_BLOCKS
+    : null;
   /** False until the mount's own layout returns: nothing before it is on screen. */
   let firstLayoutDone = false;
   let currentLayout = layoutOnce();
@@ -1484,8 +1498,8 @@ export function mountPaginatedSurface(
 
   function layoutOnce(): SemanticLayout {
     const began = now();
-    // A live opening's first pass shows its first pages, and the pages after them follow in
-    // the opening's slices: the first prefix, or for a whole opening the whole document.
+    // A live opening's first pass shows its first pages, and the pages after them of the
+    // first prefix follow in the opening's slices.
     const layout = openingMode.live
       ? deferredLayout.run(
           layoutDocumentSteps(
@@ -2854,6 +2868,7 @@ export function mountPaginatedSurface(
     // deferred its pass. Safe: this runs from a scheduled frame, never inside a
     // render.
     flushPendingInputAndLayout();
+    layOutToView();
     const nextSet = visiblePages();
     const nextExtent = surfaceExtent(currentLayout, nextSet);
     if (
@@ -6341,6 +6356,7 @@ export function mountPaginatedSurface(
       }),
       deferred: () => deferredLayout.pending(),
       advance: (budgetMs) => deferredLayout.advance(budgetMs),
+      inputPending: () => browserInputPending(container, false),
       relayoutPending: () => scheduler.pending() !== null,
       relayout: () => void fieldScope.wrap(() => scheduler.flush())(),
     },

@@ -129,6 +129,12 @@ export interface OpeningSlicesHost {
   /** Advance the deferred pass for about `budgetMs`. True once it ended. */
   advance(budgetMs: number): boolean;
   /**
+   * Whether the browser holds discrete input (a key, a click) the page has not handled. A
+   * step then ends at its next pause point instead of its deadline, so the input waits behind
+   * one layout unit at most; the scheduler resumes the slices once the input has settled.
+   */
+  inputPending?(): boolean;
+  /**
    * Whether a relayout arrived during the opening that nobody waited for (an image decoded,
    * fonts landed). It runs as one more pass once the prefixes are over.
    */
@@ -153,14 +159,6 @@ export interface OpeningSlicesOptions {
    * between: the order an open takes when its fit moves the scale right after the mount.
    */
   readonly fullAfterFirst?: boolean;
-  /**
-   * Lay the document out whole from the mount, in one pass from a new session whose pages
-   * after the first ones follow in the slices, instead of growing prefixes. The pages are the
-   * ones a document laid out in one task gets, and the ones the background one-pass check
-   * (`surface-canonical-layout.ts`) would settle on. For a document the editor would
-   * otherwise have mounted in one task.
-   */
-  readonly whole?: boolean;
 }
 
 /**
@@ -190,11 +188,13 @@ export function startOpeningSlices(
   };
   const step = (budgetMs: number): boolean => {
     const deadline = host.now() + budgetMs;
+    // A step ends at its deadline, or at its next pause point when input is waiting.
+    const expired = (): boolean => host.now() >= deadline || host.inputPending?.() === true;
     while (!host.destroyed()) {
       // A pass that deferred its later pages ends first: the next one resumes from it.
       if (host.deferred()) {
         if (!host.advance(Math.max(0, deadline - host.now()))) return false;
-        if (host.now() >= deadline) return false;
+        if (expired()) return false;
         continue;
       }
       // The prefixes are over, by the full layout below or by any other full layout of the
@@ -202,7 +202,7 @@ export function startOpeningSlices(
       if (host.limit() === null) {
         if (!host.relayoutPending?.()) return true;
         host.relayout?.();
-        if (host.now() >= deadline) return false;
+        if (expired()) return false;
         continue;
       }
       if (!pass) {
@@ -222,13 +222,13 @@ export function startOpeningSlices(
       }
       let result: IteratorResult<unknown, unknown>;
       do result = pass.next();
-      while (!result.done && host.now() < deadline);
+      while (!result.done && !expired());
       if (!result.done) return false;
       pass = null;
       host.publishPrefix?.(result.value);
       // Before the first pass reports the block count, steps double; see the constants above.
       growth = Math.min(MAX_PREFIX_STEP, growth * 2);
-      if (host.now() >= deadline) return false;
+      if (expired()) return false;
     }
     return true;
   };

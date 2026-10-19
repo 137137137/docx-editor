@@ -63,6 +63,26 @@ function viewportInLayout(
   return { top: topPx / scale, height: scroller.clientHeight / scale };
 }
 
+/**
+ * Whether `layout`'s pages reach `pagesBeyond` pages past the bottom of the view, or the view
+ * cannot be read. What a scroll during the opening asks for: the pages where the reader is
+ * going, laid out before they arrive, rather than the end of the stack.
+ */
+export function laidOutPastView(
+  container: HTMLElement,
+  layout: SemanticLayout,
+  scale: number,
+  pagesBeyond = 1
+): boolean {
+  const scroller = surfaceScroller(container);
+  if (!scroller || scroller.clientHeight <= 0 || scale <= 0) return true;
+  const last = layout.pages[layout.pages.length - 1];
+  if (!last) return false;
+  const viewport = viewportInLayout(container, scroller, scale);
+  const reach = viewport.top + viewport.height + pagesBeyond * last.box.height;
+  return last.box.y + last.box.height >= reach;
+}
+
 export function viewportPage(
   container: HTMLElement,
   layout: SemanticLayout,

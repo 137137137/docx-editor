@@ -7,14 +7,15 @@
 // screen. Documents past {@link OPEN_PAINT_YIELD_CONTENT_BYTES} of CONTENT therefore
 // schedule the mount behind one painted frame, and `snapshot().isOpening` is true for
 // exactly that window. Small documents keep the synchronous path: they need no loading
-// flash, and every existing synchronous caller stays as it was — unless the host asks for
-// every document to open this way (`openAfterPaint: 'every'`). Every environment without
+// flash, and every existing synchronous caller stays as it was. Every environment without
 // `requestAnimationFrame` mounts synchronously: headless and server hosts by definition.
 //
 // PAGE ONE FIRST. The mount lays out the first pages only, and `isOpening` ends with it: the
 // rest of the document is laid out after, in short tasks of their own, while the pages on
 // screen are read, edited and scrolled (`snapshot().isPaginating`, then the `paginated`
-// event; see `surface-progressive-open.ts`).
+// event; see `surface-progressive-open.ts`). Input outranks those tasks: none starts while
+// the browser holds a key or a click, one that meets input ends at its next pause point,
+// and the slices resume once the input has settled.
 
 import { hostTimers, hostWindowOf } from './host-realm.ts';
 import { queueTask } from './sliced-steps.ts';
@@ -75,15 +76,26 @@ function zipContentExceeds(bytes: Uint8Array, limit: number): boolean {
   return false;
 }
 
-/**
- * Whether `bytes` are large enough to open behind a painted frame on their own, without
- * `openAfterPaint: 'every'`: the documents the editor opened that way before the option.
- */
-export function opensAfterPaintBySize(bytes: Uint8Array): boolean {
+/** Whether `bytes` are large enough to open behind a painted frame. */
+function opensAfterPaintBySize(bytes: Uint8Array): boolean {
   return (
     bytes.byteLength >= OPEN_PAINT_YIELD_CONTENT_BYTES ||
     zipContentExceeds(bytes, OPEN_PAINT_YIELD_CONTENT_BYTES)
   );
+}
+
+let everyForTest = false;
+
+/**
+ * @internal Open every document behind a painted frame, whatever its size, until the returned
+ * restore runs: the tests see the sliced open on a document small enough to lay out quickly.
+ */
+export function setOpenAfterPaintForTest(every: boolean): () => void {
+  const previous = everyForTest;
+  everyForTest = every;
+  return () => {
+    everyForTest = previous;
+  };
 }
 
 /**
@@ -126,8 +138,12 @@ export interface OpenSchedulerHooks {
   readonly continueOpen?: (budgetMs: number) => boolean;
   /** Called once the slices after a mount answered true, or ended by throwing. */
   readonly paginated?: () => void;
-  /** Whether every document opens behind a painted frame, not only a large one. */
-  readonly every?: () => boolean;
+  /**
+   * Whether the browser holds discrete input (a key, a click) the page has not handled. No
+   * pagination slice starts over it, and a slice that stopped for it resumes after
+   * {@link PAGINATE_INPUT_SETTLE_MS} rather than in the next task.
+   */
+  readonly inputPending?: () => boolean;
   /**
    * The element the document will paint in. Its window's frames and timers pace the open: a
    * frame requested from a hidden opener never comes, and its timers are throttled. Pending
@@ -149,6 +165,13 @@ interface ScheduledOpen {
  * it; see `surface-progressive-open.ts`.
  */
 const PAGINATE_SLICE_MS = 16;
+
+/**
+ * How long after input the pagination resumes, in milliseconds. Long enough for the
+ * keystroke or click to be handled and painted, short enough that a pause between keystrokes
+ * still lays out pages.
+ */
+export const PAGINATE_INPUT_SETTLE_MS = 50;
 
 /** The deferred-mount window, owned by the facade. See the module comment. */
 export interface OpenScheduler {
@@ -186,8 +209,15 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
     if (!continueOpen) return;
     const run = { cancelled: false };
     pagination = run;
+    const timers = hostTimers(() => hooks.node?.() ?? null);
+    const inputPending = (): boolean => hooks.inputPending?.() === true;
     const slice = () => {
       if (run.cancelled) return;
+      // Input waits behind no slice: none starts while the browser holds a key or a click.
+      if (inputPending()) {
+        timers.setTimeout(slice, PAGINATE_INPUT_SETTLE_MS);
+        return;
+      }
       let done = true;
       try {
         done = continueOpen(PAGINATE_SLICE_MS);
@@ -195,7 +225,10 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
         if (done && pagination === run) pagination = null;
         if (done) hooks.paginated?.();
       }
-      if (!done) queueTask(slice, viewOf());
+      if (done) return;
+      // A slice that ended at a pause point for input resumes once the input has settled.
+      if (inputPending()) timers.setTimeout(slice, PAGINATE_INPUT_SETTLE_MS);
+      else queueTask(slice, viewOf());
     };
     queueTask(slice, viewOf());
   };
@@ -216,7 +249,7 @@ export function createOpenScheduler(hooks: OpenSchedulerHooks): OpenScheduler {
     shouldYield: (bytes) =>
       typeof viewOf().requestAnimationFrame === 'function' &&
       typeof viewOf().cancelAnimationFrame === 'function' &&
-      (hooks.every?.() === true || opensAfterPaintBySize(bytes)),
+      (everyForTest || opensAfterPaintBySize(bytes)),
 
     // `requestAnimationFrame` fires BEFORE the pending paint, so the heavy work goes
     // into a task queued from inside it — the first slot guaranteed to run after the

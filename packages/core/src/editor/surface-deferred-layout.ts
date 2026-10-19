@@ -61,6 +61,11 @@ export interface DeferredLayoutHost {
   /** Told when a pass starts or stops finishing in the background. */
   pendingChanged?(pending: boolean): void;
   /**
+   * Whether the browser holds discrete input the page has not handled. A pass advanced by
+   * the opening's slices ({@link DeferredLayout.advance}) pauses at its next step for it.
+   */
+  inputPending?(): boolean;
+  /**
    * Told the milliseconds of main-thread work one pass took, its foreground part and every
    * background slice together, once the pass ends. A pass dropped for a newer edit is not a
    * pass of its own: its time is added to the pass that replaces it.
@@ -157,8 +162,11 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     if (host.revision() === revision) host.publish(layout);
   };
 
-  /** Step the paused pass for `budgetMs`. True once it ended (and was settled). */
-  const stepPaused = (pass: Paused, budgetMs: number): boolean => {
+  /**
+   * Step the paused pass for `budgetMs`, or with `forInput` until input waits. True once it
+   * ended (and was settled).
+   */
+  const stepPaused = (pass: Paused, budgetMs: number, forInput = false): boolean => {
     const began = host.now();
     const deadline = began + budgetMs;
     for (;;) {
@@ -170,7 +178,7 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
         report(pass.timed, pass.spent + host.now() - began);
         return true;
       }
-      if (host.now() >= deadline) break;
+      if (host.now() >= deadline || (forInput && host.inputPending?.() === true)) break;
     }
     pass.spent += host.now() - began;
     return false;
@@ -245,7 +253,7 @@ export function createDeferredLayout(host: DeferredLayoutHost): DeferredLayout {
     finish,
     advance(budgetMs) {
       const pass = paused;
-      return !pass || stepPaused(pass, budgetMs);
+      return !pass || stepPaused(pass, budgetMs, true);
     },
     abandon() {
       const pass = paused;

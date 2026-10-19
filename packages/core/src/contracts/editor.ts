@@ -294,9 +294,9 @@ export interface Editor extends EditorAnchorNavigation, EditorHighlights, Editor
    *
    * A large document mounts behind one painted frame, so a loading screen keyed on
    * `snapshot().isOpening` can show instead of a frozen page; a small one mounts before
-   * this returns (unless `openAfterPaint: 'every'`), and one behind the frame mounts on its
-   * first pages (`snapshot().isPaginating`). Callers that need the document synchronously do
-   * not have to care: `save`, `exec` and `selectMatch` complete a scheduled open first.
+   * this returns, and one behind the frame mounts on its first pages
+   * (`snapshot().isPaginating`). Callers that need the document synchronously do not have to
+   * care: `save`, `exec` and `selectMatch` complete a scheduled open first.
    */
   load(document: DocumentSource): void;
   /**
@@ -1476,8 +1476,14 @@ export interface EditorSnapshot {
   /**
    * Whether the pages after the first ones are still being laid out, in short tasks, after
    * an open behind a painted frame. The pages shown can be read, edited and searched;
-   * `page.total` counts the pages laid out so far, and a reveal lays out as far as its
-   * target. The `paginated` event fires when this turns false. Optional and additive.
+   * `page.total` counts the pages laid out so far, and a reveal or a scroll to pages not laid
+   * out yet lays out as far as them. The `paginated` event fires when this turns false.
+   *
+   * This is the state of the OPENING, for chrome such as a progress note. The container's
+   * `data-docx-layout-pending` attribute is a styling hook for a narrower thing: a layout pass
+   * that has left its later pages to the background, which happens during this opening and
+   * again after an edit to a long document once it is over, and it is off between the
+   * opening's passes. Optional and additive.
    */
   readonly isPaginating?: boolean;
   readonly parseError: string | null;

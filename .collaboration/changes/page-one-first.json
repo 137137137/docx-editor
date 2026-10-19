@@ -2,7 +2,7 @@
   "impact": "no-impact",
   "fields": [],
   "before": "A document opened behind a painted frame stayed behind the loading screen until every page was laid out, and its last layout ran in one task.",
-  "after": "The open ends on the first pages and lays the rest out in short tasks (snapshot().isPaginating, the paginated event); the fit is settled before the first layout; openAfterPaint: 'every' opens any document this way. The finished pages are the same.",
+  "after": "The open ends on the first pages and lays the rest out in short tasks that give way to input (snapshot().isPaginating, the paginated event); a reveal or a scroll to pages not laid out yet lays out as far as them; the fit is settled before the first layout. The finished pages are the same.",
   "reason": "Only when a local layout runs and what the local view paints meanwhile change. Nothing enters shared state, operations, snapshots sent to peers, or protocol messages, and the document model is untouched.",
   "tests": [
     "packages/core/src/editor/__tests__/page-one-first.test.ts",

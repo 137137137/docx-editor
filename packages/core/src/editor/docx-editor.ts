@@ -122,7 +122,8 @@ import { createMountHistoryGroups } from './editor-history-groups.ts';
 import { createPublishSignal } from './surface-publish-signal.ts';
 import { FORMAT_PAINTER_OFF } from './surface-format-painter-contract.ts';
 import { resolveDocTargetSelection } from './doc-target-resolution.ts';
-import { createOpenScheduler, opensAfterPaintBySize } from './docx-editor-open-scheduler.ts';
+import { createOpenScheduler } from './docx-editor-open-scheduler.ts';
+import { browserInputPending } from './surface-input-pending.ts';
 import * as preparedOpen from './docx-editor-prepared-open.ts';
 import { configSurfaceOptions } from './docx-editor-surface-config.ts';
 import type { TreeDocxSessionView } from '../binding/tree-session-contract.ts';
@@ -332,7 +333,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       }
     },
     paginated: () => notePaginated(),
-    every: () => config.openAfterPaint === 'every',
+    inputPending: () => container !== null && browserInputPending(container, false),
     // Fonts resolved before the mount are laid out once, by the mount; see `preparedOpenHook`.
     prepare: preparedOpen.preparedOpenHook(
       () => preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
@@ -710,16 +711,14 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     let publishedReviewFilterState = reviewAuthorVisibility.stateKey;
     const prepared = preparedOpen.takePreparedOpen(bytes);
     // An open in slices settles its fit before its first layout, so page one is laid out at
-    // the scale it is painted at (`docx-editor-zoom.ts`, `prefit`). A document only
-    // `openAfterPaint: 'every'` deferred is laid out whole, as its mount in one task did.
-    // An external refresh opens as a preview: its pages take no input until every one is laid
-    // out and the refresh reports its result (`mountBytes`), so no edit races the result.
+    // the scale it is painted at (`docx-editor-zoom.ts`, `prefit`). An external refresh opens
+    // as a preview: its pages take no input until every one is laid out and the refresh
+    // reports its result (`mountBytes`), so no edit races the result.
     const opening = prepared.progressiveOpen
       ? openingAtFit(
           zoomLane,
           prepared.openedSession,
           reviewEnabled ? reviewDisplayMode : 'proposed',
-          !opensAfterPaintBySize(bytes),
           refreshHost?.source === undefined
         )
       : null;

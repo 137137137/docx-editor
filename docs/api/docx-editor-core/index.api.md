@@ -1634,7 +1634,6 @@ export interface DocxEditorConfig {
     modules?: readonly EditorModule[];
     // (undocumented)
     onFontError?: (error: EditorFontError) => void;
-    openAfterPaint?: 'large' | 'every';
     reviewDisplayMode?: ReviewDisplayMode;
     revisionMarkup?: RevisionMarkupOptions;
     revisionStyles?: RevisionStyles;

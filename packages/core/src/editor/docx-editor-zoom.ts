@@ -339,19 +339,17 @@ export function firstPageWidthPx(
 
 /**
  * How a document opened in slices opens: at the fit its first page asks for, `live` or as a
- * preview (`OpeningSlicesOptions.live`). A `whole` opening lays the document out in one pass
- * (`OpeningSlicesOptions.whole`). Otherwise, when the fit moves the scale, the opening goes
- * from its first pages straight to the full layout, the order an open took when its fit moved
- * the scale right after the mount.
+ * preview (`OpeningSlicesOptions.live`). When the fit moves the scale, the opening goes from
+ * its first pages straight to the full layout, the order an open took when its fit moved the
+ * scale right after the mount.
  */
 export function openingAtFit(
   lane: Pick<ZoomLane, 'prefit'>,
   opened: OpenTreeSessionResult | undefined,
   displayMode: ReviewDisplayMode,
-  whole: boolean,
   live: boolean
 ): OpeningSlicesOptions {
   const width = opened ? firstPageWidthPx(opened, displayMode) : null;
   const moved = width !== null && lane.prefit(width);
-  return whole ? { live, whole: true, fullAfterFirst: moved } : { live, fullAfterFirst: moved };
+  return { live, fullAfterFirst: moved };
 }

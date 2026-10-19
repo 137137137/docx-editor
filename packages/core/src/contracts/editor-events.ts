@@ -61,9 +61,11 @@ export interface EditorEvents {
   /**
    * Every page of the mounted document is laid out. A document that opens behind a painted
    * frame shows its first pages as soon as they are laid out and lays the rest out in short
-   * tasks, then fires this once (see {@link EditorSnapshot.isPaginating}); a document that
-   * mounts before `load()` returns fires it just after the mount. It fires once per mounted
-   * document, and again only for the next document.
+   * tasks, then fires this once (see {@link EditorSnapshot.isPaginating}, the state this
+   * event ends); a document that mounts before `load()` returns fires it just after the
+   * mount. It fires once per mounted document, and again only for the next document. For
+   * work that needs every page once, such as a scroll to a remembered position: a host
+   * that renders a state reads `isPaginating` instead.
    *
    * @example
    * ```ts

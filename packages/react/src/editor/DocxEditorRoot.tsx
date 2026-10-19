@@ -72,7 +72,7 @@ import {
  * Props for `DocxEditor.Root`. `document` and `imageDecodePort` identity changes remount the
  * editor. Changing `fontShaping.maxFontBytes` also remounts. Later `fonts`, `author`, `locale`,
  * `mode`, `translate`, `zoom`, and `zoomMode` changes use instance setters, so edits, selection
- * and undo history survive them. `modules` and `openAfterPaint` are sampled at mount only.
+ * and undo history survive them. `modules` is sampled at mount only.
  *
  * @public
  */
@@ -133,13 +133,6 @@ export interface DocxEditorRootProps {
    * navigation pane shrinks the document by what it took. Pass `{ type: 'fixed' }` to opt out.
    */
   zoomMode?: ZoomMode | 'auto';
-  /**
-   * Which documents open behind a painted frame: `'large'` (the default) or `'every'`. With
-   * `'every'` each document resolves its fonts and settles its fit before its first layout,
-   * and opens on its first pages while the rest is laid out, as a large one does
-   * (`snapshot().isPaginating`, then the `paginated` event). Sampled at mount.
-   */
-  openAfterPaint?: 'large' | 'every';
   /**
    * Controlled viewer markup settings. Omitted fields use defaults.
    * Save callback values into this prop to accept API and dialog changes.
@@ -351,7 +344,6 @@ export function DocxEditorRoot(props: DocxEditorRootProps) {
       ...(p.modules !== undefined ? { modules: p.modules } : {}),
       ...(p.zoom !== undefined ? { zoom: p.zoom } : {}),
       ...(p.zoomMode !== undefined ? { zoomMode: p.zoomMode } : {}),
-      ...(p.openAfterPaint !== undefined ? { openAfterPaint: p.openAfterPaint } : {}),
       ...(p.tableInteractionLabel ? { tableInteractionLabel: p.tableInteractionLabel } : {}),
       ...(p.imageDecodePort ? { imageDecodePort: p.imageDecodePort } : {}),
       onFontError: (error) => propsRef.current.onFontError?.(error),
