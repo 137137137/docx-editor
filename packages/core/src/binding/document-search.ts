@@ -26,7 +26,6 @@ import {
   SEARCH_MATCH_LIMIT,
   SEARCH_QUERY_MAX,
   isSearchableQuery,
-  paragraphTextOf,
 } from '@docx-editor.dev/core/store';
 import type { ViewScope } from '../contracts/editor.ts';
 import {
@@ -41,6 +40,7 @@ import {
   type NoteKind,
 } from '../store/package/note-nodes.ts';
 import { isFldSimple } from '../store/package/field-nodes.ts';
+import { FieldResultsModeMemo } from '../store/package/field-result-mode.ts';
 import { bodyStoryRoot, storyRootsOf } from '../store/package/story-blocks.ts';
 import { walkParagraphInline } from '../store/package/content-control-walk.ts';
 import type { OoxmlParagraphNode, OoxmlPart } from '../store/package/ooxml-tree.ts';
@@ -48,6 +48,7 @@ import {
   projectVisibleParagraphText,
   type ProjectedParagraphText,
 } from '../store/store/text-projection.ts';
+import { paragraphModelTextOf } from '../store/store/paragraph-model-text.ts';
 import { paragraphOffsetIndex } from '../store/store/tree-op-segments.ts';
 import {
   expandSelectableTextboxStories,
@@ -257,30 +258,34 @@ function resultRunAddressAt(
 }
 
 /**
- * Each paragraph's searchable text, per part. A part and its nodes are frozen, and an edit
- * makes a new part and new nodes for what it changes, so an entry never goes stale. A search
- * reads every paragraph of every story, and building this text was nearly all of its cost: a
+ * Each paragraph's searchable text, keyed by the paragraph node. Nodes are frozen and an edit
+ * replaces only the nodes it changes, so a paragraph the edit did not touch keeps its entry
+ * across revisions, and no revision retains a text of its own: an entry lives exactly as long
+ * as its node. The text depends on the node and on the field-results mode of the call, and
+ * the memo keeps one entry per mode. Building this text was nearly all of a search's cost: a
  * caller asking many queries of one revision paid the whole document again for each.
  */
-const searchableTextCache = new WeakMap<
-  OoxmlPart,
-  WeakMap<OoxmlParagraphNode, ProjectedParagraphText>
->();
+const searchableText = new FieldResultsModeMemo<OoxmlParagraphNode, ProjectedParagraphText>();
 
-/** `paragraph`'s text in `part` as a search reads it, built once per part and paragraph. */
-function searchableTextOf(part: OoxmlPart, paragraph: OoxmlParagraphNode): ProjectedParagraphText {
-  let byParagraph = searchableTextCache.get(part);
-  if (!byParagraph) {
-    byParagraph = new WeakMap();
-    searchableTextCache.set(part, byParagraph);
-  }
-  let projected = byParagraph.get(paragraph);
+/** `paragraph`'s text as a search reads it, built once per node and field-results mode. */
+function searchableTextOf(paragraph: OoxmlParagraphNode): ProjectedParagraphText {
+  let projected = searchableText.get(paragraph);
   if (!projected) {
-    const rawText = paragraphTextOf(part, paragraph.id) ?? '';
-    projected = projectVisibleParagraphText(paragraph, rawText);
-    byParagraph.set(paragraph, projected);
+    projected = projectVisibleParagraphText(paragraph, paragraphModelTextOf(paragraph));
+    searchableText.set(paragraph, projected);
   }
   return projected;
+}
+
+/**
+ * The searchable text already built for `paragraph` in the current field-results mode, or
+ * undefined. A read only: the tests observe with it that an edit keeps the entries of the
+ * paragraphs it did not touch. @internal
+ */
+export function searchableTextEntry(
+  paragraph: OoxmlParagraphNode
+): ProjectedParagraphText | undefined {
+  return searchableText.get(paragraph);
 }
 
 /** Bound and flatten one file-derived string on its way out of this module. */
@@ -340,7 +345,7 @@ export function collectTextMatchesForQueries(
       if (paragraph.kind !== 'paragraph') continue;
       const index = paragraphIndex;
       paragraphIndex += 1;
-      const projected = searchableTextOf(story.part, paragraph);
+      const projected = searchableTextOf(paragraph);
       if (projected.text.length === 0) continue;
       // Run starts are derived once per paragraph that has a hit, not per occurrence.
       let starts: RunStart[] | null = null;
