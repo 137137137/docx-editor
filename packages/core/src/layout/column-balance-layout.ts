@@ -169,7 +169,16 @@ export function* layoutBlocksWithColumnBalanceSteps<HostOptions extends object>(
   const natural = yield* layoutPass(bodies, revision, trialOptions);
   if (natural.pages.length !== 1 || !natural.endsOpenPage) {
     if (session) session.balanceLimit = null;
-    return yield* layoutPass(bodies, revision, options);
+    const final = yield* layoutPass(bodies, revision, options);
+    if (!final.endsOpenPage || final.pages.length < 2) return final;
+    // A multi-page section keeps its natural columns, but its successor resumes
+    // below every in-flow column on the last sheet, not just the last column's cursor.
+    const endCursorY = Math.max(
+      final.endCursorY,
+      ...columnBottomsOf(final.pages.at(-1)!, columns, 0)
+    );
+    if (session) session.endCursorY = endCursorY;
+    return { ...final, endCursorY };
   }
 
   const naturalBottoms = columnBottomsOf(natural.pages[0]!, columns, regionTop);
