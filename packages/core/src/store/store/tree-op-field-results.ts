@@ -43,6 +43,7 @@ import {
 import type { OoxmlElement, OoxmlNode, OoxmlPart } from '../package/ooxml-tree.ts';
 import { isValidXmlText } from '../package/sinks.ts';
 import { hardBreakKind } from '../package/hard-break.ts';
+import { withFreshIds } from '../package/hf-lifecycle-shell.ts';
 import { simpleElement } from './tree-op-inline-elements.ts';
 import { effectiveContentLockAt, isBoundAt, ok, parentOf } from './tree-op-nodes.ts';
 import type { TreeDocOp, TreeOpRejection, TreeOpResult } from './tree-op-types.ts';
@@ -79,7 +80,10 @@ export interface LocatedFieldResult {
   readonly rewritable: boolean;
 }
 
-interface LocatedField extends LocatedFieldResult {
+/** @internal A located field with the node ids a result rewrite needs. */
+export interface LocatedField extends LocatedFieldResult {
+  /** Whether the result could be rewritten if no pending insertion held the field. */
+  readonly resultWritable?: boolean;
   /** Element whose child list holds the field (paragraph, hyperlink, …) or the fldSimple. */
   readonly containerId: string;
   /** Result runs in order; the first receives the new text, the rest lose theirs. */
@@ -299,11 +303,18 @@ function locateFieldsInContainer(
   depth: number,
   budget: LocateBudget,
   out: LocatedField[],
-  allowInstructionBookmarks = false
+  allowInstructionBookmarks = false,
+  insertions: 'skip' | 'enter' | 'inside' = 'skip'
 ): void {
   if (allowInstructionBookmarks ? depth >= MAX_INLINE_CONTAINER_DEPTH : depth > MAX_LOCATE_DEPTH)
     return;
   const children = container.children;
+  // A field inside a pending insertion is read, never refreshed: its result belongs to the
+  // proposal, so a rewrite would change what a reviewer accepts or rejects.
+  const found = (field: LocatedField): LocatedField =>
+    insertions === 'inside'
+      ? { ...field, rewritable: false, resultWritable: field.rewritable }
+      : field;
   let index = 0;
   while (index < children.length) {
     budget.nodes -= 1;
@@ -315,7 +326,7 @@ function locateFieldsInContainer(
     }
     if (isFldSimple(node)) {
       // The OUTER field only — content nested in a cached result is never live-refreshed.
-      out.push(locateSimpleField(node));
+      out.push(found(locateSimpleField(node)));
       index += 1;
       continue;
     }
@@ -328,20 +339,22 @@ function locateFieldsInContainer(
           budget,
           allowInstructionBookmarks
         );
-        if (consumed.field) out.push(consumed.field);
+        if (consumed.field) out.push(found(consumed.field));
         index = consumed.nextIndex;
         continue;
       }
       index += 1;
       continue;
     }
-    if (!isDrawingContainer(node) && !isRevisionContainer(node)) {
+    const insertion = insertions !== 'skip' && node.localName === 'ins';
+    if (!isDrawingContainer(node) && (!isRevisionContainer(node) || insertion)) {
       locateFieldsInContainer(
         node,
         allowInstructionBookmarks ? nextInlineContainerDepth(node, depth) : depth + 1,
         budget,
         out,
-        allowInstructionBookmarks
+        allowInstructionBookmarks,
+        insertion ? 'inside' : insertions
       );
     }
     index += 1;
@@ -350,18 +363,21 @@ function locateFieldsInContainer(
 
 /**
  * The fields inside one paragraph whose cached results this op could address, in document
- * order. Bounded walk; a paragraph past the budget answers what it found so far.
+ * order. Bounded walk; a paragraph past the budget answers what it found so far. With
+ * `pendingInsertions`, fields inside a `w:ins` are listed too, as not rewritable.
  */
 export function locateFieldResults(
   paragraph: OoxmlElement,
-  allowInstructionBookmarks = false
+  allowInstructionBookmarks = false,
+  pendingInsertions = false
 ): readonly LocatedFieldResult[] {
-  return locatePlainFields(paragraph, allowInstructionBookmarks);
+  return locatePlainFields(paragraph, allowInstructionBookmarks, pendingInsertions);
 }
 
 function locatePlainFields(
   paragraph: OoxmlElement,
-  allowInstructionBookmarks = false
+  allowInstructionBookmarks = false,
+  pendingInsertions = false
 ): LocatedField[] {
   const out: LocatedField[] = [];
   locateFieldsInContainer(
@@ -369,9 +385,27 @@ function locatePlainFields(
     0,
     { nodes: MAX_LOCATE_NODES },
     out,
-    allowInstructionBookmarks
+    allowInstructionBookmarks,
+    pendingInsertions ? 'enter' : 'skip'
   );
   return out;
+}
+
+/**
+ * One field of a paragraph, by its anchor id, for a cached-result write by the editing API.
+ *
+ * The form-field locate rules apply: an empty result is writable (the write mints the result
+ * run before `end`), and a result holding a line break is not. Fields inside a pending
+ * insertion are found too; `resultWritable` then says whether the result itself could take
+ * the write.
+ */
+export function locateFieldForResultWrite(
+  paragraph: OoxmlElement,
+  fieldNodeId: string
+): LocatedField | null {
+  const located: LocatedField[] = [];
+  locateFieldsInContainer(paragraph, 0, { nodes: MAX_LOCATE_NODES }, located, true, 'enter');
+  return located.find((entry) => entry.fieldNodeId === fieldNodeId) ?? null;
 }
 
 /**
@@ -451,7 +485,7 @@ function resultRunContent(text: string, mint: () => string): OoxmlNode[] {
  * result run keeps its `w:rPr` and receives the new text; surplus result runs keep their
  * `w:rPr` and lose their `w:t` / `w:tab` children. Nothing else in the paragraph moves.
  */
-function rewriteFieldResult(
+export function rewriteFieldResult(
   paragraph: OoxmlElement,
   field: LocatedField,
   text: string,
@@ -496,9 +530,18 @@ function rewriteFieldResult(
               } as OoxmlNode,
             ]
           : [];
+        // The minted result run keeps the end run's formatting, so the result shows in the
+        // face the field's own runs carry.
+        const properties = child.children
+          .filter((entry) => entry.kind === 'runProperties')
+          .map((entry) => withFreshIds(entry, mint));
         return [
           ...separator,
-          { ...child, id: mint(), children: resultRunContent(text, mint) } as OoxmlNode,
+          {
+            ...child,
+            id: mint(),
+            children: [...properties, ...resultRunContent(text, mint)],
+          } as OoxmlNode,
           child,
         ];
       }

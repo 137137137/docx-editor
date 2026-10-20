@@ -3,24 +3,9 @@ Copyright (c) 2026 EigenPal, Inc. All rights reserved.
 Licensed under the EigenPal Pro Evaluation License 1.0 — see packages/editor-api/LICENSE.md.
 Production use requires a commercial agreement: licensing@eigenpal.com
 */
-// A stretch of a story: two endpoints, each a paragraph and a UTF-16 offset.
-//
-// A RANGE IS A SNAPSHOT, NOT A TRACKED REGION. Its endpoints name the paragraphs they were found in
-// and the offsets they were found at, so it stays meaningful across edits ELSEWHERE in the document
-// and becomes an explicit refusal — `InvalidObjectPath` — once one of its paragraphs is gone. What
-// it deliberately does not do is follow edits INSIDE itself: a range over "alpha" whose paragraph
-// then gains a word at offset 0 no longer names "alpha", so using it fails with `StaleDocument`
-// instead of reading or editing the text now at offsets 0..5. Word's own ranges do move, by
-// keeping a live region in the document; this API does not have one, and pretending otherwise
-// would answer text from a place the caller was not looking at.
-//
-// That is also why `Range#start`/`Range#end` are not here, and why they are not merely unimplemented
-// either: they are document-wide character positions, a different addressing scheme from the one this
-// whole lane uses (paragraph identity plus UTF-16 offset) and one whose value changes whenever any
-// earlier paragraph changes length. This engine maintains no such counter, so the members were
-// DE-SELECTED — removed from `compat/manifest.json`'s selection and from the authored declarations,
-// with the reasons recorded as omissions there — rather than left declared for a shipped object that
-// could never satisfy them. A caller who wants the ends of a range asks it for its paragraphs.
+// A stretch of a story: two endpoints, each a paragraph and a UTF-16 offset. A range is a snapshot,
+// not a tracked region, and has no document-wide `start`/`end`; the class comment says why. A
+// field's cached result is a range too, addressed by its field (`field-result-range.ts`).
 
 import {
   InsertLocation,
@@ -30,6 +15,7 @@ import {
   RangeLocation,
 } from './editing-enums.ts';
 import { Field, FieldCollection } from './fields.ts';
+import { fieldResultRead, fieldResultWrite } from './field-result-range.ts';
 import type { FieldType, FieldTypeLiteral } from './field-types.ts';
 import { InlinePicture, InlinePictureCollection } from './pictures.ts';
 import { Table, TableCollection } from './tables.ts';
@@ -41,6 +27,7 @@ import {
   hydratedApplied,
   hydratedStyle,
   hydratedText,
+  refuseFieldResultMember,
   type AutomationSpan,
   type ObjectAddress,
   type RequestContext,
@@ -53,6 +40,7 @@ import { Font } from './font.ts';
 import { ContentControl, ContentControlCollection } from './content-controls.ts';
 import {
   insertableText,
+  insertableTextWithBreaks,
   rangeTextLocation,
   selectionMode,
   type SelectionMode,
@@ -107,6 +95,11 @@ export class Range extends ModelObject implements PromisedItem {
   /** @internal A range a queued operation will name, or report as nothing. */
   static promised(context: RequestContext, label: string, nullable: boolean): Range {
     return new Range(context, ObjectPath.pending(label), nullable);
+  }
+
+  /** @internal The cached result of the field `field` names. */
+  static ofFieldResult(context: RequestContext, label: string, field: ObjectPath): Range {
+    return new Range(context, ObjectPath.fieldResult(label, field), false);
   }
 
   private constructor(context: RequestContext, path: ObjectPath, nullable: boolean) {
@@ -515,6 +508,14 @@ export class Range extends ModelObject implements PromisedItem {
    * Empty text with `Replace` deletes the range; empty text at an insertion point is a no-op.
    * Agent tools that intend a replacement should validate non-empty model output first.
    *
+   * `\n`, `\r`, and `\r\n` in `text` are paragraph breaks: the text after one starts a new
+   * paragraph with the properties of the paragraph it was written into. With `TrackMineOnly`,
+   * each new paragraph mark is a tracked insertion, and rejecting it joins the paragraphs again.
+   * The answered range then ends after the last segment, in the last new paragraph. Text that
+   * lands inside an inline content control refuses with `NotSupported`
+   * (`edit.indivisible-content`), and a write with a break cannot share a sync with another
+   * text edit in the same paragraph. `\v` is a manual line break.
+   *
    * `Before`/`Start` and `After`/`End` land at the SAME position here, and the difference Word
    * draws between them — whether the new text becomes part of this range — has no meaning for a
    * snapshot. Both pairs are accepted because source-compatible code uses all four; what a caller
@@ -531,7 +532,12 @@ export class Range extends ModelObject implements PromisedItem {
     insertLocation: InsertLocation | 'Replace' | 'Start' | 'End' | 'Before' | 'After'
   ): Range {
     const target = `${this.path.label}.insertText`;
-    const written = insertableText(text, target);
+    if (this.path.isFieldResult) {
+      this.requireUsablePath();
+      this.command('insertText', fieldResultWrite(this.path, text, insertLocation, target));
+      return Range.ofFieldResult(this.context, target, this.path);
+    }
+    const written = insertableTextWithBreaks(text, target);
     const where = rangeTextLocation(insertLocation, target);
     this.requireUsablePath();
     const created = Range.promised(this.context, target, false);
@@ -680,8 +686,12 @@ export class Range extends ModelObject implements PromisedItem {
     ));
   }
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -690,8 +700,12 @@ export class Range extends ModelObject implements PromisedItem {
     removeFormatting?: boolean
   ): Field;
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -700,8 +714,12 @@ export class Range extends ModelObject implements PromisedItem {
     removeFormatting?: boolean
   ): Field;
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -732,6 +750,30 @@ export class Range extends ModelObject implements PromisedItem {
       (value) => field.hydrateAddress({ kind: 'handle', handle: hydratedHandle(value, target) })
     );
     return field;
+  }
+
+  /**
+   * Insert one equation from OOXML: a Flat OPC package (`pkg:package`) whose document part holds
+   * one paragraph with exactly one inline `m:oMath` and, around it, plain runs. Other OOXML
+   * refuses with `NotSupported` or `InvalidArgument` and `edit.ooxml-unsupported`, and nothing is
+   * inserted. With `TrackMineOnly`, the equation is one tracked insertion. Returns the range the
+   * inserted content occupies.
+   */
+  insertOoxml(
+    ooxml: string,
+    insertLocation: InsertLocation | 'Replace' | 'Start' | 'End' | 'Before' | 'After'
+  ): Range {
+    const target = `${this.path.label}.insertOoxml`;
+    if (typeof ooxml !== 'string') fail({ code: 'InvalidArgument', target });
+    const location = rangeTextLocation(insertLocation, target);
+    this.requireUsablePath();
+    const created = Range.promised(this.context, target, false);
+    this.commandAnswering(
+      target,
+      () => ({ op: 'insertOoxml', span: this.#span(), location, ooxml }),
+      (value) => created.hydrateAddress({ kind: 'span', span: hydratedSpan(value, target) })
+    );
+    return created;
   }
 
   /** Inline pictures fully contained within this snapshot range. */
@@ -907,7 +949,11 @@ export class Range extends ModelObject implements PromisedItem {
 
   /** @internal Plan the read this object's `load(...)` asked for. */
   protected override onLoad(request: ResolvedLoadOptions): void {
-    const selected = this.selection(request, ['text', 'style', 'hyperlink']);
+    // A field result has text only, so a bare `load()` asks for that and nothing else.
+    const selected =
+      this.path.isFieldResult && request.select.length === 0
+        ? ['text']
+        : this.selection(request, ['text', 'style', 'hyperlink']);
     if (selected.includes('hyperlink')) {
       this.loadTextInto('hyperlink', () => ({ op: 'getHyperlink', span: this.#span() }));
     }
@@ -915,7 +961,9 @@ export class Range extends ModelObject implements PromisedItem {
       const label = `${this.path.label}.text`;
       this.read(
         label,
-        () => ({ op: 'getSpanText', span: this.#span(), projection: this.revisionTextView() }),
+        this.path.isFieldResult
+          ? fieldResultRead(this.path, this.revisionTextView())
+          : () => ({ op: 'getSpanText', span: this.#span(), projection: this.revisionTextView() }),
         (value) => {
           this.setLoadedProperty('text', hydratedText(value, label));
         }
@@ -934,6 +982,7 @@ export class Range extends ModelObject implements PromisedItem {
   }
 
   #span(): AutomationSpan {
+    if (this.path.isFieldResult) refuseFieldResultMember(this.path.label);
     this.requireAddressable();
     return this.path.span();
   }

@@ -366,6 +366,8 @@ const TREE_OP_REACH: {
   insertHardBreak: (op) => writingAt(op.paragraphId, op.offset),
   insertPageBreak: (op) => writingAt(op.paragraphId, op.offset),
   insertPageField: (op) => writingAt(op.paragraphId, op.offset),
+  insertComplexField: (op) => writingAt(op.paragraphId, op.offset),
+  insertEquation: (op) => writingAt(op.paragraphId, op.offset),
   // Plain anchors sit beside text. A tracked note uses the tracked run-content applier.
   insertCommentMarker: (op) => beside(op.paragraphId, op.offset),
   insertNote: (op) =>
@@ -561,6 +563,7 @@ const TREE_OP_REACH: {
   rewriteTocPageNumbers: (op) => ({ kind: 'nodes', targets: inParagraphs(op.updates) }),
   // A field-result refresh rewrites result runs in the paragraphs the op names, nothing else.
   setFieldCode: (op) => whole(op.fieldNodeId),
+  setFieldResult: (op) => whole(op.fieldNodeId),
   setTextFormFieldDefault: (op) => whole(op.fieldNodeId),
   commitTextFormField: (op) => whole(op.fieldNodeId),
   setLegacyCheckbox: (op) => whole(op.fieldNodeId),

@@ -1,4 +1,8 @@
-import { tocFieldCode } from './toc-field-code.ts';
+import { planFieldInsert } from './plan-field-insert.ts';
+import { planFieldResultWrite } from './plan-field-result.ts';
+import { planOoxmlInsert } from './plan-ooxml-insert.ts';
+import { insideOwnPendingInsertion } from '../store/store/tree-op-field-result-write.ts';
+import { revisionDateNow } from './revision-date.ts';
 import { TARGET_REMOVED } from './target-removed.ts';
 import type { TreeDocOp } from '../store/store/tree-ops.ts';
 import { effectiveContentLockAt, isBoundAt } from '../store/store/tree-op-nodes.ts';
@@ -10,7 +14,6 @@ import type { AutomationStoryId } from './stories.ts';
 import { resolveSpanRef, spanOffsets, storyOfSpanRef } from './spans.ts';
 import {
   fieldsInParagraph,
-  fieldInsertionParagraph,
   supportedPageFieldCode,
   type AutomationFieldPageContext,
 } from './fields.ts';
@@ -24,6 +27,8 @@ type FieldOperation = Extract<
       | 'setFieldCode'
       | 'deleteField'
       | 'updateFieldResult'
+      | 'getFieldResult'
+      | 'setFieldResult'
       | 'insertField';
   }
 >;
@@ -36,7 +41,56 @@ const refuse = (
   error: { code, message, ...(detail === undefined ? {} : { detail }) },
 });
 
-export function planFields(
+type InlineAtomOperation = FieldOperation | Extract<AutomationOperation, { op: 'insertOoxml' }>;
+
+const INLINE_ATOM_OPERATIONS: ReadonlySet<string> = new Set<InlineAtomOperation['op']>([
+  'getFields',
+  'getField',
+  'setFieldCode',
+  'deleteField',
+  'updateFieldResult',
+  'getFieldResult',
+  'setFieldResult',
+  'insertField',
+  'insertOoxml',
+]);
+
+/** Field reads and writes, and the equation insertion: the operations planned here. */
+export function isInlineAtomOperation(
+  operation: AutomationOperation
+): operation is InlineAtomOperation {
+  return INLINE_ATOM_OPERATIONS.has(operation.op);
+}
+
+/** Plan one field operation, or the insertion of one equation from OOXML. */
+export function planInlineAtoms(
+  operation: InlineAtomOperation,
+  handles: AutomationHandleTable,
+  reads: AutomationPackageReads,
+  claim: (
+    story: AutomationStoryReads,
+    paragraphId: string,
+    resultOnly?: boolean
+  ) => PlannedOperation | null,
+  fieldPageContext?: (
+    story: AutomationStoryId,
+    paragraphId: string,
+    fieldNodeId: string
+  ) => AutomationFieldPageContext | null,
+  trackingAuthor?: string
+): PlannedOperation {
+  if (operation.op === 'insertOoxml')
+    return planOoxmlInsert(
+      operation,
+      handles,
+      reads,
+      (story, paragraphId) => claim(story, paragraphId),
+      trackingAuthor
+    );
+  return planFields(operation, handles, reads, claim, fieldPageContext, trackingAuthor);
+}
+
+function planFields(
   operation: FieldOperation,
   handles: AutomationHandleTable,
   reads: AutomationPackageReads,
@@ -49,7 +103,8 @@ export function planFields(
     story: AutomationStoryId,
     paragraphId: string,
     fieldNodeId: string
-  ) => AutomationFieldPageContext | null
+  ) => AutomationFieldPageContext | null,
+  trackingAuthor?: string
 ): PlannedOperation {
   if (operation.op === 'getFields' || operation.op === 'insertField') {
     const range = resolveSpanRef(operation.span, handles, reads);
@@ -79,62 +134,14 @@ export function planFields(
       };
     }
     if (!range.value) return refuse('insert a paragraph before inserting a field');
-    if (operation.removeFormatting !== undefined && operation.removeFormatting !== false)
-      return refuse('removeFormatting is not supported');
-    if (operation.text !== undefined && typeof operation.text !== 'string')
-      return refuse('field text must be a string');
-    if (operation.fieldType !== undefined && typeof operation.fieldType !== 'string')
-      return refuse('field type must be a string');
-    const type = operation.fieldType ?? 'Empty';
-    let field: string | null = null;
-    if (type === 'Page' || type === 'NumPages') {
-      if (operation.text !== undefined && operation.text.trim() !== '')
-        return refuse('field switches are not supported');
-      field = type === 'Page' ? 'PAGE' : 'NUMPAGES';
-    } else if (type === 'TOC') field = tocFieldCode(operation.text ?? '');
-    else if (type === 'Empty') field = supportedPageFieldCode(operation.text ?? '');
-    if (!field)
-      return refuse('only PAGE, NUMPAGES, and TOC with supported switches can be inserted');
-    const { start, end } = range.value;
-    if (!['Before', 'After', 'Start', 'End', 'Replace'].includes(operation.location))
-      return refuse('unsupported field insert location');
-    if (operation.location === 'Replace' && start.paragraphId !== end.paragraphId)
-      return refuse('field replacement requires one paragraph');
-    const point = operation.location === 'After' || operation.location === 'End' ? end : start;
-    const conflict = claim(story, point.paragraphId);
-    if (conflict) return conflict;
-    const ops: TreeDocOp[] = [];
-    if (operation.location === 'Replace' && end.offset > start.offset)
-      ops.push({
-        op: 'deleteText',
-        paragraphId: start.paragraphId,
-        start: start.offset,
-        end: end.offset,
-      });
-    ops.push({
-      op: 'insertFragment',
-      paragraphId: point.paragraphId,
-      offset: point.offset,
-      blocks: [fieldInsertionParagraph(field)],
-      lastMarkCovered: false,
-    });
-    return {
-      ok: true,
-      kind: 'command',
-      story: story.story,
-      ops,
-      answer: (post) => {
-        const part = post.story(story.story)?.part;
-        const inserted =
-          part &&
-          fieldsInParagraph(part, point.paragraphId).find((field) => field.start === point.offset);
-        if (!inserted) throw new Error('inserted field was not committed');
-        return {
-          kind: 'handle',
-          handle: handles.field(point.paragraphId, inserted.fieldNodeId, story.story),
-        };
-      },
-    };
+    return planFieldInsert(
+      operation,
+      range.value,
+      story,
+      handles,
+      (reads, paragraphId) => claim(reads, paragraphId),
+      trackingAuthor
+    );
   }
   const target = handles.resolve(operation.field, 'field');
   if (!target || target.kind !== 'field')
@@ -149,23 +156,54 @@ export function planFields(
     return refuse('that field no longer exists', 'invalid-handle', TARGET_REMOVED);
   if (operation.op === 'getField')
     return { ok: true, kind: 'query', value: { kind: 'field', field: { code: field.code } } };
+  // The result reads as a range over the field reads: the field's own span of the paragraph.
+  if (operation.op === 'getFieldResult') {
+    const text =
+      story
+        .projectedText(target.paragraphId, operation.projection ?? 'allMarkup')
+        ?.sliceRaw(field.start, field.end) ?? '';
+    return { ok: true, kind: 'query', value: { kind: 'text', text } };
+  }
   if (
     field.locked ||
     effectiveContentLockAt(story.part, target.fieldNodeId).content ||
     isBoundAt(story.part, target.fieldNodeId)
   )
-    return refuse('field is protected');
+    return refuse('field is protected', 'unsupported-content', 'locked');
+  if (operation.op === 'setFieldResult')
+    // A result write changes no model offset (a field is one unit), so it claims no paragraph:
+    // several results of one paragraph can change in one sync, as `updateFieldResult` can.
+    return planFieldResultWrite(
+      operation,
+      story,
+      target,
+      (reads, paragraphId) => claim(reads, paragraphId, true),
+      trackingAuthor
+    );
   const conflict = claim(story, target.paragraphId, operation.op === 'updateFieldResult');
   if (conflict) return conflict;
   const ops: TreeDocOp[] = [];
-  if (operation.op === 'deleteField')
+  const author = trackingAuthor?.trim();
+  if (operation.op === 'deleteField') {
+    // Under TrackMineOnly, only the author's own pending field can go: the tracked deletion takes
+    // that proposal back outright. Striking any other field has no supported form here.
+    if (
+      author !== undefined &&
+      !insideOwnPendingInsertion(story.part, target.paragraphId, target.fieldNodeId, author)
+    )
+      return refuse(
+        'TrackMineOnly deletes only a field that is your own pending insertion; no permanent edit was applied',
+        'unsupported-capability',
+        'change-tracking-operation-unsupported'
+      );
     ops.push({
       op: 'deleteText',
       paragraphId: target.paragraphId,
       start: field.start,
       end: field.end,
+      ...(author === undefined ? {} : { revision: { author, date: revisionDateNow() } }),
     });
-  else if (operation.op === 'setFieldCode') {
+  } else if (operation.op === 'setFieldCode') {
     if (!supportedPageFieldCode(field.code) || !supportedPageFieldCode(operation.code))
       return refuse('only PAGE and NUMPAGES code writes are supported');
     ops.push({
