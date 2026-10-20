@@ -4,6 +4,8 @@ import { execBookmarkCommand } from './docx-editor-bookmarks.ts';
 import { fragmentContainsClipboardObject } from './clipboard-object-selection.ts';
 import { fragmentFromHtml } from './clipboard-fragment-codec.ts';
 import { FIELD_CODE_INPUT_REFUSAL } from './surface-field-code-input.ts';
+import { isMissingAuthorRefusal } from './docx-editor-author.ts';
+import { isCollaborationFailureCode } from '../collaboration/index.ts';
 import { execReplaceMatch } from './docx-editor-replace-match.ts';
 // Command dispatch for `createDocxEditor` (editor seam).
 //
@@ -54,6 +56,20 @@ import { lineSpacingAttributes, spacingSideAttributes } from './paragraph-format
  * verb that changed nothing), and `null` when it completed normally — the caller then
  * derives `changed` from the model revision rather than trusting the verb.
  */
+/**
+ * A refused run format as a command result. A missing author or the generated table of
+ * contents is the caller's to fix, as `insertText` reports it; a collaboration session that
+ * is not ready is a retry, as the contract documents; anything else is a lock.
+ */
+function runFormatRefusal(reason: string): ExecResult {
+  if (isCollaborationFailureCode(reason)) return { ok: false, code: 'unsupported', reason };
+  const callerFixable =
+    isMissingAuthorRefusal(reason) ||
+    reason === 'the table of contents is generated and read-only' ||
+    reason === FIELD_CODE_INPUT_REFUSAL;
+  return { ok: false, code: callerFixable ? 'invalidArgs' : 'locked', reason };
+}
+
 export function execEditorCommand(
   mounted: PaginatedSurface,
   command: EditorCommand,
@@ -68,7 +84,9 @@ export function execEditorCommand(
   switch (command.type) {
     case 'toggleMark': {
       const mark = MARKS.get(command.mark)!;
-      mounted.toggleRunProperty(mark.localName, mark.attributes);
+      // The document's refusal, in its own words: the reason names the cause.
+      const refused = mounted.toggleRunProperty(mark.localName, mark.attributes);
+      if (refused) return runFormatRefusal(refused);
       break;
     }
     case 'setMarkAttr': {
@@ -76,7 +94,8 @@ export function execEditorCommand(
       // again here keeps exec's write derived from the command, not from trust.
       const resolved = resolveMarkAttr(command);
       if (!resolved.ok) return { ok: false, code: resolved.code, reason: resolved.reason };
-      mounted.setRunProperty(resolved.localName, resolved.attributes);
+      const refused = mounted.setRunProperty(resolved.localName, resolved.attributes);
+      if (refused) return runFormatRefusal(refused);
       break;
     }
     case 'clearFormatting':
