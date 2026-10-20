@@ -37,6 +37,10 @@ TIFF, EMF, and WMF paint when conversion to a validated raster succeeds. The ori
 
 SVG is painted through an `<img>`, which puts the browser in secure static mode: scripts in the file never run and external references in it are never fetched. Its intrinsic size is read from `width`/`height`/`viewBox` for reset-to-natural-size; layout always uses the authored `wp:extent`. An SVG whose root element cannot be read renders as a placeholder rather than inferring missing dimensions.
 
+Inline pictures rotated by 90 or 270 degrees reserve their rotated width and height before effect margins. Text wrapping, pagination, and caret positions use these dimensions. Saving preserves the authored extent and rotation.
+
+Header drawings positioned relative to the top margin use the physical sheet top as their origin. For these drawings outside table cells, top-and-bottom wrapping clears header text from the same origin.
+
 ## Reading selection state
 
 Use the canonical read model shared by snapshot and imperative API:
@@ -173,6 +177,8 @@ A line break (`w:br`) with `w:clear` restarts the text after it on the next line
 - `all` clears every object that wraps text, including objects from earlier paragraphs and objects in the same table cell.
 
 Objects with no text wrapping, in front of text or behind it, are not cleared. If the restart line does not fit above the bottom margin, it starts on the next page or column. The value `none` lays out as an ordinary line break, and the attribute is kept when you save.
+
+A positioned table keeps its text wrap region when nearby pictures require immediate placement. Body text clears that region.
 
 An inline picture flows like a word. If it does not fit before a floating picture, it continues past the floating picture on the same line. Text after an inline picture starts at the picture's edge, and a click past the picture places the caret after it. A click in the space that a floating picture leaves between two pieces of content places the caret between them.
 
