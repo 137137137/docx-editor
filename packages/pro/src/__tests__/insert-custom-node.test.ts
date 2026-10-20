@@ -19,6 +19,7 @@ import {
   insertCustomNode,
   recognizeCustomNodes,
 } from '../index.ts';
+import { reviewModule } from '../review/review-module.ts';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
@@ -318,5 +319,84 @@ describe('insertCustomNode', () => {
     });
     const [node] = recognizeCustomNodes(reopened.surface!.session.part(), [citation]);
     expect(node?.attrs['q']).toBe(hostile);
+  });
+
+  test('a node inserted into a paragraph without one appears in the review list at once', () => {
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx('<w:p><w:r><w:t>before after</w:t></w:r></w:p>'),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [citation] }), reviewModule()],
+    });
+    const customItems = () => editor.getReviewItems().filter((item) => item.kind === 'custom');
+    // Read first, so the next read starts from a cached list.
+    expect(customItems()).toHaveLength(0);
+    insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 7 },
+    });
+    expect(customItems()).toHaveLength(1);
+    // Typing beside it keeps the item.
+    editor.surface!.setSelection({
+      anchor: { paragraphId: firstParagraphId(editor), offset: 0 },
+      head: { paragraphId: firstParagraphId(editor), offset: 0 },
+    });
+    editor.surface!.type('x');
+    expect(customItems()).toHaveLength(1);
+  });
+
+  test('typing inside a block-level node updates its review card', () => {
+    const block = defineCustomNode({
+      name: 'block',
+      tagPrefix: 'acme',
+      reviewCard: ({ text }) => ({ title: text }),
+    });
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx(
+        '<w:sdt><w:sdtPr><w:tag w:val="acme:block"/></w:sdtPr><w:sdtContent>' +
+          '<w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>abc</w:t></w:r></w:p>' +
+          '</w:sdtContent></w:sdt><w:p><w:r><w:t>after</w:t></w:r></w:p>'
+      ),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [block] }), reviewModule()],
+    });
+    const cardText = () =>
+      JSON.stringify(editor.getReviewItems().filter((item) => item.kind === 'custom'));
+    expect(cardText()).toContain('abc');
+    const second = editor.surface!.session.paragraphIds()[1]!;
+    editor.surface!.setSelection({
+      anchor: { paragraphId: second, offset: 1 },
+      head: { paragraphId: second, offset: 1 },
+    });
+    editor.surface!.type('Z');
+    expect(cardText()).toContain('aZbc');
+  });
+
+  test('typing that changes a node so its card appears updates the review list', () => {
+    const flagged = defineCustomNode({
+      name: 'flagged',
+      tagPrefix: 'acme',
+      reviewCard: ({ text }) => (text.includes('Z') ? { title: text } : null),
+    });
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx('<w:p><w:r><w:t>before after</w:t></w:r></w:p>'),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [flagged] }), reviewModule()],
+    });
+    const customItems = () => editor.getReviewItems().filter((item) => item.kind === 'custom');
+    insertCustomNode(editor, flagged, {
+      attrs: {},
+      text: 'abc',
+      lock: false,
+      at: { paragraphId: firstParagraphId(editor), offset: 7 },
+    });
+    expect(customItems()).toHaveLength(0);
+    const inside = { paragraphId: firstParagraphId(editor), offset: 9 };
+    editor.surface!.setSelection({ anchor: inside, head: inside });
+    editor.surface!.type('Z');
+    expect(customItems()).toHaveLength(1);
   });
 });
