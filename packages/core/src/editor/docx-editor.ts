@@ -1,3 +1,4 @@
+import { createUnsupportedElementState } from './unsupported-element-state.ts';
 import { createEditorEvents } from './editor-events.ts';
 import { createEditorDiagnostics, reportEditorFontError } from './editor-diagnostics.ts';
 import { surfaceFieldResultsScope } from './field-results-scope.ts';
@@ -366,14 +367,14 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       !destroyed && author === undefined && standingRejection(null) === SUGGESTING_AUTHOR_REASON,
     emit: (error) => emitError(error),
   });
-  // The HOST's opening mode, when `config.mode` is explicit — precedence and reasons live
-  // in `opening-editing-mode.ts`. Applied before the first mount reads `editingMode`.
+  // Resolve the host's explicit opening mode before the first mount reads it.
   const openingModeDecision = hostConfig.openingModeDecision(suggestingGuards());
   if (openingModeDecision.mode !== null) editingMode = openingModeDecision.mode;
   if (openingModeDecision.rejection !== null) facadeRejection = openingModeDecision.rejection;
   suggestingReporter.report(openingModeDecision.rejection);
 
   let surface: PaginatedSurface | null = null;
+  const unsupported = createUnsupportedElementState(config.unsupportedElementRules, () => surface);
   // Host chrome registered before attach, re-applied to every rebuilt surface (see mount).
   let remoteCaretLabelHost: RemoteCaretLabelHost | null = null;
   const openingIndicator = preparedOpen.openingIndicatorChrome(() => surface);
@@ -623,6 +624,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
    */
   function displaySurfaceOptions(): PaginatedSurfaceRuntimeOptions {
     return {
+      unsupportedElementRules: unsupported.current(),
       scale: scaleOf(),
       ...views.snapshot(),
       // What a run with no authored font is REPORTED as, matching what it is measured
@@ -2316,6 +2318,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     setReviewPaneOptions: reviewPane.set,
     setRevisionMarkup: revisionMarkupState.set,
     setRevisionMarkupChrome: revisionMarkupState.register,
+    setUnsupportedElementRules: unsupported.set,
     setRevisionStyles(colors) {
       revisionStyleState.set(colors);
       surface?.setRevisionStyles(colors);

@@ -37,6 +37,7 @@ export interface Piece {
   readonly inlineDrawing?: import('./drawing-layout.ts').InlineDrawingLayoutInput;
   /** Bounded OMML equation occupying one UTF-16 model unit. */
   readonly equation?: FieldAwarePiece['equation'];
+  readonly unsupported?: FieldAwarePiece['unsupported'];
   /**
    * The `w:rFonts` slot this piece's text resolves its face through, from
    * `applyEastAsiaFontSlots`. `style` stays the run's real resolution; every measurement
@@ -125,6 +126,11 @@ export function measureFollowingTabSegment(
   for (let index = pieceIndex; index < pieces.length; index += 1) {
     const piece = pieces[index]!;
     const style = styleForFontSlot(piece.style, piece.fontSlot);
+    if (piece.unsupported) {
+      width += piece.unsupported.width;
+      if (!sawDecimal) decimalOffset = width;
+      continue;
+    }
     const from = index === pieceIndex ? offsetInPiece : 0;
     let to = from;
     while (to < piece.text.length) {

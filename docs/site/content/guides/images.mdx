@@ -193,6 +193,65 @@ Alt text uses `@descr`, then `@title`; `@name` is never announced. A picture wit
 - Hyperlinks on drawings (`a:hlinkClick`) require an explicit gesture and pass through `sanitizeHref`.
 - Optional explicit download-and-embed path for external targets is user-initiated only (bounded size/content-type).
 
+## Custom unsupported-content components
+
+Register a component for unsupported inline or block content, or an existing drawing or equation fallback. Match the original OOXML namespace and element name without a fixed list of element kinds. Custom rendering preserves the canonical source and saved DOCX content.
+
+<FrameworkTabs>
+<Framework value="react">
+
+```tsx
+<DocxEditor document={bytes}>
+  <DocxEditor.UnsupportedElement
+    match={(element) => element.namespaceUri === 'urn:my-widgets'}
+    layout={{ width: 180, height: 48 }}
+  >
+    {({ element }) => <MyUnsupportedContent element={element} />}
+  </DocxEditor.UnsupportedElement>
+</DocxEditor>
+```
+
+Return `null` to keep the built-in fallback. The same declaration works inside `DocxEditor.Root` beside `DocxEditor.Content`.
+
+</Framework>
+<Framework value="vue">
+
+```vue
+<DocxEditor :document="bytes">
+  <DocxEditor.UnsupportedElement
+    :match="(element) => element.namespaceUri === 'urn:my-widgets'"
+    :layout="{ width: 180, height: 48 }"
+  >
+    <template #default="{ element }">
+      <MyUnsupportedContent :element="element" />
+    </template>
+  </DocxEditor.UnsupportedElement>
+</DocxEditor>
+```
+
+An empty default slot keeps the built-in fallback. The same declaration works inside `DocxEditor.Root` beside `DocxEditor.Content`.
+
+</Framework>
+</FrameworkTabs>
+
+Both packages export `UnsupportedElement` with these fields:
+
+- `nodeId` and `ownerPartName` identify the source element and its document part.
+- `namespaceUri` and `localName` identify the OOXML element.
+- `source` exposes the read-only canonical source. Treat document values as untrusted data.
+- `placement` is `inline` or `block`, as determined by the source position.
+- `label` contains the default fallback text.
+- Optional `drawing` and `equation` records provide engine metadata.
+- Optional `bounds` describes the box after layout. Use source metadata for matching before pagination.
+
+Omit `match` for a catch-all. The first mounted matching declaration wins. Prop updates retain priority. Removing and remounting a declaration gives it a later priority. Use matchers that do not overlap, or keep declarations mounted and change their matchers to disable them temporarily. An empty result keeps the fallback; it does not try the next declaration.
+
+`layout` reserves width and height in document points before pagination for opaque content. Defaults are 120 × 24 points for inline content and 240 × 96 points for blocks. Dimensions must be finite, positive, and at most 100,000 points. Existing drawing and equation fallbacks retain their engine layout boxes. Unmatched opaque content retains its invisible behavior.
+
+Components retain declaration-local framework context and local state across same-page repaints. They can unmount when an occurrence leaves its page, is virtualized, or the document or registration changes. Keep durable annotations in application state. Controls own their keyboard, clipboard, context-menu, and drop events. Fit controls within the reserved box, or use scrolling or an external panel.
+
+Properties, metadata, and private payloads inside owning drawing, equation, and field projections are not independent content occurrences. This presentation API does not implement native chart, SmartArt, or DrawingML rendering. Standalone low-level painters without a source lookup can expose `source: null`.
+
 ## Drawing limits
 
 The editor renders brightness, contrast, grayscale, and bilevel black-and-white picture adjustments. It preserves image alpha and adjustment markup when you save. PDF export does not apply these adjustments.

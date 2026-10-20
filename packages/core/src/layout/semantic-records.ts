@@ -1,3 +1,4 @@
+import type { UnsupportedContentRecord } from './unsupported-content.ts';
 // Revision-tagged semantic layout records over the canonical tree (task 7.1).
 //
 // These are the records everything downstream reads: interaction derives caret stops and hit
@@ -291,6 +292,8 @@ export interface StyleSpanRecord {
    * and selection mapping refuses them the way it refuses markers.
    */
   readonly projected?: boolean;
+  /** Zero-model-width component geometry for opaque content. */
+  readonly unsupported?: UnsupportedContentRecord;
   /** Authored inline separator rule; its advance belongs to one note atom. */
   readonly noteSeparator?: 'separator' | 'continuationSeparator';
   /** Paint-ready geometry for one atomic Office Math equation. */

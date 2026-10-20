@@ -204,7 +204,7 @@ import { refTokenForTableBlock } from './field-ref.ts';
 import { createListFirstLineMetrics, markerLineStart, publishListMarker } from './list-marker.ts';
 import { FlowCheckpointOwner, flowCheckpointsMatch } from './flow-checkpoint.ts';
 import { sectionReserveResume } from './note-reserve-resume.ts';
-import type { FlowCheckpoint, LayoutSession } from './layout-session.ts';
+import type { FlowCheckpoint } from './layout-session.ts';
 import { furnitureForSection, layoutMultiSectionDocumentSteps } from './multi-section-layout.ts';
 import { hostedStoryFlowDeps, layoutTextboxStory } from './textbox-story-layout.ts';
 import { inlineDrawingFlow } from './inline-textbox-flow.ts';
@@ -2894,10 +2894,4 @@ function layoutBlocksWithGeometrySteps(
   return layoutWithFurnitureRetry(bodies, revision, options, layoutBlocksPass);
 }
 
-export { createFixedMeasurer } from './fixed-measurer.ts';
-// Boundary records live in their own module; the editor facade and tests import them here.
-export {
-  attachContentControlBoundaries,
-  contentControlContextToken,
-  type ContentControlBoundaryWork,
-} from './content-control-boundary-layout.ts';
+export * from './semantic-layout-exports.ts';

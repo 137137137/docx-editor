@@ -481,7 +481,7 @@ function resolveParagraph(
 ): SemanticHit | null {
   if (fragment.clipToBox && !insideBox) return null;
   const line = lineAtY(fragment.lines, point.y);
-  if (!line) return null;
+  if (!line || lineSegments(line).length === 0) return null;
   const resolved = offsetOnLine(line, point.x, point.y, context, paragraphIsRtl(fragment.props));
   // WHICH paragraph the pointer is over, not which one the line is named after. A resolved
   // display mode merges the paragraphs a tracked decision merges, so one line can carry two,

@@ -1,10 +1,11 @@
+import { unsupportedContentOf } from './unsupported-content.ts';
 import {
   projectRevisionMarkup,
   markupRevisionOf,
   recordHiddenMarkup,
 } from './revision-markup-projection.ts';
 import { tocLinkCascader } from './toc-link-formatting.ts';
-import { fieldResultIsDirectionOnly } from './field-result-style.ts';
+import { captureFieldResult } from './field-result-capture.ts';
 import { finishParagraphPieces } from './field-projection-finish.ts';
 import { breakPieceFields, hardBreakPieceFields } from './text-wrapping-break-clear.ts';
 // Project allowlisted field instructions into layout; never execute authored instructions.
@@ -202,6 +203,7 @@ export function unmergedPiecesOfParagraphForDisplay(
         ...(extras?.inlineDrawing ? { inlineDrawing: extras.inlineDrawing } : {}),
         ...(extras?.anchoredAtom ? { anchoredAtom: true as const } : {}),
         ...(extras?.equation ? { equation: extras.equation } : {}),
+        ...(extras?.unsupported ? { unsupported: extras.unsupported } : {}),
         ...(extras?.fieldAtom ? { fieldAtom: extras.fieldAtom } : {}),
         ...link,
       });
@@ -415,6 +417,12 @@ export function unmergedPiecesOfParagraphForDisplay(
       if (sym) push(sym.text, sym.props, sym.style, true, sym.start, sym.start + 1);
       return;
     }
+    const unsupported = unsupportedContentOf(grand);
+    if (unsupported) {
+      if (!style.hidden && revisionsVisible(revisions, displayMode, authorFilter))
+        push('\uFFFC', props, style, true, offset, offset, { unsupported });
+      return;
+    }
     const text = modelTextOfRunChild(grand);
     if (text.length === 0) return;
     // A revision the display mode resolves away is suppressed the same way `w:vanish` is, and
@@ -452,28 +460,12 @@ export function unmergedPiecesOfParagraphForDisplay(
       authorFilter
     );
 
-    // Direction-only text supplies a fallback style until visible result text arrives.
-    // Revision attribution stays with the first displayed run, including an untracked run.
-    // A separate flag prevents later tracked text from changing the whole atom's attribution.
-    const donateResultCapture = (resultText?: string): void => {
-      if (!pending) return;
-      const directionOnly = resultText !== undefined && fieldResultIsDirectionOnly(resultText);
-      if (
-        !pending.capturedResultStyle ||
-        (pending.capturedResultStyleIsDirectional && !directionOnly)
-      ) {
-        pending.props = props;
-        pending.style = style;
-        pending.capturedResultStyle = true;
-        pending.capturedResultStyleIsDirectional = directionOnly;
-      }
-      if (!pending.capturedResultRevisions) {
-        pending.resultRevisions = revisions;
-        pending.resultFormatSite = runFormatSite;
-        pending.capturedResultRevisions = true;
-        if (!pending.resultLink && currentLink) pending.resultLink = currentLink;
-      }
-    };
+    const donateResultCapture = (resultText?: string): void =>
+      captureFieldResult(
+        pending,
+        { props, style, revisions, runFormatSite, currentLink },
+        resultText
+      );
 
     for (const grand of run.children) {
       if (!consumeScanNode(budget)) {
@@ -921,6 +913,13 @@ export function unmergedPiecesOfParagraphForDisplay(
     // Match `segmentsOf`: every transparent container consumes one level, and a child reached
     // at the cap is opaque. Check before runs and atoms so hidden content cannot reach layout.
     if (containerDepth >= MAX_INLINE_CONTAINER_DEPTH) return;
+    const unsupported = unsupportedContentOf(child);
+    if (unsupported) {
+      const style = resolveRunStyle(inheritedRunProperties, themeFonts);
+      if (!style.hidden && revisionsVisible(revisions, displayMode, authorFilter))
+        push('\uFFFC', inheritedRunProperties, style, true, offset, offset, { unsupported });
+      return;
+    }
     const equation = projectOmmlAtom(child);
     if (equation) {
       const start = offset++;

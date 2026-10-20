@@ -1,3 +1,4 @@
+import type { UnsupportedContentRecord } from './unsupported-content.ts';
 // The unit layout measures: one run of text with everything paint will need to draw it.
 //
 // A "piece" is what the paragraph walk emits and `paragraph-flow.ts` breaks into lines. It is
@@ -185,6 +186,8 @@ export interface FieldAwarePiece {
    * learns it carries a tracked change (the margin bar reads it; see #479).
    */
   readonly anchoredAtom?: true;
+  /** Zero-model-width component geometry for opaque content. */
+  readonly unsupported?: UnsupportedContentRecord;
   /** Bounded paragraph-level OMML projection occupying one UTF-16 model unit. */
   readonly equation?: OmmlEquationProjection;
   /**
@@ -368,6 +371,7 @@ export interface PieceEmitExtras {
   readonly inlineDrawing?: InlineDrawingLayoutInput;
   readonly anchoredAtom?: true;
   readonly equation?: FieldAwarePiece['equation'];
+  readonly unsupported?: FieldAwarePiece['unsupported'];
   /**
    * Attribution to attach INSTEAD of the walk's live stack, for text emitted after the walk
    * has left the wrapper that owns it — an atomic field's flushed result is the case. Passing

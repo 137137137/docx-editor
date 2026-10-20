@@ -1,3 +1,4 @@
+import { DocxEditorUnsupportedElement } from '../editor/DocxEditorUnsupportedElement';
 import { DocxEditorRevisionMarkupDialog } from '../editor/DocxEditorRevisionMarkupDialog';
 import { DocxEditorRevisionMarkup } from '../editor/DocxEditorRevisionMarkup';
 import { DocxEditorExportDialog } from '../editor/DocxEditorExportDialog';
@@ -532,6 +533,7 @@ export interface DocxEditorNamespace extends ForwardRefExoticComponent<
   readonly ColorByChangeType: typeof DocxEditorColorByChangeType;
   readonly RevisionMarkupDialog: typeof DocxEditorRevisionMarkupDialog;
   readonly RevisionMarkup: typeof DocxEditorRevisionMarkup;
+  readonly UnsupportedElement: typeof DocxEditorUnsupportedElement;
   readonly AuthorStyle: typeof DocxEditorAuthorStyle;
   /** Context-fed horizontal ruler with draggable margins (props-driven export stays). */
   readonly HorizontalRuler: typeof DocxEditorHorizontalRuler;
@@ -612,6 +614,7 @@ export const DocxEditor: DocxEditorNamespace = Object.assign(DocxEditorImpl, {
   ColorByChangeType: DocxEditorColorByChangeType,
   RevisionMarkup: DocxEditorRevisionMarkup,
   RevisionMarkupDialog: DocxEditorRevisionMarkupDialog,
+  UnsupportedElement: DocxEditorUnsupportedElement,
   AuthorStyle: DocxEditorAuthorStyle,
   HorizontalRuler: DocxEditorHorizontalRuler,
   VerticalRuler: DocxEditorVerticalRuler,

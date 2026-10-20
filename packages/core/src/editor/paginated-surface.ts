@@ -1,3 +1,7 @@
+import {
+  createUnsupportedElementProjection,
+  validateUnsupportedElementRules,
+} from './unsupported-element-state.ts';
 import { DocumentSelectionHistory } from './document-selection-history.ts';
 import { timedLayout, timedPress } from './surface-timing.ts';
 import {
@@ -384,6 +388,9 @@ export function mountPaginatedSurface(
     };
   }
   const session = scopeSession(opened.session, fieldScope);
+  let unsupportedProjection = createUnsupportedElementProjection(
+    validateUnsupportedElementRules(options.unsupportedElementRules ?? [])
+  );
   const reviewOrder = createReviewOrderIndex(session);
   const reviewOrderIndex = reviewOrder.index;
   const collaborationSession = options.collaborationModel?.session;
@@ -1009,7 +1016,7 @@ export function mountPaginatedSurface(
     fieldCodes = showFieldCodes
   ): ReturnType<typeof createFurnitureSource> => {
     const source = createFurnitureSource({
-      session,
+      session: unsupportedProjection.view(session),
       measurer,
       producer,
       cache: layoutCache,
@@ -1420,7 +1427,7 @@ export function mountPaginatedSurface(
     if (!context && bodyBlockLimit === undefined) openingBlockLimit = null;
     drawingBundle.sync(session);
     return yield* layoutDocumentViewSteps({
-      view: session,
+      view: unsupportedProjection.view(session),
       revision,
       measurer,
       cache: layoutCache,
@@ -2743,6 +2750,15 @@ export function mountPaginatedSurface(
         materialize: materializedSet,
         ariaHidden: false,
         drawingStrings,
+        unsupportedOwnerPartName: (nodeId) =>
+          partOfNodeId(session, nodeId)?.name ?? session.part().name,
+        unsupportedSource: (nodeId, ownerPartName) => {
+          const part = ownerPartName
+            ? session.currentPackage().parts.get(ownerPartName)
+            : partOfNodeId(session, nodeId);
+          const node = part ? findNode(part, nodeId) : null;
+          return node && node.kind !== 'textValue' ? node : null;
+        },
         breakMarkStrings,
         ...(options.fieldShading ? { fieldShading: options.fieldShading } : {}),
         ...(revisionStyles !== undefined ? { revisionStyles } : {}),
@@ -5403,6 +5419,23 @@ export function mountPaginatedSurface(
     remotePresenceColor,
     setShowParagraphMarks: paragraphMarks.set,
     setRevisionMarkup: markupSettings.set,
+    setUnsupportedElementRules: (rules) => {
+      const projection = createUnsupportedElementProjection(validateUnsupportedElementRules(rules));
+      projection.view(session).currentPackage();
+      unsupportedProjection.view(session).currentPackage();
+      const geometryUnchanged = projection.geometryKey() === unsupportedProjection.geometryKey();
+      if (geometryUnchanged) {
+        unsupportedProjection = projection;
+        furnitureSource = createCurrentFurnitureSource(revisionFilter());
+        return;
+      }
+      flushPendingInputAndLayout();
+      unsupportedProjection = projection;
+      furnitureSource = createCurrentFurnitureSource(revisionFilter());
+      scheduler.invalidateAll(session.packageRevision(), 'unsupported-content');
+      scheduler.flush();
+      options.onChange?.(currentState());
+    },
     setRevisionStyles: (colors) => {
       if (colors === revisionStyles) return;
       revisionStyles = colors;

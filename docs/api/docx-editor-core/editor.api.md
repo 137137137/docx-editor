@@ -1482,6 +1482,7 @@ export interface DocxEditorConfig {
     revisionStyles?: RevisionStyles;
     tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
     translate?: (key: string, params?: Record<string, string | number>) => string;
+    unsupportedElementRules?: readonly UnsupportedElementRule[];
     zoom?: number;
     zoomMode?: ZoomMode | 'auto';
 }
@@ -1522,6 +1523,7 @@ export interface DocxEditorInstance extends Editor {
     setRevisionStyles(styles: RevisionStyles): void;
     setTextFormFieldChrome(handlers: TextFormFieldChromeHandlers, options?: PopupChromeRegistrationOptions): Unsubscribe;
     setTranslate(translate: ((key: string, params?: Record<string, string | number>) => string) | undefined): void;
+    setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
     showAllReviewAuthors(): void;
     stateVersion(): number;
     readonly surface: PaginatedSurface | null;
@@ -2645,6 +2647,8 @@ export interface PaginatedSurface {
     setTocLabels(labels: NonNullable<PaginatedSurfaceOptions['tocLabels']>): void;
     setTrackedChangesFilter(predicate: TrackedChangePredicate | null, mode?: TrackedChangeFilterMode): void;
     setTranslate(translate: PaginatedSurfaceOptions['translate']): void;
+    // (undocumented)
+    setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
     showAllRevisionAuthors(): void;
     // (undocumented)
     splitParagraph(): void;
@@ -2714,6 +2718,8 @@ export interface PaginatedSurfaceOptions {
         readonly title: string;
     };
     readonly translate?: (key: string, params?: Record<string, string | number>) => string;
+    // (undocumented)
+    readonly unsupportedElementRules?: readonly UnsupportedElementRule[];
 }
 
 // @public

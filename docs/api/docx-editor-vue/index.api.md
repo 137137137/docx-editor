@@ -56,6 +56,7 @@ import { DocumentSearchNavigateOptions } from '@docx-editor.dev/core/editor';
 import { DocumentSearchOptions } from '@docx-editor.dev/core/editor';
 import { DocumentSource } from '@docx-editor.dev/core/contracts/editor';
 import * as _docx_editor_dev_core from '@docx-editor.dev/core';
+import * as _docx_editor_dev_core_output from '@docx-editor.dev/core/output';
 import * as _docx_editor_dev_i18n from '@docx-editor.dev/i18n';
 import { DocxDocument } from '@docx-editor.dev/core/contracts/types';
 import { DocxEditorInstance } from '@docx-editor.dev/core/editor';
@@ -177,8 +178,12 @@ import { toolbarCommandState } from '@docx-editor.dev/core/editor';
 import { ToolbarValueMap } from '@docx-editor.dev/core/editor';
 import { TranslationKey } from '@docx-editor.dev/i18n';
 import { Translations } from '@docx-editor.dev/i18n';
+import { UnsupportedElement } from '@docx-editor.dev/core/output';
+import { UnsupportedElementLayout } from '@docx-editor.dev/core/output';
+import { UnsupportedElementRule } from '@docx-editor.dev/core/output';
 import { ViewScope } from '@docx-editor.dev/core/contracts/editor';
 import { VNode } from 'vue';
+import { VNodeChild } from 'vue';
 import { VNodeProps } from 'vue';
 import * as vue from 'vue';
 import * as vue_jsx_runtime from 'vue/jsx-runtime';
@@ -3501,6 +3506,8 @@ export interface DocxEditorNamespace {
     // (undocumented)
     readonly Toolbar: typeof DocxEditorToolbar;
     // (undocumented)
+    readonly UnsupportedElement: typeof DocxEditorUnsupportedElement;
+    // (undocumented)
     readonly VerticalRuler: typeof DocxEditorVerticalRuler;
     // (undocumented)
     readonly Viewport: typeof DocxEditorViewport;
@@ -4938,6 +4945,40 @@ export interface DocxEditorToolbarSlotProps {
     hidden?: boolean;
     overflowContent?: () => DocxEditorChildren;
     slotId: ChromeSlotId;
+}
+
+// @public
+export const DocxEditorUnsupportedElement: vue.DefineComponent<vue.ExtractPropTypes<{
+    layout: {
+        default: undefined;
+        type: PropType<UnsupportedElementRule['layout']>;
+    };
+    match: {
+        default: undefined;
+        type: PropType<UnsupportedElementRule['match']>;
+    };
+}>, () => vue.VNode<vue.RendererNode, vue.RendererElement, {
+    [key: string]: any;
+}>[], {}, {}, {}, vue.ComponentOptionsMixin, vue.ComponentOptionsMixin, {}, string, vue.PublicProps, Readonly<vue.ExtractPropTypes<{
+    layout: {
+        default: undefined;
+        type: PropType<UnsupportedElementRule['layout']>;
+    };
+    match: {
+        default: undefined;
+        type: PropType<UnsupportedElementRule['match']>;
+    };
+}>> & Readonly<{}>, {
+    layout: _docx_editor_dev_core_output.UnsupportedElementLayout | undefined;
+    match: ((element: UnsupportedElement) => boolean) | undefined;
+}, SlotsType<{
+    default: (props: {
+        element: UnsupportedElement;
+    }) => VNodeChild;
+}>, {}, {}, string, vue.ComponentProvideOptions, true, {}, any>;
+
+// @public
+export interface DocxEditorUnsupportedElementProps extends UnsupportedElementRule {
 }
 
 // @public (undocumented)
@@ -7430,6 +7471,12 @@ export interface ToolbarSlotPartProps {
 export type ToolbarTranslate = (key: string) => string;
 
 export { TranslationKey }
+
+export { UnsupportedElement }
+
+export { UnsupportedElementLayout }
+
+export { UnsupportedElementRule }
 
 // @public
 export function useBookmarkDialog(): UseBookmarkDialogReturn;

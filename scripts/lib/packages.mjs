@@ -116,6 +116,23 @@ export const PACKAGES = [
     root: 'packages/core',
     pkgSlug: 'docx-editor-core',
     tsconfigPath: 'packages/core/tsconfig.api.json',
+    // Unsupported-content signatures reference types owned by the layout/store subpaths.
+    // Keep those graphs at their owning entry points, as with the existing facade escape hatches.
+    forgottenExports: {
+      logLevel: 'warning',
+      allowlist: {
+        editor: ['UnsupportedElementRule'],
+        index: ['UnsupportedElementRule'],
+        layout: ['UnsupportedContentRecord', 'UnsupportedContentResolver'],
+        output: [
+          'AnchoredDrawingRecord',
+          'EquationSpanRecord',
+          'InlineDrawingRecord',
+          'LayoutBox',
+          'OoxmlElement',
+        ],
+      },
+    },
   },
   {
     name: '@docx-editor.dev/pro',

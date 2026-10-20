@@ -1,3 +1,4 @@
+import { unsupportedContentOf } from './unsupported-content.ts';
 import { registerWidthAlternativeReader } from './paragraph-cache-width-reuse.ts';
 import { ParagraphCacheLru } from './paragraph-cache-lru.ts';
 import { estimatedParagraphCacheEntryBytes } from './paragraph-cache-weight.ts';
@@ -352,6 +353,16 @@ function computeNodeToken(
   if (nodeTokenTestObserver) nodeTokenTestObserver.nodeVisits += 1;
   if (node.kind === 'textValue') return framedTokenJoin(['text', node.value]);
   const attributes: string[] = [];
+  const unsupported = unsupportedContentOf(node);
+  if (unsupported)
+    attributes.push(
+      framedTokenJoin([
+        'unsupported',
+        unsupported.display,
+        String(unsupported.width),
+        String(unsupported.height),
+      ])
+    );
   // Attribute order is not semantic, but every tuple and sequence boundary must be. File
   // values may contain any printable delimiter, so length-prefix each component. Append in
   // a loop as OOXML is untrusted: spreading an attacker-sized attribute list can exceed the

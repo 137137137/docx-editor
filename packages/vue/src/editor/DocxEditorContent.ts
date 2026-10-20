@@ -1,8 +1,10 @@
+import { UnsupportedElementRegistryContext } from './unsupported-element-registry';
 import { ConfiguredEnginePopups } from './engine-popups';
 import { ConfiguredPopups } from './popup-config';
 import { useDialogHost } from './dialog-host';
 import {
   defineComponent,
+  inject,
   h,
   onActivated,
   onDeactivated,
@@ -44,9 +46,12 @@ export const DocxEditorContent = defineComponent({
   setup(props) {
     const dialogs = useDialogHost();
     const editorRef = useDocxEditor();
+    const registry = inject(UnsupportedElementRegistryContext, null);
     const imageInsert = useImageInsertOptional();
     const elementRef = shallowRef<HTMLDivElement | null>(null);
     const portalRef = shallowRef<HTMLDivElement | null>(null);
+    watch(elementRef, (element) => registry?.setContainer(element), { flush: 'post' });
+    onUnmounted(() => registry?.setContainer(null));
 
     const contentElement = useEditorContentElement();
     const attach = () => {
