@@ -116,16 +116,112 @@ export function restrictedControlsWithEdgeAt(
   offset: number,
   offsets: ParagraphOffsetIndex
 ): OoxmlElement[] {
-  if (!holdsContentControl(paragraph)) return [];
-  const found: OoxmlElement[] = [];
-  const walk = (node: OoxmlNode): void => {
-    if (node.kind === 'textValue') return;
-    if (isContentControlNode(node) && refusesTypedContent(node)) {
-      const span = offsets.spanOf(node);
-      if (span !== null && (span.start === offset || span.end === offset)) found.push(node);
+  return restrictedControlsIn(paragraph).filter((node) => {
+    const span = offsets.spanOf(node);
+    return span !== null && (span.start === offset || span.end === offset);
+  });
+}
+
+/** Every control in the paragraph that typing cannot enter, outermost first. */
+function restrictedControlsIn(paragraph: OoxmlParagraphNode): readonly OoxmlElement[] {
+  return typingSourcesOf(paragraph).restricted;
+}
+
+interface TypingSources {
+  /** Controls that typing cannot enter, outermost first. */
+  readonly restricted: readonly OoxmlElement[];
+  /** Plain text runs outside every such control and every deletion, in document order. */
+  readonly textRuns: readonly OoxmlNode[];
+}
+
+const typingSources = new WeakMap<OoxmlParagraphNode, TypingSources>();
+
+/** One walk per paragraph revision; paragraph nodes are immutable. */
+function typingSourcesOf(paragraph: OoxmlParagraphNode): TypingSources {
+  const cached = typingSources.get(paragraph);
+  if (cached) return cached;
+  const restricted: OoxmlElement[] = [];
+  const textRuns: OoxmlNode[] = [];
+  if (holdsContentControl(paragraph)) {
+    const walk = (node: OoxmlNode, inRestricted: boolean, inDeletion: boolean): void => {
+      if (node.kind === 'textValue') return;
+      const restrictsTyping = isContentControlNode(node) && refusesTypedContent(node);
+      if (restrictsTyping) restricted.push(node);
+      const deletes = node.kind === 'revisionDelete' || node.kind === 'revisionMoveFrom';
+      if (
+        node.kind === 'run' &&
+        !inRestricted &&
+        !inDeletion &&
+        node.children.some((child) => child.kind === 'text') &&
+        !node.children.some(isFieldChrome)
+      ) {
+        textRuns.push(node);
+      }
+      for (const child of node.children) {
+        walk(child, inRestricted || restrictsTyping, inDeletion || deletes);
+      }
+    };
+    for (const child of paragraph.children) walk(child, false, false);
+  }
+  const sources = { restricted, textRuns };
+  typingSources.set(paragraph, sources);
+  return sources;
+}
+
+/**
+ * The run whose formatting typed text takes at the OUTER edge of a control that typing cannot
+ * enter.
+ *
+ * Text typed there lands beside the control ({@link besideRestrictedControl}), so it must not
+ * look like the control. The ordinary rule takes the run to the left, which at a control's
+ * trailing edge is the control's own run: a citation styled bold and colored at the end of a
+ * paragraph passed that style to every word typed after it, and at the start of a paragraph
+ * typed text lost the formatting of the words beside it.
+ *
+ * The source is a plain text run outside every such control and every deletion: the one that
+ * starts at `offset`, else the nearest one before it, else the nearest one after it. An atom
+ * (a field, a note reference, a drawing) or struck text is never the source.
+ *
+ * `undefined` when the ordinary rule applies: no such control has an edge at `offset`, or the
+ * content to the left is outside it. `null` when no text run qualifies: the text gets no direct
+ * formatting. One answer for the store's insertion and for the caret formatting the toolbar
+ * reports, so the two agree.
+ */
+export function formattingRunBesideRestrictedControl(
+  paragraph: OoxmlParagraphNode,
+  offset: number,
+  offsets: ParagraphOffsetIndex
+): OoxmlNode | null | undefined {
+  const { restricted, textRuns } = typingSourcesOf(paragraph);
+  if (restricted.length === 0) return undefined;
+  const edges = restricted.filter((node) => {
+    const span = offsets.spanOf(node);
+    return span !== null && (span.start === offset || span.end === offset);
+  });
+  if (edges.length === 0) return undefined;
+  const segments = offsets.segments;
+  let left: (typeof segments)[number] | undefined;
+  let right: (typeof segments)[number] | undefined;
+  for (const segment of segments) {
+    if (segment.start === segment.end) continue;
+    if (segment.end === offset) left = segment;
+    if (segment.start === offset && right === undefined) right = segment;
+  }
+  const inEdgeControl = (nodeId: string) =>
+    edges.some((control) => findWithin(control, nodeId) !== null);
+  const beside = left ?? right;
+  if (!beside || !inEdgeControl(beside.node.id)) return undefined;
+  let before: OoxmlNode | undefined;
+  let after: OoxmlNode | undefined;
+  for (const run of textRuns) {
+    const span = offsets.spanOf(run);
+    if (span === null || span.start === span.end) continue;
+    if (span.start === offset) return run;
+    if (span.end <= offset) before = run;
+    else if (span.start > offset) {
+      after = run;
+      break;
     }
-    node.children.forEach(walk);
-  };
-  paragraph.children.forEach(walk);
-  return found;
+  }
+  return before ?? after ?? null;
 }
