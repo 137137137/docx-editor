@@ -22,7 +22,8 @@ Production use requires a commercial agreement: licensing@eigenpal.com
 // stopped describing it. Two syncs get both edits, each exactly as asked.
 
 import { ShapeCollection } from './shapes.ts';
-import { InsertLocation, Alignment } from './editing-enums.ts';
+import { ContentControlCollection } from './content-controls.ts';
+import { InsertLocation, Alignment, ChangeTrackingVersion } from './editing-enums.ts';
 import {
   ObjectPath,
   fail,
@@ -30,6 +31,7 @@ import {
   hydratedHandle,
   hydratedParagraphFormat,
   hydratedSpan,
+  hydratedText,
   type AutomationHandle,
   type ObjectAddress,
   type RequestContext,
@@ -43,6 +45,8 @@ import { besideLocation, insertableText, paragraphTextLocation } from './locatio
 import { ModelObject } from './model-object.ts';
 import { Range } from './range.ts';
 import { searchOptions as readSearchOptions, type SearchOptions } from './search-options.ts';
+import { optionalFlag, reviewedTextVersion, textRangeMarks } from './text-ranges.ts';
+import { clientResult, type ClientResult } from '../runtime/client-result.ts';
 
 /** Most delimiters one `split` may name. The host applies its own cap as well. */
 const MAX_DELIMITERS = 16;
@@ -88,6 +92,7 @@ export class Paragraph extends ModelObject implements PromisedItem {
   #list: List | undefined;
   #listItem: ListItem | undefined;
   #format: Record<string, unknown> | undefined;
+  #contentControls: ContentControlCollection | undefined;
 
   /** @internal A paragraph a read has already named. */
   static at(context: RequestContext, label: string, address: ObjectAddress): Paragraph {
@@ -118,6 +123,24 @@ export class Paragraph extends ModelObject implements PromisedItem {
   /** This paragraph's text. Readable after `load('text')` and a `sync()`. */
   get text(): string {
     return this.loadedProperty<string>('text');
+  }
+
+  /**
+   * The content controls in this paragraph, in document order, at any nesting depth.
+   *
+   * Includes every inline control in the paragraph and a block control that holds it. Load
+   * `items/cannotEdit`, `items/tag`, and `items/text` before you plan edits, and keep each locked
+   * control as one unit.
+   */
+  get contentControls(): ContentControlCollection {
+    this.requireUsablePath();
+    this.#contentControls ??= ContentControlCollection.of(
+      this.context,
+      `${this.path.label}.contentControls`,
+      this.path,
+      () => ({ span: { paragraph: this.#handle() } })
+    );
+    return this.#contentControls;
   }
 
   /**
@@ -307,6 +330,59 @@ export class Paragraph extends ModelObject implements PromisedItem {
         projection: this.revisionTextView(),
       },
     }));
+  }
+
+  /**
+   * Split this paragraph into ranges that each end after one of `endingMarks`, such as `[' ']`
+   * for words. Takes the same arguments and follows the same rules as `Range.getTextRanges`.
+   *
+   * @example
+   * ```ts
+   * const words = paragraph.getTextRanges([' '], true);
+   * words.load('items/text');
+   * await context.sync();
+   * ```
+   */
+  getTextRanges(endingMarks: string[], trimSpacing?: boolean): RangeCollection {
+    const target = `${this.path.label}.getTextRanges`;
+    const marks = textRangeMarks(endingMarks, target);
+    const trim = optionalFlag(trimSpacing, target);
+    this.requireUsablePath();
+    return RangeCollection.of(this.context, target, this.path, () => ({
+      op: 'getTextRanges',
+      scope: { paragraph: this.#handle() },
+      endingMarks: marks,
+      ...(trim ? { trimSpacing: true } : {}),
+      projection: this.revisionTextView(),
+    }));
+  }
+
+  /**
+   * This paragraph's text as if every pending tracked change were accepted (`Current`, the
+   * default) or rejected (`Original`). The document does not change.
+   *
+   * After tracked edits, `text` reads both the deleted and the inserted words. Read
+   * `getReviewedText('Current')` to check the proposed result before the next edit.
+   */
+  getReviewedText(changeTrackingVersion?: ChangeTrackingVersion): ClientResult<string>;
+  /**
+   * This paragraph's text as if every pending tracked change were accepted (`Current`, the
+   * default) or rejected (`Original`). The document does not change.
+   */
+  getReviewedText(changeTrackingVersion?: 'Original' | 'Current'): ClientResult<string>;
+  getReviewedText(
+    changeTrackingVersion?: ChangeTrackingVersion | 'Original' | 'Current'
+  ): ClientResult<string> {
+    const target = `${this.path.label}.getReviewedText`;
+    const version = reviewedTextVersion(changeTrackingVersion, target);
+    this.requireUsablePath();
+    const { result, fill } = clientResult<string>(target);
+    this.read(
+      target,
+      () => ({ op: 'getReviewedText', span: { paragraph: this.#handle() }, version }),
+      (value) => fill(hydratedText(value, target))
+    );
+    return result;
   }
 
   /** Start a new independent bullet list with this paragraph. Sync before using the returned list. */

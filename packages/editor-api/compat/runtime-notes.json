@@ -712,12 +712,28 @@
     "notes": "Reads and writes formatting through the range's paragraph identity and offsets. A range whose text moved since it was read refuses with StaleDocument."
   },
   "Word.Range#getTextRanges": {
-    "status": "unsupported",
-    "notes": "Not implemented. Search within the range instead; a search result follows the same StaleDocument rule as every range."
+    "status": "partial",
+    "notes": "Splits at the listed ending marks and at every paragraph end; a range never holds a paragraph mark. Boundaries use the model text that revisionTextView shows. Hidden text holds no ending mark, and ranges start and end at shown characters; hidden text between shown characters of one range stays inside it, so an edit through that range also changes it. A field, equation, picture, or note reference is one character that joins the word it touches; a field reads as its result text, and the others read as U+FFFC. A content control adds no boundary; a partial edit inside a content-locked control refuses with GeneralException and edit.protected-content, and a tracked deletion or replacement covering the whole control proposes removing it. Without trimSpacing each range keeps its trailing spacing, so plan deletions on those ranges, by index. trimSpacing removes spaces, tabs, and column breaks from range edges and drops ranges left empty. A tab ends a range only when listed. A range that view shows nothing of is omitted. At most 32 marks of at most 32 UTF-16 units. Each range is an exact span usable for insertText and delete in later syncs, also with TrackMineOnly, under the StaleDocument rule: edit from the end of a paragraph toward its start. Read ranges once before editing: after tracked edits, a range over pending revisions can join deleted and inserted text, and an edit that touches your own pending change refuses with NotImplemented and edit.tracked-own-pending-change. Read the proposed result with getReviewedText('Current'). Marks with an unpaired surrogate refuse with InvalidArgument."
+  },
+  "Word.Paragraph#getTextRanges": {
+    "status": "partial",
+    "notes": "Same rules as Word.Range#getTextRanges, over the whole paragraph."
   },
   "Word.Range#expandTo": {
-    "status": "unsupported",
-    "notes": "Not implemented. Word.Body#getRange describes the StaleDocument rule for a range that spans paragraphs."
+    "status": "partial",
+    "notes": "Answers the span from the earlier start to the later end, within one paragraph or across paragraphs of one story. Ranges in different stories refuse the sync with InvalidArgument. A range from another run refuses at the call with InvalidArgument. The answer follows the StaleDocument rule of Word.Body#getRange. expandToOrNullObject is not implemented."
+  },
+  "Word.Range#getRange": {
+    "status": "partial",
+    "notes": "Whole and Content answer the same span; Start and End answer a collapsed range at that endpoint. After refuses with NotSupported, because a snapshot range never owns the position after its end. The answer is usable by a text write in the same sync."
+  },
+  "Word.Range#getReviewedText": {
+    "status": "partial",
+    "notes": "Current drops pending deletions, move sources, and deleted paragraph marks; Original drops pending insertions, move destinations, and inserted paragraph marks. Kept paragraph marks read as a carriage return. Fields read as their displayed results. The default is Current. Formatting revisions do not change the text. Read-only; the document does not change."
+  },
+  "Word.Paragraph#getReviewedText": {
+    "status": "partial",
+    "notes": "Same rules as Word.Range#getReviewedText, over the paragraph's own text."
   },
   "Word.Range#search": {
     "status": "partial",
@@ -782,5 +798,13 @@
   "Word.TableCell#split": {
     "status": "partial",
     "notes": "Splits the cell into rowCount by columnCount cells, each from 1 to 63. Columns get equal widths: a new boundary within 20 twips of a grid boundary uses it, any other boundary cuts the grid column, and cells in other rows widen their w:gridSpan to keep their width. A cell merged over several rows splits only into a divisor of its rows; a one-row cell adds rows to the table, and the other cells of its row continue into them through w:vMerge. The first new cell keeps the content. Counts the cell cannot take refuse with InvalidArgument and the diagnostic code edit.table-split-unsupported: a row count that does not divide a merged cell's rows, columns narrower than the minimum column width, or, in a table without w:tblGrid, a column count that does not divide the columns the cell spans. Cells with a pending cell revision refuse with NotImplemented. TrackAll and TrackMineOnly refuse with NotSupported. Supports collaboration, undo/redo, reconnect, and save/reopen, with the concurrency limits described for Word.Table#mergeCells."
+  },
+  "Word.Range#contentControls": {
+    "status": "partial",
+    "notes": "Lists every content control the range overlaps, at any nesting depth, in document order: an inline control that shares at least one character with the range, a control that holds the whole range, and a block control that holds one of its paragraphs. A collapsed range lists the controls at or around its position. Load items/cannotEdit, items/tag, and items/text to learn what an edit through the range would touch. getById, getByTag, and getByTitle search the same list."
+  },
+  "Word.Paragraph#contentControls": {
+    "status": "partial",
+    "notes": "Same rules as Word.Range#contentControls over the whole paragraph: every inline control in it, at any depth, and each block control that holds it."
   }
 }

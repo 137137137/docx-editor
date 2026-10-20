@@ -40,15 +40,18 @@ export type AutomationSpanRef =
   | { readonly body: AutomationHandle };
 
 /**
- * Where to look for content controls: a whole story, or inside one control.
+ * Where to look for content controls: a whole story, inside one control, or across a span.
  *
  * A control's own scope is how nesting is expressed. Listing every control of a story flat
  * would answer a form field and the group wrapping it as siblings, which is not what either of
- * them is.
+ * them is. A SPAN scope is the exception on purpose: it answers every control the span
+ * overlaps, at any depth, including a control that holds the whole span, because a caller asks
+ * a range for its controls to learn what an edit through it would touch.
  */
 export type AutomationContentControlScope =
   | { readonly body: AutomationHandle }
-  | { readonly contentControl: AutomationHandle };
+  | { readonly contentControl: AutomationHandle }
+  | { readonly span: AutomationSpanRef };
 
 /** The value a control accepts, by what kind of control it is. */
 export type AutomationContentControlValue =
@@ -192,6 +195,31 @@ export type AutomationOperation =
       readonly op: 'getSpanText';
       readonly span: AutomationSpanRef;
       readonly projection?: AutomationTextProjection;
+    }
+  /**
+   * A span split into ranges that each end after one of `endingMarks`, or at a paragraph end.
+   *
+   * Boundaries come from the model text, so a field, an equation, or another atom is never
+   * split. `trimSpacing` removes spaces, tabs, and column breaks from each range's edges and
+   * drops a range left empty. A range the projection shows no character of is not answered.
+   */
+  | {
+      readonly op: 'getTextRanges';
+      readonly scope: AutomationSpanRef;
+      readonly endingMarks: readonly string[];
+      readonly trimSpacing?: boolean;
+      readonly projection?: AutomationTextProjection;
+    }
+  /** The smallest span covering both spans. Both must be in one story. */
+  | { readonly op: 'expandSpan'; readonly span: AutomationSpanRef; readonly to: AutomationSpanRef }
+  /**
+   * A span's text as if every pending revision were accepted (`current`) or rejected
+   * (`original`), with a carriage return at each paragraph mark that view keeps.
+   */
+  | {
+      readonly op: 'getReviewedText';
+      readonly span: AutomationSpanRef;
+      readonly version: 'original' | 'current';
     }
   /**
    * A paragraph's own identity as the DOCUMENT writes it (`w14:paraId`).

@@ -346,6 +346,80 @@ These tracked edits fail with `NotImplemented`. Read `error.debugInfo.innerError
 
 The range that a tracked `insertText()` returns names your own pending insertion. With tracking on, replacing or deleting that range fails with `edit.tracked-own-pending-change`, because the edit would cover your own pending text. Write the final text in one call, or reject your revision and write again.
 
+### Rewrite a paragraph word by word
+
+Split a paragraph into word ranges with `paragraph.getTextRanges([' '])`. Each range keeps its trailing space, so a deleted word takes its space with it, and a replacement for a range ends with a space too. Address a run of words with `first.expandTo(last)`. After tracked edits, `paragraph.text` reads the deleted and the inserted words together. `getReviewedText('Current')` reads the text as if you accepted every change, and `'Original'` reads it as if you rejected every change.
+
+Each word range is a snapshot. An edit before a range in its paragraph makes the range fail with `StaleDocument`, and an edit after it keeps it valid. Read the ranges once, before you edit. Pass the range texts to the model and plan the edits by range index, because a paragraph can repeat a word. Then apply the edits from the last index to the first, one sync per edit:
+
+```ts
+await runtime.run(async (context) => {
+  context.document.changeTrackingMode = 'TrackMineOnly';
+  const paragraph = context.document.body.paragraphs.getFirst();
+  const words = paragraph.getTextRanges([' ']);
+  words.load('items/text');
+  await context.sync();
+
+  // Pass plain text to the model; keep the ranges in this run.
+  // ['The ', 'fee ', 'is ', 'due ', 'per ', 'unit ', 'and ', 'the ', 'buyer ', ...]
+  const tokens = words.items.map((range) => range.text);
+
+  // Edits by index, applied from the last index to the first.
+  words.items[7]!.delete();
+  await context.sync();
+  words.items[4]!.insertText('net ', 'After');
+  await context.sync();
+  words.items[0]!.expandTo(words.items[1]!).insertText('Each charge ', 'Replace');
+  await context.sync();
+
+  const proposed = paragraph.getReviewedText('Current');
+  await context.sync();
+  console.log(tokens.length, proposed.value);
+});
+```
+
+A field, an equation, a picture, or a note reference reads as one unit that never splits and joins the word it touches. A field reads as its result, which can contain spaces, such as `Section 4.2`. An equation, a picture, and a note reference read as U+FFFC. A tab ends a range only when you list `'\t'` as a mark. `trimSpacing` removes spaces, tabs, and column breaks from the edges of each range; use it to read words, not to plan deletions. `Range.getRange('Start')` and `'End'` answer an insertion point; `'After'` fails with `NotSupported`. Ranges in different stories make `expandTo()` fail with `InvalidArgument`.
+
+A tracked deletion or replacement that covers an equation strikes the whole equation. Accept removes it, and reject restores it.
+
+The words of an inline content control join the ranges around it. `paragraph.contentControls` and `range.contentControls` list the controls that the paragraph or range overlaps, including a control that holds the whole range. Before you plan edits, load them with `cannotEdit`, `tag`, and `text`, for each word range in one sync, and keep each locked control as one unit. A replacement or deletion of part of a content-locked control fails with `GeneralException`, and `error.debugInfo.innerError.code` is `edit.protected-content`. With tracking on, a deletion or replacement that covers the whole control proposes removing the control as one deletion.
+
+Map each difference between the old and the new words to one call. The last range of a paragraph has no space after it:
+
+| Difference | Call |
+| --- | --- |
+| Replace one or more words | `first.expandTo(last).insertText(text, 'Replace')` |
+| Delete one or more words | `first.expandTo(last).delete()` |
+| Insert before the first word | `words[0].insertText(text, 'Before')` |
+| Insert after a word | `word.insertText(text, 'After')` |
+| Insert after the last word | `last.insertText(' ' + text, 'After')`, because the last word has no space after it |
+
+Ranges follow the runtime's `revisionTextView`. Text that the view hides, such as a pending insertion in the `original` view, holds no ending mark, and a range starts and ends at characters that the view shows. Hidden text between two shown characters of one range stays inside the range, so an edit through that range also changes the hidden text.
+
+Do not split the paragraph again after tracked edits to plan more edits. A range over pending revisions can join deleted and inserted text, such as `two2` after you replace `two` with `2`. An edit that touches your own pending change fails with `NotImplemented`, and `error.debugInfo.innerError.code` is `edit.tracked-own-pending-change`. To read the proposed result, call `getReviewedText('Current')`.
+
+Catch a refused word-range edit and read its rule from `debugInfo`:
+
+```ts
+import { DocxEditor, isDocxEditorError } from '@docx-editor.dev/editor-api';
+
+const runtime = await DocxEditor.createServer(bytes, { author: 'Review agent' });
+await runtime.run(async (context) => {
+  context.document.changeTrackingMode = 'TrackMineOnly';
+  const words = context.document.body.paragraphs.getFirst().getTextRanges([' ']);
+  words.load('items');
+  await context.sync();
+  try {
+    words.items[0]!.insertText('Each ', 'Replace');
+    await context.sync();
+  } catch (error) {
+    if (!isDocxEditorError(error)) throw error;
+    // For example, 'edit.protected-content' inside a content-locked control.
+    console.log(error.code, error.debugInfo.innerError?.code);
+  }
+});
+```
+
 ## Review changes in a range
 
 Use `range.revisions` to reach the tracked changes inside a search result, a comment range, or any other range. The collection lists the changes the range overlaps in its own story, including a nested change or another author's change beside it. A partly covered change is listed whole, and a replacement lists its deletion and insertion separately. Load the members and decide on each one:

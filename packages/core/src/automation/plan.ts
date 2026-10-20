@@ -1,6 +1,8 @@
 import { areInsertableTexts } from '../store/store/tree-op-inline-elements.ts';
 import { TARGET_REMOVED } from './target-removed.ts';
 import { planShapes } from './plan-shapes.ts';
+import { planTextRanges } from './plan-text-ranges.ts';
+import { isSpanControlOperation, planSpanControls } from './plan-span-controls.ts';
 import {
   bookmarkHandleRange,
   bookmarkWriteAdmission,
@@ -1562,6 +1564,8 @@ export function createBatchPlanner(host: BatchPlannerHost): BatchPlanner {
       if ('ok' in proposal) return proposal;
       operation = proposal;
     }
+    if (isSpanControlOperation(operation))
+      return planSpanControls(operation, handles, packageReads);
     switch (operation.op) {
       case 'getFields':
       case 'getField':
@@ -1583,6 +1587,10 @@ export function createBatchPlanner(host: BatchPlannerHost): BatchPlanner {
       case 'getShape':
       case 'getShapeBody':
         return planShapes(operation, handles, packageReads);
+      case 'getTextRanges':
+      case 'expandSpan':
+      case 'getReviewedText':
+        return planTextRanges(operation, handles, packageReads);
       case 'getInlinePictures':
       case 'getInlinePicture':
       case 'setInlinePicture':
