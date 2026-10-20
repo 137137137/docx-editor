@@ -66,6 +66,7 @@ import {
   type ParagraphOffsetIndex,
 } from './tree-op-segments.ts';
 import { scopedRevisionRoot } from './tree-op-revision-scope.ts';
+import { strikesWholeControl } from './tree-op-control-strike.ts';
 import { holdsRevisionContainer, REVISION_LOCAL_NAMES } from './revision-container-presence.ts';
 import { attributionTargets } from './revision-author-change.ts';
 import { revisionStructuralReach, type RevisionOpAction } from './tree-op-revisions.ts';
@@ -841,27 +842,6 @@ export function resolveReach(part: OoxmlPart, reach: TreeOpReach): ResolvedReach
     if (enclosing.length === 0 && !filling) unprotected.push(target.nodeId);
   }
   return { touches, unprotected };
-}
-
-/**
- * Whether a tracked deletion over `range` strikes this control WHOLE: the range covers all of
- * it, and its lock forbids editing what it holds but allows removing it (`contentLocked`).
- * The tracked-delete applier writes such a control inside one `w:del`; every other control is
- * struck from inside, as before.
- */
-export function strikesWholeControl(
-  span: OffsetSpan | null,
-  range: { readonly start: number; readonly end: number },
-  lock: ContentControlLock
-): boolean {
-  return (
-    span !== null &&
-    span.start < span.end &&
-    range.start <= span.start &&
-    span.end <= range.end &&
-    lockForbidsEdit(lock) &&
-    !lockForbidsRemoval(lock)
-  );
 }
 
 /**
@@ -1758,6 +1738,21 @@ export function applyRemoveContentControl(
   const content = contentControlContentNodeOf(control);
   const kept = op.keepContent && content ? [...content.children] : [];
   const children = owner.children.flatMap((child) => (child.id === control.id ? kept : [child]));
+  // A control proposed as a tracked insertion goes with its `w:ins` when nothing else is in it:
+  // an empty wrapper would stay behind as a review item with nothing to accept or reject.
+  const outer =
+    children.length === 0 && owner.kind === 'revisionInsert' && parentOf(part, owner.id);
+  if (outer) {
+    return fromEdit(
+      replaceChildren(
+        part,
+        outer.id,
+        outer.children.filter((child) => child.id !== owner.id),
+        options
+      ),
+      contentControlEffect(outer.id, 'flow-structural')
+    );
+  }
   return fromEdit(
     replaceChildren(part, owner.id, children, options),
     contentControlEffect(owner.id, 'flow-structural')

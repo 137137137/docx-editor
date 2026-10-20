@@ -18,6 +18,8 @@ import {
   defineCustomNode,
   insertCustomNode,
   recognizeCustomNodes,
+  removeCustomNode,
+  updateCustomNode,
 } from '../index.ts';
 import { reviewModule } from '../review/review-module.ts';
 
@@ -43,12 +45,12 @@ function docx(body: string): Uint8Array {
 
 const citation = defineCustomNode({ name: 'citation', tagPrefix: 'acme' });
 
-function mount(body: string): DocxEditorInstance {
+function mount(body: string, review = false): DocxEditorInstance {
   const editor = createDocxEditor({
     container: document.createElement('div'),
     document: docx(body),
     author: 'Demo Reviewer',
-    modules: [customNodesModule({ nodes: [citation] })],
+    modules: [customNodesModule({ nodes: [citation] }), ...(review ? [reviewModule()] : [])],
   });
   if (!editor.surface) throw new Error('surface failed to mount');
   return editor;
@@ -398,5 +400,44 @@ describe('insertCustomNode', () => {
     editor.surface!.setSelection({ anchor: inside, head: inside });
     editor.surface!.type('Z');
     expect(customItems()).toHaveLength(1);
+  });
+
+  test('in suggesting mode the node is proposed as a tracked insertion', async () => {
+    const editor = mount('<w:p><w:r><w:t>text</w:t></w:r></w:p>', true);
+    expect(editor.setEditingMode('suggesting').ok).toBe(true);
+    const result = insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 4 },
+    });
+    expect(result).toMatchObject({ ok: true, changed: true });
+    const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+    expect(xml).toMatch(/<w:ins w:author="Demo Reviewer" w:date="[^"]+" w:id="\d+"><w:sdt>/);
+    const revisions = editor.getReviewItems().filter((item) => item.kind === 'revision');
+    expect(revisions).toHaveLength(1);
+
+    // A proposed node cannot be rewritten in place: the rewrite would land untracked.
+    const [proposed] = recognizeCustomNodes(editor.surface!.session.part(), [citation]);
+    expect(updateCustomNode(editor, citation, proposed!.nodeId, { text: 'M' }).ok).toBe(false);
+
+    const rejected = editor.surface!.session.applyTreeOps([{ op: 'rejectAllRevisions' }]);
+    expect(rejected).toMatchObject({ committed: true });
+    expect(recognizeCustomNodes(editor.surface!.session.part(), [citation])).toEqual([]);
+    expect(editor.surface!.session.bodyText()).toBe('text');
+  });
+
+  test('removing a proposed node removes the proposal with it', async () => {
+    const editor = mount('<w:p><w:r><w:t>text</w:t></w:r></w:p>', true);
+    expect(editor.setEditingMode('suggesting').ok).toBe(true);
+    insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 4 },
+    });
+    const [proposed] = recognizeCustomNodes(editor.surface!.session.part(), [citation]);
+    expect(removeCustomNode(editor, proposed!.nodeId).ok).toBe(true);
+    const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+    expect(xml).not.toContain('<w:ins');
+    expect(editor.getReviewItems().filter((item) => item.kind === 'revision')).toHaveLength(0);
   });
 });
