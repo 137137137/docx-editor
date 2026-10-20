@@ -4,7 +4,11 @@ import type {
   EquationGeometry,
   EquationSpanRecord,
   ResolvedRunStyle,
+  StyleSpanRecord,
 } from '@docx-editor.dev/core/layout';
+import { applyRevisionPresentation } from './semantic-paint-revisions.ts';
+import { revisionMarkupStyle } from '../contracts/revision-markup.ts';
+import type { PaintContext } from './semantic-paint.ts';
 
 function place(
   element: HTMLElement,
@@ -168,4 +172,60 @@ export function mountEquationGeometry(
   const fragment = document.createDocumentFragment();
   paintNode(document, fragment, geometry, scale, 0, 0, [], applyFace);
   host.append(fragment);
+}
+
+/**
+ * The revision mark of an equation: its presentation, plus an explicit bar. The glyphs are
+ * absolutely positioned, and CSS never carries a text decoration to out-of-flow children, so
+ * a struck or underlined equation would otherwise show no line at all, and under a host's
+ * revision markup a deleted equation would look the same as an inserted one.
+ */
+export function applyEquationRevision(
+  document: Document,
+  host: HTMLElement,
+  span: StyleSpanRecord,
+  ctx: PaintContext
+): void {
+  applyRevisionPresentation(host, span, ctx);
+  const kind = host.dataset.revisionKind;
+  if (kind !== 'delete' && kind !== 'moveFrom' && kind !== 'insert' && kind !== 'moveTo') return;
+  const box = span.equation?.geometry.box;
+  if (!box) return;
+  // A host's revision markup decides the mark, as it does for the text beside the equation.
+  const mark = ctx.revisionMarkup
+    ? revisionMarkupStyle(ctx.revisionMarkup, kind).mark
+    : kind === 'delete' || kind === 'moveFrom'
+      ? 'strikethrough'
+      : 'underline';
+  const strike = mark === 'strikethrough' || mark === 'doubleStrikethrough';
+  if (!strike && mark !== 'underline' && mark !== 'doubleUnderline') return;
+  const doubled = mark === 'doubleStrikethrough' || mark === 'doubleUnderline';
+  if (strike) {
+    // Each glyph run is struck on its own, as struck text is. One bar across the box sat on
+    // the math axis, where a fraction bar already is, so a deleted fraction looked merely
+    // recoloured; striking the runs crosses the numerator and the denominator instead.
+    for (const glyph of host.querySelectorAll<HTMLElement>(
+      '.docx-equation-text, .docx-equation-fallback'
+    )) {
+      glyph.classList.add('docx-equation-revision-strike');
+      glyph.style.textDecorationLine = 'line-through';
+      glyph.style.textDecorationStyle = doubled ? 'double' : 'solid';
+      glyph.style.textDecorationColor = 'currentColor';
+    }
+    return;
+  }
+  const thickness = 0.75;
+  const ys = doubled
+    ? [box.height - 3 * thickness, box.height - thickness]
+    : [box.height - thickness];
+  for (const y of ys) {
+    host.append(
+      rule(
+        document,
+        'docx-equation-revision-underline',
+        { x: 0, y, width: box.width, height: thickness },
+        ctx.scale
+      )
+    );
+  }
 }

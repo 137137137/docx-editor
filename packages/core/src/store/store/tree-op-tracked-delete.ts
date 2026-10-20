@@ -18,6 +18,7 @@ import {
   type EditOptions,
 } from '../package/ooxml-edit.ts';
 import { isFldSimple } from '../package/field-nodes.ts';
+import { isOmmlEquationAtom } from '../package/omml-display.ts';
 import { nextRevisionId } from './tree-op-revision-ids.ts';
 import { TEXT_DEPS, fromEdit } from './tree-op-nodes.ts';
 import { paragraphOffsetIndex, type ParagraphOffsetIndex } from './tree-op-segments.ts';
@@ -203,6 +204,16 @@ export function applyDeleteTracked(
         if (structural || rebuilt.some((child) => !isInlineContainerProperty(node, child))) {
           out.push({ ...node, children: rebuilt } as OoxmlNode);
         }
+        continue;
+      }
+
+      // An equation is struck WHOLE: `m:oMath` and `m:oMathPara` go inside the `w:del`, which
+      // `EG_RunLevelElements` allows, so accepting removes the equation and rejecting restores
+      // it. Passing it through left it standing while the words around it were struck.
+      // Inside the author's own pending insertion it goes outright, like their own words do.
+      if (struck.has(node.id) && isOmmlEquationAtom(node) && !insideDeletion(stack)) {
+        cursor.offset = to;
+        if (insertionAuthor(stack) !== revision.author) out.push(strike([node], containerDepth));
         continue;
       }
 
