@@ -9,6 +9,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  contentControlPropertiesOf,
   contentControlTextOf,
   contentControlsIn,
   paragraphOffsetIndex,
@@ -455,20 +456,137 @@ describe('the paragraph an inline control sits in is still structural', () => {
     expect(refusal(part, { op: 'deleteBlock', blockId: firstParagraph(part).id })).toBe('locked');
   });
 
-  test('joining two paragraphs is refused when either holds locked content', () => {
+  test('joining two paragraphs moves a locked inline control whole', () => {
+    // The join edits neither control: each one moves intact and keeps what it holds.
+    for (const lock of ['contentLocked', 'sdtLocked', 'sdtContentLocked']) {
+      const control = (tag: string) =>
+        `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/><w:lock w:val="${lock}"/></w:sdtPr>` +
+        `<w:sdtContent><w:r><w:t>LOCKED</w:t></w:r></w:sdtContent></w:sdt>`;
+      const part = parseDoc(
+        `<w:p><w:r><w:t>first</w:t></w:r>${control('a')}</w:p>` + `<w:p>${control('b')}</w:p>`
+      );
+      const body = bodyStoryRoot(part);
+      const found = body ? storyParagraphs(body) : [];
+      const op: TreeDocOp = { op: 'joinParagraphs', firstId: found[0]!.id, secondId: found[1]!.id };
+      expect(refusal(part, op)).toBeNull();
+      const result = applyTreeOp(part, op);
+      expect(result.ok).toBe(true);
+    }
+  });
+
+  test('joining paragraphs inside a contentLocked block control is still refused', () => {
     const part = parseDoc(
-      `<w:p><w:r><w:t>first</w:t></w:r></w:p>` +
-        `<w:p><w:sdt><w:sdtPr><w:tag w:val="f"/><w:lock w:val="contentLocked"/></w:sdtPr>` +
-        `<w:sdtContent><w:r><w:t>LOCKED</w:t></w:r></w:sdtContent></w:sdt></w:p>`
+      `<w:sdt><w:sdtPr><w:tag w:val="block"/><w:lock w:val="contentLocked"/></w:sdtPr>` +
+        `<w:sdtContent><w:p><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p>` +
+        `</w:sdtContent></w:sdt>`
     );
     const body = bodyStoryRoot(part);
     const found = body ? storyParagraphs(body) : [];
     expect(
+      refusal(part, { op: 'joinParagraphs', firstId: found[0]!.id, secondId: found[1]!.id })
+    ).toBe('locked');
+  });
+});
+
+describe('removing a control nested in another', () => {
+  const sdt = (tag: string, lock: string, inner: string) =>
+    `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${lock === 'none' ? '' : `<w:lock w:val="${lock}"/>`}</w:sdtPr>` +
+    `<w:sdtContent>${inner}</w:sdtContent></w:sdt>`;
+  const text = (value: string) => `<w:r><w:t>${value}</w:t></w:r>`;
+  const controlId = (part: OoxmlPart, tag: string) =>
+    contentControlsIn(part.root).find(
+      (entry) => contentControlPropertiesOf(entry.node).tag === tag
+    )!.node.id;
+
+  for (const [name, lock] of [
+    ['an unlocked', 'none'],
+    ['a contentLocked', 'contentLocked'],
+  ] as const) {
+    test(`${name} control inside an inline contentLocked control is refused`, () => {
+      const part = parseDoc(
+        `<w:p>${text('pre')}${sdt('outer', 'contentLocked', text('a') + sdt('inner', lock, text('b')))}</w:p>`
+      );
+      for (const keepContent of [false, true, undefined]) {
+        expect(
+          refusal(part, {
+            op: 'removeContentControl',
+            controlId: controlId(part, 'inner'),
+            keepContent,
+          })
+        ).toBe('locked');
+      }
+    });
+
+    test(`${name} control inside a block contentLocked control is refused`, () => {
+      const part = parseDoc(
+        sdt('outer', 'contentLocked', `<w:p>${text('a')}${sdt('inner', lock, text('b'))}</w:p>`)
+      );
+      expect(
+        refusal(part, {
+          op: 'removeContentControl',
+          controlId: controlId(part, 'inner'),
+          keepContent: false,
+        })
+      ).toBe('locked');
+    });
+  }
+
+  test('a contentLocked control that holds another contentLocked control can be removed', () => {
+    const part = parseDoc(
+      `<w:p>${text('pre')}${sdt('outer', 'contentLocked', text('a') + sdt('inner', 'contentLocked', text('b')))}</w:p>`
+    );
+    const after = applied(part, {
+      op: 'removeContentControl',
+      controlId: controlId(part, 'outer'),
+      keepContent: false,
+    });
+    expect(contentControlsIn(after.root)).toHaveLength(0);
+  });
+
+  test('a contentLocked control that holds an sdtLocked control is refused', () => {
+    const part = parseDoc(
+      `<w:p>${sdt('outer', 'contentLocked', sdt('inner', 'sdtLocked', text('b')))}</w:p>`
+    );
+    expect(
       refusal(part, {
-        op: 'joinParagraphs',
-        firstId: found[0]!.id,
-        secondId: found[1]!.id,
+        op: 'removeContentControl',
+        controlId: controlId(part, 'outer'),
+        keepContent: false,
       })
     ).toBe('locked');
+  });
+});
+
+describe('a review decision that removes a whole locked control', () => {
+  const inserted = (lock: string) =>
+    parseDoc(
+      `<w:p><w:r><w:t>a</w:t></w:r>` +
+        `<w:ins w:id="1" w:author="X" w:date="2026-01-01T00:00:00Z">` +
+        `<w:sdt><w:sdtPr><w:tag w:val="f"/><w:lock w:val="${lock}"/></w:sdtPr>` +
+        `<w:sdtContent><w:r><w:t>LOCKED</w:t></w:r></w:sdtContent></w:sdt></w:ins></w:p>`
+    );
+  const reject: TreeDocOp = {
+    op: 'rejectRevision',
+    revision: { id: '1', author: 'X', date: '2026-01-01T00:00:00Z' },
+  };
+
+  test('rejecting an insertion that wraps a contentLocked control removes it', () => {
+    const after = applied(inserted('contentLocked'), reject);
+    expect(contentControlsIn(after.root)).toHaveLength(0);
+  });
+
+  test('rejecting an insertion that wraps an sdtLocked control is refused', () => {
+    expect(refusal(inserted('sdtLocked'), reject)).toBe('locked');
+    expect(refusal(inserted('sdtContentLocked'), reject)).toBe('locked');
+  });
+
+  test('rejecting an insertion inside a contentLocked control is still refused', () => {
+    const part = parseDoc(
+      `<w:p><w:sdt><w:sdtPr><w:tag w:val="f"/><w:lock w:val="contentLocked"/></w:sdtPr>` +
+        `<w:sdtContent><w:r><w:t>a</w:t></w:r>` +
+        `<w:ins w:id="1" w:author="X" w:date="2026-01-01T00:00:00Z"><w:r><w:t>b</w:t></w:r></w:ins>` +
+        `</w:sdtContent></w:sdt></w:p>`
+    );
+    expect(refusal(part, reject)).toBe('locked');
   });
 });

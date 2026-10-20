@@ -257,6 +257,11 @@ export interface TreeOpTarget {
   readonly structural?: boolean;
   /** The node and everything under it goes away, so removal locks apply. */
   readonly removes?: boolean;
+  /**
+   * A tracked deletion: a `contentLocked` control the range wholly covers is proposed for
+   * removal as a whole, so it is asked the removal question, not the edit one.
+   */
+  readonly strikesCovered?: boolean;
 }
 
 /** A point at which content is written: the leading edge of a control belongs to the control. */
@@ -343,7 +348,19 @@ const TREE_OP_REACH: {
           intent: 'value',
           at: { paragraphId: op.paragraphId, offset: op.offset },
         },
-  deleteText: (op) => over(op.paragraphId, op.start, op.end),
+  deleteText: (op) =>
+    op.revision === undefined
+      ? over(op.paragraphId, op.start, op.end)
+      : {
+          kind: 'nodes',
+          targets: [
+            {
+              nodeId: op.paragraphId,
+              range: { start: op.start, end: op.end },
+              strikesCovered: true,
+            },
+          ],
+        },
   insertTab: (op) => writingAt(op.paragraphId, op.offset),
   insertHardBreak: (op) => writingAt(op.paragraphId, op.offset),
   insertPageBreak: (op) => writingAt(op.paragraphId, op.offset),
@@ -375,13 +392,12 @@ const TREE_OP_REACH: {
       range: { start: offset, end: offset },
     })),
   }),
-  // A join restructures both paragraphs: whatever either one held ends up somewhere else.
+  // A join moves the second paragraph's content into the first. A control inside either one
+  // moves whole and keeps what it holds, so only the controls ENCLOSING the paragraphs are
+  // edited; naming the paragraphs without a range asks exactly those.
   joinParagraphs: (op) => ({
     kind: 'nodes',
-    targets: [
-      { nodeId: op.firstId, structural: true },
-      { nodeId: op.secondId, structural: true },
-    ],
+    targets: [{ nodeId: op.firstId }, { nodeId: op.secondId }],
   }),
   setParagraphProperties: (op) => whole(op.paragraphId),
   setParagraphMarkProperties: (op) => whole(op.paragraphId),
@@ -610,6 +626,15 @@ interface ControlTouch {
    * thrown away by an op that was about something else.
    */
   readonly discarded: boolean;
+  /**
+   * For a {@link removed} control: the locks of the controls that SURVIVE around it.
+   *
+   * Removing a control edits the content of whatever encloses it, never its own: its own
+   * `contentLocked` protects what it holds and lets the control go, and the controls nested in
+   * it go with it. So the edit half of the lock is asked of the survivors only, and the removal
+   * half of the whole chain.
+   */
+  readonly survivingLocks?: readonly ContentControlLock[];
 }
 
 /** What an op reaches, resolved against the part: the controls, and the nodes it named. */
@@ -782,10 +807,21 @@ export function resolveReach(part: OoxmlPart, reach: TreeOpReach): ResolvedReach
     let filling = false;
     for (const entry of inside) {
       const span = spanOf(entry.node);
+      const locks = [...inherited, ...locksOf([...entry.ancestors, entry.node])];
+      // A tracked deletion that strikes the control WHOLE proposes removing the field, which is
+      // not filling it in, so forms protection must not let it through as an edit inside one.
+      const struckWhole =
+        target.strikesCovered === true &&
+        target.range !== undefined &&
+        strikesWholeControl(span, target.range, resolveContentControlLock(locks));
       // WHAT FORMS PROTECTION LETS THROUGH is an edit that stays within one field. Asking whether
       // the NAMED NODE is inside a control answers "no" for every inline field — the paragraph
       // around it is not the field — so it is asked of the addressed range instead.
-      if (target.range !== undefined && encloses(span, target.range, target.writes === true)) {
+      if (
+        !struckWhole &&
+        target.range !== undefined &&
+        encloses(span, target.range, target.writes === true)
+      ) {
         filling = true;
       }
       const affected =
@@ -793,16 +829,39 @@ export function resolveReach(part: OoxmlPart, reach: TreeOpReach): ResolvedReach
         target.structural === true ||
         (target.range !== undefined && intersects(span, target.range, target.writes === true));
       if (!affected) continue;
+      const removed = target.removes === true || struckWhole;
       touches.push({
         control: entry.node,
-        locks: [...inherited, ...locksOf([...entry.ancestors, entry.node])],
-        removed: target.removes === true,
+        locks,
+        removed,
         discarded: false,
+        ...(removed ? { survivingLocks: inherited } : {}),
       });
     }
     if (enclosing.length === 0 && !filling) unprotected.push(target.nodeId);
   }
   return { touches, unprotected };
+}
+
+/**
+ * Whether a tracked deletion over `range` strikes this control WHOLE: the range covers all of
+ * it, and its lock forbids editing what it holds but allows removing it (`contentLocked`).
+ * The tracked-delete applier writes such a control inside one `w:del`; every other control is
+ * struck from inside, as before.
+ */
+export function strikesWholeControl(
+  span: OffsetSpan | null,
+  range: { readonly start: number; readonly end: number },
+  lock: ContentControlLock
+): boolean {
+  return (
+    span !== null &&
+    span.start < span.end &&
+    range.start <= span.start &&
+    span.end <= range.end &&
+    lockForbidsEdit(lock) &&
+    !lockForbidsRemoval(lock)
+  );
 }
 
 /**
@@ -931,6 +990,7 @@ function resolveRevisionReach(
             locks: [...locksOf(controls), ...locksOf([...entry.ancestors, entry.node])],
             removed: true,
             discarded: false,
+            survivingLocks: locksOf(controls),
           });
         }
         // Nothing below a discarded wrapper survives this decision. Its controls were marked as
@@ -971,6 +1031,7 @@ function resolveRevisionReach(
           locks: [...locksOf(controls), ...locksOf([...entry.ancestors, entry.node])],
           removed,
           discarded: false,
+          ...(removed ? { survivingLocks: locksOf(controls) } : {}),
         });
       }
       if (removed) return;
@@ -1036,10 +1097,19 @@ export function contentControlLockRefusal(part: OoxmlPart, op: TreeDocOp): TreeO
   // What NO applier resolves either way is a control the op was not addressed at and would
   // destroy anyway, so those are asked here whatever the intent was.
   const namedControlAnswersForItself = reach.kind === 'control' && reach.intent !== 'value';
+  // A control nested in one being removed goes with it, so only its removal half is asked.
+  const removingNamedControl = reach.kind === 'control' && reach.intent === 'removal';
   for (const touch of resolveReach(part, reach).touches) {
     if (namedControlAnswersForItself && !touch.discarded) continue;
     const resolved = resolveContentControlLock(touch.locks);
-    if (lockForbidsEdit(resolved)) return 'locked';
+    if (touch.discarded && removingNamedControl) {
+      if (lockForbidsRemoval(resolved)) return 'locked';
+      continue;
+    }
+    const edited = touch.survivingLocks
+      ? resolveContentControlLock(touch.survivingLocks)
+      : resolved;
+    if (lockForbidsEdit(edited)) return 'locked';
     if ((touch.removed || touch.discarded) && lockForbidsRemoval(resolved)) return 'locked';
   }
   return null;
@@ -1677,6 +1747,7 @@ export function applyRemoveContentControl(
   if (typeof resolved === 'string') return { ok: false, reason: resolved };
   const { control, lock } = resolved;
   if (lockForbidsRemoval(lock)) return { ok: false, reason: 'locked' };
+  // An enclosing content lock is refused in `validateRemoveContentControl`, for every form.
   // Deleting the WHOLE control is an existence operation, governed by the wrapper axis
   // alone — Word deletes a contentLocked control whole (only sdtLocked forbids deletion),
   // and Backspace over a content-locked chip relies on it. The content lock guards the

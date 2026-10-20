@@ -28,6 +28,8 @@ export interface InlineControlBesideCaret {
   readonly end: number;
   /** The control's content is locked: the first press selects it instead of removing it. */
   readonly contentLocked: boolean;
+  /** The control is already proposed for deletion: the key steps over it. */
+  readonly struck?: boolean;
 }
 
 /** What a Backspace or Delete does with an atomic inline control, when one is involved. */
@@ -50,6 +52,11 @@ export interface AtomicControlDeletionInput {
     position: SemanticPosition,
     side: 'before' | 'after'
   ) => InlineControlBesideCaret | null;
+  /**
+   * The deletion is tracked. A removal is then a tracked deletion of the control's characters,
+   * which the store writes as one proposal holding the whole control.
+   */
+  readonly tracked?: boolean;
 }
 
 function contentLockedInline(control: ContentControlBoundaryRecord): boolean {
@@ -67,7 +74,7 @@ function contentLockedInline(control: ContentControlBoundaryRecord): boolean {
  * them goes as text. Ops run from the end of the range back, so no op shifts the offsets of
  * the ops after it. Null when the range covers no such control.
  */
-function coveredLockedControlOps(
+export function coveredLockedControlOps(
   layout: SemanticLayout,
   from: SemanticPosition,
   to: SemanticPosition
@@ -116,6 +123,8 @@ export function atomicControlDeletion(
   const { anchor, head } = input.selection;
   if (anchor.paragraphId !== head.paragraphId) return null;
   if (anchor.offset !== head.offset) {
+    // A tracked range deletion is planned as text: the store strikes a covered control whole.
+    if (input.tracked) return null;
     const [from, to] = anchor.offset < head.offset ? [anchor, head] : [head, anchor];
     const ops = coveredLockedControlOps(input.layout, from, to);
     return ops ? { kind: 'remove', ops, collapseTo: from } : null;
@@ -126,6 +135,10 @@ export function atomicControlDeletion(
   if (!control) return null;
   const start = { paragraphId: position.paragraphId, offset: control.start };
   const end = { paragraphId: position.paragraphId, offset: control.end };
+  if (control.struck) {
+    const past = backward ? start : end;
+    return { kind: 'select', selection: { anchor: past, head: past } };
+  }
   if (control.contentLocked) {
     return {
       kind: 'select',
@@ -134,7 +147,18 @@ export function atomicControlDeletion(
   }
   return {
     kind: 'remove',
-    ops: [{ op: 'removeContentControl', controlId: control.controlId, keepContent: false }],
-    collapseTo: backward ? start : position,
+    ops: input.tracked
+      ? [
+          {
+            op: 'deleteText',
+            paragraphId: position.paragraphId,
+            start: control.start,
+            end: control.end,
+          },
+        ]
+      : [{ op: 'removeContentControl', controlId: control.controlId, keepContent: false }],
+    // A tracked removal leaves the control in place, struck: a forward press moves past it,
+    // or the next press would find the same control and strike nothing new.
+    collapseTo: backward ? start : input.tracked ? end : position,
   };
 }

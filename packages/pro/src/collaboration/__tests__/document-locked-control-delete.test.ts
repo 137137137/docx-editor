@@ -163,3 +163,77 @@ test('an sdtContentLocked control is selected, then refused, for both peers', as
   expect(alice.surface!.session.bodyText()).toContain('head IGLOO tail');
   expect(alice.surface!.session.bodyText()).toContain('Bother');
 });
+
+test('a suggested deletion of the control converges and either decision lands everywhere', async () => {
+  for (const decision of ['reject', 'accept'] as const) {
+    const { pair, alice, bob, flush, converge } = await peers();
+    alice.surface!.setEditingMode('suggest');
+    alice.surface!.setAuthor('Alice');
+    pair.pause();
+    const first = alice.surface!.session.paragraphIds()[0]!;
+    alice.surface!.setSelection({
+      anchor: { paragraphId: first, offset: 4 },
+      head: { paragraphId: first, offset: 11 },
+    });
+    alice.surface!.deleteBackward();
+    expect(alice.surface!.state().lastRejection ?? null).toBeNull();
+    caret(bob, 0, 1);
+    bob.surface!.type('B');
+    flush();
+    pair.resume();
+    converge();
+    // Proposed, not gone: the chip stays, its text struck.
+    expect(chipText(bob)).not.toBeNull();
+    expect(
+      bob.surface!.session.applyTreeOps([
+        { op: decision === 'accept' ? 'acceptAllRevisions' : 'rejectAllRevisions' },
+      ]).committed
+    ).toBe(true);
+    converge();
+    expect(chipText(alice)).toBe(decision === 'accept' ? null : 'IGLOO');
+    expect(alice.surface!.session.bodyText()).toContain('Bother');
+  }
+});
+
+test('a range across paragraphs removes the control and converges with a peer edit', async () => {
+  const { pair, alice, bob, flush, converge } = await peers();
+  pair.pause();
+  const [first, second] = alice.surface!.session.paragraphIds();
+  alice.surface!.setSelection({
+    anchor: { paragraphId: first!, offset: 3 },
+    head: { paragraphId: second!, offset: 2 },
+  });
+  alice.surface!.deleteBackward();
+  expect(alice.surface!.state().lastRejection ?? null).toBeNull();
+  expect(chipText(alice)).toBeNull();
+  caret(bob, 15);
+  bob.surface!.type('!');
+  flush();
+  pair.resume();
+  converge();
+  expect(chipText(bob)).toBeNull();
+
+  expect(alice.exec({ type: 'undo' }).ok).toBe(true);
+  converge();
+  expect(chipText(bob)).toBe('IGLOO');
+  expect(bob.surface!.session.paragraphIds()).toHaveLength(2);
+
+  const reopened = mount({ document: new Uint8Array(await bob.save()) });
+  expect(reopened.surface!.session.bodyText()).toBe(bob.surface!.session.bodyText());
+});
+
+test('Backspace joins the next paragraph to the control line for both peers', async () => {
+  const { pair, alice, bob, flush, converge } = await peers('sdtContentLocked');
+  pair.pause();
+  caret(alice, 0, 1);
+  alice.surface!.deleteBackward();
+  expect(alice.surface!.state().lastRejection ?? null).toBeNull();
+  caret(bob, 0);
+  bob.surface!.type('>');
+  flush();
+  pair.resume();
+  converge();
+  expect(bob.surface!.session.paragraphIds()).toHaveLength(1);
+  expect(chipText(bob)).toBe('IGLOO');
+  expect(bob.surface!.session.bodyText()).toContain('>head IGLOO tailother');
+});
