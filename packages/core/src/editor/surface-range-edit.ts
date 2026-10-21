@@ -189,7 +189,21 @@ export function createSurfaceRangeEditOps(deps: SurfaceRangeEditDeps): SurfaceRa
     if (!summary) return null;
     const contentLocked = summary.lock === 'contentLocked' || summary.lock === 'sdtContentLocked';
     const atom = contentLocked || summary.type === 'checkbox' || summary.type === 'picture';
-    return atom ? { ...span, contentLocked } : null;
+    if (!atom || !control) return null;
+    // A control already proposed for deletion is struck text the key steps over, not a unit
+    // to select again: selecting it would leave the caret where it was, press after press.
+    // Only while tracking: an untracked press removes struck content outright, as it does text.
+    let struck = false;
+    const tracked = deps.trackedAuthorOrNone() !== undefined;
+    for (
+      let node = tracked ? parentNodeOf(part, control.id) : null;
+      node;
+      node = parentNodeOf(part, node.id)
+    ) {
+      if (node.kind === 'revisionDelete') struck = true;
+      if (struck || node.kind === 'paragraph') break;
+    }
+    return { ...span, contentLocked, ...(struck ? { struck } : {}) };
   }
 
   function atomicControlDeletion(
@@ -205,6 +219,7 @@ export function createSurfaceRangeEditOps(deps: SurfaceRangeEditDeps): SurfaceRa
       direction,
       shown,
       controlBeside: inlineControlBeside,
+      tracked: deps.trackedAuthorOrNone() !== undefined,
     });
   }
 
@@ -255,7 +270,7 @@ export function createSurfaceRangeEditOps(deps: SurfaceRangeEditDeps): SurfaceRa
     // every reader below sees either a non-empty author or undefined, never a blank.
     const author = trackedAuthor?.trim() || undefined;
     const plan = withEnclosedBookmarks(
-      rangeDeletionPlan(),
+      rangeDeletionPlan(author !== undefined || deps.trackedAuthorOrNone() !== undefined),
       !author && deps.editingMode() !== 'suggest'
     );
     // A GETTER, so delete-only lanes — Backspace, Delete, proposeDeletion — never pay for a
@@ -288,7 +303,9 @@ export function createSurfaceRangeEditOps(deps: SurfaceRangeEditDeps): SurfaceRa
     return drops.length === 0 ? plan : { ...plan, ops: [...drops, ...plan.ops] };
   }
 
-  function rangeDeletionPlan(): RangeDeletionPlan {
+  function rangeDeletionPlan(
+    tracked = deps.trackedAuthorOrNone() !== undefined
+  ): RangeDeletionPlan {
     // Every edit op builds its plan from here first, so this is where queued
     // typing must land: a plan computed against the pre-buffer selection would
     // edit beside text the user has already typed. The plan reads `currentLayout`
@@ -328,7 +345,8 @@ export function createSurfaceRangeEditOps(deps: SurfaceRangeEditDeps): SurfaceRa
       from,
       to,
       deps.paragraphOrder(),
-      deps.revisionView()
+      deps.revisionView(),
+      tracked
     );
   }
 

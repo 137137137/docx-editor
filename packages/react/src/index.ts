@@ -657,3 +657,13 @@ export {
   type DocxEditorRevisionMarkupDialogProps,
   type UseRevisionMarkupDialogReturn,
 } from './editor/DocxEditorRevisionMarkupDialog';
+
+export type {
+  UnsupportedElement,
+  UnsupportedElementLayout,
+  UnsupportedElementRule,
+} from '@docx-editor.dev/core/editor';
+export {
+  DocxEditorUnsupportedElement,
+  type DocxEditorUnsupportedElementProps,
+} from './editor/DocxEditorUnsupportedElement';

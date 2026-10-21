@@ -355,6 +355,12 @@
       "emitsAddedInReact": [],
       "emitsAddedInVue": []
     },
+    "editor/DocxEditorUnsupportedElement": {
+      "propsAddedInReact": ["children"],
+      "propsAddedInVue": ["layout", "match", "name", "props", "slots"],
+      "emitsAddedInReact": [],
+      "emitsAddedInVue": []
+    },
     "editor/DocxEditorViewport": {
       "propsAddedInReact": [],
       "propsAddedInVue": ["class", "class", "name", "props"],

@@ -33,6 +33,8 @@ import type { ClientObject } from './client-object.ts';
 import { DocxEditorError, fail, isDocxEditorError } from './errors.ts';
 import type { DocumentCapabilities, RevisionTextView } from './runtime.ts';
 import {
+  AUTHOR_HOOK,
+  QUEUE_HOOK,
   INTERNALS,
   REBIND,
   RELEASE,
@@ -143,6 +145,17 @@ export class RequestContext {
     this.#trackedObjects = new TrackedObjects(this.#internals, (object) =>
       this.#created.has(object)
     );
+    // Not a class member, so it stays out of the public declarations and of enumeration.
+    Object.defineProperty(this, AUTHOR_HOOK, { get: () => session.author });
+    Object.defineProperty(this, QUEUE_HOOK, {
+      value: Object.freeze({
+        // A supported tracking-mode assignment is a runtime setting, not a document edit: a
+        // helper's own first sync may carry it, as it would carry the caller's next sync.
+        writes: () =>
+          this.#queue.pending.filter((action) => action.sort === 'write' && !action.runtimeSetting)
+            .length,
+      }),
+    });
   }
 
   /**

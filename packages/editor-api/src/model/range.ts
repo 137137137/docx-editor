@@ -3,27 +3,19 @@ Copyright (c) 2026 EigenPal, Inc. All rights reserved.
 Licensed under the EigenPal Pro Evaluation License 1.0 — see packages/editor-api/LICENSE.md.
 Production use requires a commercial agreement: licensing@eigenpal.com
 */
-// A stretch of a story: two endpoints, each a paragraph and a UTF-16 offset.
-//
-// A RANGE IS A SNAPSHOT, NOT A TRACKED REGION. Its endpoints name the paragraphs they were found in
-// and the offsets they were found at, so it stays meaningful across edits ELSEWHERE in the document
-// and becomes an explicit refusal — `InvalidObjectPath` — once one of its paragraphs is gone. What
-// it deliberately does not do is follow edits INSIDE itself: a range over "alpha" whose paragraph
-// then gains a word at offset 0 no longer names "alpha", so using it fails with `StaleDocument`
-// instead of reading or editing the text now at offsets 0..5. Word's own ranges do move, by
-// keeping a live region in the document; this API does not have one, and pretending otherwise
-// would answer text from a place the caller was not looking at.
-//
-// That is also why `Range#start`/`Range#end` are not here, and why they are not merely unimplemented
-// either: they are document-wide character positions, a different addressing scheme from the one this
-// whole lane uses (paragraph identity plus UTF-16 offset) and one whose value changes whenever any
-// earlier paragraph changes length. This engine maintains no such counter, so the members were
-// DE-SELECTED — removed from `compat/manifest.json`'s selection and from the authored declarations,
-// with the reasons recorded as omissions there — rather than left declared for a shipped object that
-// could never satisfy them. A caller who wants the ends of a range asks it for its paragraphs.
+// A stretch of a story: two endpoints, each a paragraph and a UTF-16 offset. A range is a snapshot,
+// not a tracked region, and has no document-wide `start`/`end`; the class comment says why. A
+// field's cached result is a range too, addressed by its field (`field-result-range.ts`).
 
-import { InsertLocation, BreakType, ContentControlType } from './editing-enums.ts';
+import {
+  InsertLocation,
+  BreakType,
+  ChangeTrackingVersion,
+  ContentControlType,
+  RangeLocation,
+} from './editing-enums.ts';
 import { Field, FieldCollection } from './fields.ts';
+import { fieldResultRead, fieldResultWrite } from './field-result-range.ts';
 import type { FieldType, FieldTypeLiteral } from './field-types.ts';
 import { InlinePicture, InlinePictureCollection } from './pictures.ts';
 import { Table, TableCollection } from './tables.ts';
@@ -35,6 +27,7 @@ import {
   hydratedApplied,
   hydratedStyle,
   hydratedText,
+  refuseFieldResultMember,
   type AutomationSpan,
   type ObjectAddress,
   type RequestContext,
@@ -44,9 +37,10 @@ import { ParagraphCollection, RangeCollection, type PromisedItem } from './colle
 import { BookmarkCollection } from './bookmarks.ts';
 import { requireStyleName, spanRefOf } from './addressing.ts';
 import { Font } from './font.ts';
-import { ContentControl } from './content-controls.ts';
+import { ContentControl, ContentControlCollection } from './content-controls.ts';
 import {
   insertableText,
+  insertableTextWithBreaks,
   rangeTextLocation,
   selectionMode,
   type SelectionMode,
@@ -56,6 +50,12 @@ import { Paragraph } from './paragraph.ts';
 import { Comment, RevisionCollection } from './review.ts';
 import { searchOptions, type SearchOptions } from './search-options.ts';
 import { clientResult, type ClientResult } from '../runtime/client-result.ts';
+import {
+  optionalFlag,
+  rangeGetRangeLocation,
+  reviewedTextVersion,
+  textRangeMarks,
+} from './text-ranges.ts';
 
 /**
  * A stretch of a story: two endpoints, each a paragraph and a UTF-16 offset.
@@ -84,6 +84,7 @@ export class Range extends ModelObject implements PromisedItem {
   #font: Font | undefined;
   #bookmarks: BookmarkCollection | undefined;
   #revisions: RevisionCollection | undefined;
+  #contentControls: ContentControlCollection | undefined;
 
   /** @internal A range a read already found. */
   static at(context: RequestContext, label: string, address: ObjectAddress): Range {
@@ -94,6 +95,11 @@ export class Range extends ModelObject implements PromisedItem {
   /** @internal A range a queued operation will name, or report as nothing. */
   static promised(context: RequestContext, label: string, nullable: boolean): Range {
     return new Range(context, ObjectPath.pending(label), nullable);
+  }
+
+  /** @internal The cached result of the field `field` names. */
+  static ofFieldResult(context: RequestContext, label: string, field: ObjectPath): Range {
+    return new Range(context, ObjectPath.fieldResult(label, field), false);
   }
 
   private constructor(context: RequestContext, path: ObjectPath, nullable: boolean) {
@@ -177,6 +183,33 @@ export class Range extends ModelObject implements PromisedItem {
     if (typeof value !== 'string' || value.length > 2048) fail({ code: 'InvalidArgument', target });
     this.requireUsablePath();
     this.command('hyperlink', () => ({ op: 'setHyperlink', span: this.#span(), target: value }));
+  }
+
+  /**
+   * The content controls this range overlaps, in document order, at any nesting depth.
+   *
+   * A control counts when it shares at least one character with the range, and a control that
+   * holds the whole range counts too, so a word range inside a locked control reports that
+   * control. A block control counts when it holds one of the range's paragraphs. Load
+   * `items/cannotEdit`, `items/tag`, and `items/text` to learn what an edit through the range
+   * would touch.
+   *
+   * @example
+   * ```ts
+   * const controls = range.contentControls;
+   * controls.load('items/cannotEdit,items/tag');
+   * await context.sync();
+   * ```
+   */
+  get contentControls(): ContentControlCollection {
+    this.requireUsablePath();
+    this.#contentControls ??= ContentControlCollection.of(
+      this.context,
+      `${this.path.label}.contentControls`,
+      this.path,
+      () => ({ span: this.#span() })
+    );
+    return this.#contentControls;
   }
 
   /** The bookmarks whose text this range overlaps, in document order. */
@@ -317,6 +350,146 @@ export class Range extends ModelObject implements PromisedItem {
   }
 
   /**
+   * Split this range into ranges that each end after one of `endingMarks`, such as `[' ']` for
+   * words or `['.', '!', '?']` for sentences. A paragraph end always ends a range.
+   *
+   * Each range is an exact span of the document, so you can use it as an edit target in a later
+   * sync: `insertText(text, 'Replace')`, `insertText(text, 'After')`, or `delete()`, also with
+   * change tracking on. By default each range keeps the spacing after it, so a deleted word
+   * takes its space with it; plan edits on those ranges by index. Pass `trimSpacing` as `true`
+   * to remove spaces, tabs, and column breaks from the start and end of each range, for reading
+   * words; a range that holds only spacing is then left out.
+   *
+   * A field, an equation, a picture, or a note reference is one character of the range and is
+   * never split, so it joins the word it touches. A field reads as its result text; an equation,
+   * a picture, and a note reference read as U+FFFC. A tab ends a range only when you list `'\t'`
+   * as a mark. An inline content control adds no boundary, so its words join the ranges around
+   * it; an edit of part of a content-locked control refuses with `edit.protected-content`. Pass at most 32 marks of at most 32
+   * UTF-16 code units each, with no unpaired surrogate; other values refuse with
+   * `InvalidArgument`.
+   *
+   * Ranges follow the runtime's `revisionTextView`. Hidden text, such as a pending insertion in
+   * the `original` view, holds no mark, and each range starts and ends at shown characters.
+   * Hidden text between two shown characters stays inside the range, so an edit through it
+   * also changes that text. Read ranges once, before you edit: after tracked edits, a range can
+   * join deleted and inserted text, and an edit that touches your own pending change refuses
+   * with `edit.tracked-own-pending-change`. Read the result with `getReviewedText('Current')`.
+   *
+   * @example
+   * ```ts
+   * const words = paragraph.getTextRanges([' '], true);
+   * words.load('items/text');
+   * await context.sync();
+   * ```
+   */
+  getTextRanges(endingMarks: string[], trimSpacing?: boolean): RangeCollection {
+    const target = `${this.path.label}.getTextRanges`;
+    const marks = textRangeMarks(endingMarks, target);
+    const trim = optionalFlag(trimSpacing, target);
+    this.requireUsablePath();
+    return RangeCollection.of(this.context, target, this.path, () => ({
+      op: 'getTextRanges',
+      scope: this.#span(),
+      endingMarks: marks,
+      ...(trim ? { trimSpacing: true } : {}),
+      projection: this.revisionTextView(),
+    }));
+  }
+
+  /**
+   * A new range from the start of whichever range starts first to the end of whichever ends
+   * last. This range does not change.
+   *
+   * Use it to address a run of words from {@link Range.getTextRanges}: expand the first word to
+   * the last, then replace the result. Both ranges must be in the same story, such as the body
+   * or one header; ranges in different stories refuse the sync with `InvalidArgument`. A range
+   * that spans paragraphs follows the same `StaleDocument` rule as `Body.getRange`.
+   */
+  expandTo(range: Range): Range {
+    const target = `${this.path.label}.expandTo`;
+    if (!(range instanceof Range) || range.context !== this.context)
+      fail({ code: 'InvalidArgument', target });
+    this.requireUsablePath();
+    range.requireUsablePath();
+    const expanded = Range.promised(this.context, target, false);
+    this.enqueue({
+      sort: 'read',
+      label: target,
+      dependencies: [range.path],
+      plan: () => ({ op: 'expandSpan', span: this.#span(), to: range.#span() }),
+      settle: (value) => {
+        expanded.hydrateAddress({ kind: 'span', span: hydratedSpan(value, target) });
+      },
+    });
+    return expanded;
+  }
+
+  /**
+   * The whole range, its content, or one of its endpoints, as a range. The default is `Whole`.
+   *
+   * `Whole` and `Content` answer the same span. `Start` and `End` answer a collapsed range at
+   * that endpoint, for an insertion point. `After` refuses with `NotSupported`, because a range
+   * here never owns the position after its end. A text write can use the returned range in the
+   * same sync; sync before you load it.
+   */
+  getRange(
+    rangeLocation?:
+      | RangeLocation.whole
+      | RangeLocation.start
+      | RangeLocation.end
+      | RangeLocation.after
+      | RangeLocation.content
+      | 'Whole'
+      | 'Start'
+      | 'End'
+      | 'After'
+      | 'Content'
+  ): Range {
+    const target = `${this.path.label}.getRange`;
+    const location = rangeGetRangeLocation(rangeLocation, target);
+    this.requireUsablePath();
+    const found = Range.promised(this.context, target, false);
+    this.read(
+      target,
+      () => ({ op: 'getRange', span: this.#span(), location }),
+      (value) => {
+        found.hydrateAddress({ kind: 'span', span: hydratedSpan(value, target) });
+      }
+    );
+    return found;
+  }
+
+  /**
+   * This range's text as if every pending tracked change were accepted (`Current`, the default)
+   * or rejected (`Original`). The document does not change.
+   *
+   * Use it to read back a proposed rewrite between syncs: after tracked edits, `text` reads both
+   * the deleted and the inserted words, while `getReviewedText('Current')` reads only the
+   * result. A paragraph mark reads as `\r` when that version keeps it. Fields read as their
+   * displayed results, like `text`. Formatting changes do not change the text.
+   */
+  getReviewedText(changeTrackingVersion?: ChangeTrackingVersion): ClientResult<string>;
+  /**
+   * This range's text as if every pending tracked change were accepted (`Current`, the default)
+   * or rejected (`Original`). The document does not change.
+   */
+  getReviewedText(changeTrackingVersion?: 'Original' | 'Current'): ClientResult<string>;
+  getReviewedText(
+    changeTrackingVersion?: ChangeTrackingVersion | 'Original' | 'Current'
+  ): ClientResult<string> {
+    const target = `${this.path.label}.getReviewedText`;
+    const version = reviewedTextVersion(changeTrackingVersion, target);
+    this.requireUsablePath();
+    const { result, fill } = clientResult<string>(target);
+    this.read(
+      target,
+      () => ({ op: 'getReviewedText', span: this.#span(), version }),
+      (value) => fill(hydratedText(value, target))
+    );
+    return result;
+  }
+
+  /**
    * Write text at or over this range. Answers the range the written text occupies.
    * Await `context.sync()` before loading or addressing that returned range.
    *
@@ -335,6 +508,14 @@ export class Range extends ModelObject implements PromisedItem {
    * Empty text with `Replace` deletes the range; empty text at an insertion point is a no-op.
    * Agent tools that intend a replacement should validate non-empty model output first.
    *
+   * `\n`, `\r`, and `\r\n` in `text` are paragraph breaks: the text after one starts a new
+   * paragraph with the properties of the paragraph it was written into. With `TrackMineOnly`,
+   * each new paragraph mark is a tracked insertion, and rejecting it joins the paragraphs again.
+   * The answered range then ends after the last segment, in the last new paragraph. Text that
+   * lands inside an inline content control refuses with `NotSupported`
+   * (`edit.indivisible-content`), and a write with a break cannot share a sync with another
+   * text edit in the same paragraph. `\v` is a manual line break.
+   *
    * `Before`/`Start` and `After`/`End` land at the SAME position here, and the difference Word
    * draws between them — whether the new text becomes part of this range — has no meaning for a
    * snapshot. Both pairs are accepted because source-compatible code uses all four; what a caller
@@ -351,7 +532,12 @@ export class Range extends ModelObject implements PromisedItem {
     insertLocation: InsertLocation | 'Replace' | 'Start' | 'End' | 'Before' | 'After'
   ): Range {
     const target = `${this.path.label}.insertText`;
-    const written = insertableText(text, target);
+    if (this.path.isFieldResult) {
+      this.requireUsablePath();
+      this.command('insertText', fieldResultWrite(this.path, text, insertLocation, target));
+      return Range.ofFieldResult(this.context, target, this.path);
+    }
+    const written = insertableTextWithBreaks(text, target);
     const where = rangeTextLocation(insertLocation, target);
     this.requireUsablePath();
     const created = Range.promised(this.context, target, false);
@@ -500,8 +686,12 @@ export class Range extends ModelObject implements PromisedItem {
     ));
   }
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -510,8 +700,12 @@ export class Range extends ModelObject implements PromisedItem {
     removeFormatting?: boolean
   ): Field;
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -520,8 +714,12 @@ export class Range extends ModelObject implements PromisedItem {
     removeFormatting?: boolean
   ): Field;
   /**
-   * Insert PAGE, NUMPAGES, or an inert TOC field with supported switches.
-   * TOC entries are not calculated. Tracked field insertion refuses.
+   * Insert an inert field: Page, NumPages, Ref, PageRef, NoteRef, Seq, StyleRef, Date, Time,
+   * Empty with a whole instruction of one of those types, or TOC with supported switches.
+   * `text` holds the field arguments. The instruction is never evaluated, and the cached
+   * result is empty. Fields that fetch, embed, link, run, or prompt refuse with
+   * `InvalidArgument` (`edit.field-unsupported`). With `TrackMineOnly`, the field is one tracked
+   * insertion; tracked TOC creation refuses.
    */
   insertField(
     insertLocation: InsertLocation | 'Before' | 'After' | 'Start' | 'End' | 'Replace',
@@ -552,6 +750,30 @@ export class Range extends ModelObject implements PromisedItem {
       (value) => field.hydrateAddress({ kind: 'handle', handle: hydratedHandle(value, target) })
     );
     return field;
+  }
+
+  /**
+   * Insert one equation from OOXML: a Flat OPC package (`pkg:package`) whose document part holds
+   * one paragraph with exactly one inline `m:oMath` and, around it, plain runs. Other OOXML
+   * refuses with `NotSupported` or `InvalidArgument` and `edit.ooxml-unsupported`, and nothing is
+   * inserted. With `TrackMineOnly`, the equation is one tracked insertion. Returns the range the
+   * inserted content occupies.
+   */
+  insertOoxml(
+    ooxml: string,
+    insertLocation: InsertLocation | 'Replace' | 'Start' | 'End' | 'Before' | 'After'
+  ): Range {
+    const target = `${this.path.label}.insertOoxml`;
+    if (typeof ooxml !== 'string') fail({ code: 'InvalidArgument', target });
+    const location = rangeTextLocation(insertLocation, target);
+    this.requireUsablePath();
+    const created = Range.promised(this.context, target, false);
+    this.commandAnswering(
+      target,
+      () => ({ op: 'insertOoxml', span: this.#span(), location, ooxml }),
+      (value) => created.hydrateAddress({ kind: 'span', span: hydratedSpan(value, target) })
+    );
+    return created;
   }
 
   /** Inline pictures fully contained within this snapshot range. */
@@ -727,7 +949,11 @@ export class Range extends ModelObject implements PromisedItem {
 
   /** @internal Plan the read this object's `load(...)` asked for. */
   protected override onLoad(request: ResolvedLoadOptions): void {
-    const selected = this.selection(request, ['text', 'style', 'hyperlink']);
+    // A field result has text only, so a bare `load()` asks for that and nothing else.
+    const selected =
+      this.path.isFieldResult && request.select.length === 0
+        ? ['text']
+        : this.selection(request, ['text', 'style', 'hyperlink']);
     if (selected.includes('hyperlink')) {
       this.loadTextInto('hyperlink', () => ({ op: 'getHyperlink', span: this.#span() }));
     }
@@ -735,7 +961,9 @@ export class Range extends ModelObject implements PromisedItem {
       const label = `${this.path.label}.text`;
       this.read(
         label,
-        () => ({ op: 'getSpanText', span: this.#span(), projection: this.revisionTextView() }),
+        this.path.isFieldResult
+          ? fieldResultRead(this.path, this.revisionTextView())
+          : () => ({ op: 'getSpanText', span: this.#span(), projection: this.revisionTextView() }),
         (value) => {
           this.setLoadedProperty('text', hydratedText(value, label));
         }
@@ -754,6 +982,7 @@ export class Range extends ModelObject implements PromisedItem {
   }
 
   #span(): AutomationSpan {
+    if (this.path.isFieldResult) refuseFieldResultMember(this.path.label);
     this.requireAddressable();
     return this.path.span();
   }

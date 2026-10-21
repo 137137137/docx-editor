@@ -1,5 +1,8 @@
 import type { SetLegacyDropdownOp } from './legacy-dropdown-fields.ts';
 import type { SetFieldCodeOp } from './tree-op-field-code.ts';
+import type { InsertComplexFieldOp, InsertPageFieldOp } from './tree-op-field-insert.ts';
+import type { SetFieldResultOp } from './tree-op-field-result-write.ts';
+import type { InsertEquationOp } from './tree-op-equation-insert.ts';
 import type { InsertTextOp, DeleteTextOp } from './text-edit-op-types.ts';
 import type { SetTextFormFieldDefaultOp, CommitTextFormFieldOp } from './text-form-fields.ts';
 import type { SetLegacyCheckboxOp } from './legacy-checkbox-fields.ts';
@@ -300,26 +303,10 @@ export type TreeDocOp =
       /** Write this as a TRACKED insertion, on the same terms as `insertText`. */
       readonly revision?: RevisionAttributionInput;
     }
-  | {
-      /**
-       * Insert an allowlisted page-number complex field at a UTF-16 offset.
-       *
-       * `PAGE_X_OF_Y` is PAGE + literal " of " + NUMPAGES in one undoable op. Non-page
-       * instructions are refused — never authored through this path.
-       */
-      readonly op: 'insertPageField';
-      readonly paragraphId: string;
-      readonly offset: number;
-      readonly field: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'PAGE_X_OF_Y';
-      /**
-       * Write this as a TRACKED insertion, on the same terms as `insertText`.
-       *
-       * The whole field — every `w:fldChar`, the instruction, the `PAGE_X_OF_Y` literal —
-       * goes into ONE `w:ins`, because the field is one proposal: rejecting it must take
-       * the complete atom back, never leave a `begin` standing without its `end`.
-       */
-      readonly revision?: RevisionAttributionInput;
-    }
+  | InsertPageFieldOp
+  | InsertComplexFieldOp
+  | SetFieldResultOp
+  | InsertEquationOp
   | {
       /**
        * Move a numbered paragraph to another `w:numPr/w:ilvl`.
@@ -615,6 +602,8 @@ export type TreeDocOp =
         readonly xpath: string;
         readonly storeItemId: string;
       };
+      /** Propose the control as a tracked `w:ins`; rejecting removes it with its text. */
+      readonly revision?: RevisionAttributionInput;
     }
   | {
       /** Repeating-section item insert — unsupported at this layer (out of scope). */

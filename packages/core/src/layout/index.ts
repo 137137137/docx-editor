@@ -749,8 +749,15 @@ export {
   type TableBorderStrokeRecord,
   type TableBorderStyle,
 } from './table-borders.ts';
+
+export type {
+  UnsupportedElement,
+  UnsupportedElementLayout,
+  UnsupportedElementRule,
+} from './unsupported-content-types.ts';
+export { createUnsupportedContentProjector } from './unsupported-content.ts';
+
 export type { DrawingImageEffects } from '../store/package/drawing-image-effects.ts';
 export { tabLeaderPattern } from './tab-leader-pattern.ts';
-
 export { noteSeparatorRuleBox } from './note-separator-rule.ts';
 export type { StrikeoutStrokePt } from './sfnt-strikeout-metrics.ts';

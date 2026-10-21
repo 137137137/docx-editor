@@ -270,6 +270,7 @@ const SPAN_DECORATIONS: Record<Exclude<keyof StyleSpanRecord, 'range' | 'text' |
   fieldAtom: true,
   projected: true,
   equation: true,
+  unsupported: true,
   noteNav: true,
   noteSeparator: true,
   lineEndWhitespace: true,

@@ -1,3 +1,4 @@
+import { createUnsupportedElementState } from './unsupported-element-state.ts';
 import { createEditorEvents } from './editor-events.ts';
 import { createEditorDiagnostics, reportEditorFontError } from './editor-diagnostics.ts';
 import { surfaceFieldResultsScope } from './field-results-scope.ts';
@@ -22,7 +23,8 @@ import { canEditorViewCommand, createEditorViews } from './docx-editor-view-comm
 import { bindCommentDraftRequests } from './comment-draft-chrome.ts';
 import { completePendingSuggesting } from './opening-editing-mode.ts';
 import { subscribeDocumentChanges } from './docx-editor-document-changes.ts';
-import { attachTargetRefusal, registerEditorHost } from './host-realm.ts';
+import { attachTargetRefusal, hostWindowOf, registerEditorHost } from './host-realm.ts';
+import { continueOpeningLayout, withOpeningRefresh } from './docx-editor-opening-layout.ts';
 import { formattingCommandActive } from './docx-editor-active.ts';
 import { createEditorScrolling } from './docx-editor-scroll.ts';
 import { createAnchorNavigation } from './docx-editor-anchor-navigation.ts';
@@ -93,7 +95,7 @@ import {
   resolveDefaultSurfaceMeasurer,
   type TextMeasurer,
 } from '@docx-editor.dev/core/layout';
-import { createAnchorIndex } from './docx-editor-anchors.ts';
+import { createAnchorIndex, warmAnchorsWhenIdle } from './docx-editor-anchors.ts';
 import type { PendingTextFormInput } from './surface-text-form-fields.ts';
 import { saveEditorDocument } from './docx-editor-save.ts';
 import {
@@ -265,8 +267,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   /** The opening document's session between the prepare and mount tasks, for font work. */
   let preparedFontSession: TreeDocxSessionView | null = null;
   let mountedSeq = -1;
-  const stillOpening = () =>
-    preparedFontSession !== null || (!!surface && preparedOpen.stillOpening(surface));
+  const stillOpening = () => preparedFontSession !== null;
   const hostConfig = createDocxEditorHostConfigState(config);
   let author = normalizeEditorAuthor(config.author);
   let container: HTMLElement | null = config.container ?? null;
@@ -300,26 +301,6 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   /** Defers a big document's open behind a painted frame; see `docx-editor-open-scheduler.ts`. */
   const openScheduler = createOpenScheduler({
     mount: (bytes) => mountBytes(bytes),
-    continueOpen: (budgetMs) => {
-      if (!surface) return true;
-      try {
-        const done = diagnostics.continueOpen(() => preparedOpen.continueOpen(surface!, budgetMs));
-        if (done) {
-          diagnostics.openSettled(surface);
-          const bytes = openingRefreshBytes;
-          openingRefreshBytes = null;
-          if (bytes) refreshHost?.mounted(bytes);
-        }
-        return done;
-      } catch (error) {
-        const bytes = openingRefreshBytes;
-        openingRefreshBytes = null;
-        if (!bytes) throw error;
-        diagnostics.openCrashed(error);
-        refreshHost?.mounted(bytes, error);
-        return true;
-      }
-    },
     // Fonts resolved before the mount are laid out once, by the mount; see `preparedOpenHook`.
     prepare: preparedOpen.preparedOpenHook(
       () => preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
@@ -386,14 +367,14 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       !destroyed && author === undefined && standingRejection(null) === SUGGESTING_AUTHOR_REASON,
     emit: (error) => emitError(error),
   });
-  // The HOST's opening mode, when `config.mode` is explicit — precedence and reasons live
-  // in `opening-editing-mode.ts`. Applied before the first mount reads `editingMode`.
+  // Resolve the host's explicit opening mode before the first mount reads it.
   const openingModeDecision = hostConfig.openingModeDecision(suggestingGuards());
   if (openingModeDecision.mode !== null) editingMode = openingModeDecision.mode;
   if (openingModeDecision.rejection !== null) facadeRejection = openingModeDecision.rejection;
   suggestingReporter.report(openingModeDecision.rejection);
 
   let surface: PaginatedSurface | null = null;
+  const unsupported = createUnsupportedElementState(config.unsupportedElementRules, () => surface);
   // Host chrome registered before attach, re-applied to every rebuilt surface (see mount).
   let remoteCaretLabelHost: RemoteCaretLabelHost | null = null;
   const openingIndicator = preparedOpen.openingIndicatorChrome(() => surface);
@@ -405,6 +386,8 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   // What the last emitted tick reported, so a publish that moved nothing observable stays
   // quiet — and one that moved only surface state does not. See `surface-publish-signal.ts`.
   const publishSignal = createPublishSignal();
+  /** The revision the last surface publish showed; see the idle anchor warm-up. */
+  let lastPublishedRevision: number | undefined;
   const views = createEditorViews({
     surface: () => surface,
     destroyed: () => destroyed,
@@ -641,6 +624,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
    */
   function displaySurfaceOptions(): PaginatedSurfaceRuntimeOptions {
     return {
+      unsupportedElementRules: unsupported.current(),
       scale: scaleOf(),
       ...views.snapshot(),
       // What a run with no authored font is REPORTED as, matching what it is measured
@@ -732,6 +716,19 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
         bump();
         protection.sync();
         liveFonts.schedule();
+        // Only a publish that moved no revision: an edit's publish reaches the rail through
+        // `change`, which rebuilds the anchors anyway, and warming those too only made garbage.
+        const publishedRevision = surface?.session.packageRevision();
+        const revisionMoved = publishedRevision !== lastPublishedRevision;
+        lastPublishedRevision = publishedRevision;
+        if (reviewEnabled && container && surface && !revisionMoved) {
+          const published = surface;
+          warmAnchorsWhenIdle(published, hostWindowOf(container), () => {
+            // Nothing to anchor without review items: the rail skips the index then too.
+            if (surface === published && published.session.reviewItems().length > 0)
+              anchorIndexOf(published.publishedLayout());
+          });
+        }
         const displayModeMoved =
           reviewEnabled && reviewDisplayMode !== surface.revisionDisplayMode();
         if (displayModeMoved) reviewDisplayMode = surface.revisionDisplayMode();
@@ -769,7 +766,26 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     if (pendingHostModeFallback !== null) applyHostModeDecision(pendingHostModeFallback, false);
     else adoptDocumentTracking();
     sweepCustomNodePayloadsOnOpen(surface, modules);
-    if (!preparedOpen.stillOpening(surface)) diagnostics.openSettled(surface);
+    // A large open ends at the mount; its remaining pages lay out behind the live pages.
+    const opened = surface;
+    if (!preparedOpen.stillOpening(opened)) diagnostics.openSettled(opened);
+    else
+      continueOpeningLayout(
+        opened,
+        withOpeningRefresh(
+          {
+            current: () => surface,
+            view: () => hostWindowOf(container),
+            slice: (run) => diagnostics.continueOpen(run),
+            settled: () => diagnostics.openSettled(opened),
+          },
+          {
+            take: () => [openingRefreshBytes, (openingRefreshBytes = null)][0],
+            crashed: (error) => diagnostics.openCrashed(error),
+            mounted: (bytes, error) => refreshHost?.mounted(bytes, error),
+          }
+        )
+      );
     mountGeneration += 1;
     // A surface is rebuilt on load and on the font remount, and it comes up editable. The
     // engine's own guards refuse the WRITE, but the pages layer stays `contenteditable`
@@ -1813,7 +1829,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       return mountGeneration;
     },
     get surface() {
-      return surface && preparedOpen.stillOpening(surface) ? null : surface;
+      return surface;
     },
 
     ...views.popupChrome.setters,
@@ -2302,6 +2318,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     setReviewPaneOptions: reviewPane.set,
     setRevisionMarkup: revisionMarkupState.set,
     setRevisionMarkupChrome: revisionMarkupState.register,
+    setUnsupportedElementRules: unsupported.set,
     setRevisionStyles(colors) {
       revisionStyleState.set(colors);
       surface?.setRevisionStyles(colors);

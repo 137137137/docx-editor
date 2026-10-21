@@ -11,6 +11,7 @@ if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { zipSync, strToU8 } from 'fflate';
+import { serializeOoxmlPart } from '@docx-editor.dev/core/store';
 import { mountPaginatedSurface, type PaginatedSurface } from '../paginated-surface.ts';
 import type { LockedControlNavigation } from '../paginated-surface-options.ts';
 
@@ -218,22 +219,65 @@ for (const mode of MODES) {
 describe('suggesting', () => {
   const suggesting = { editingMode: 'suggest' as const, author: 'Reviewer' };
 
-  test('a selection that covers a contentLocked control is refused, not removed untracked', () => {
+  /** The control wrapped whole in one proposal, struck text and all. */
+  const struckWhole = (m: Mounted): boolean =>
+    /<w:del [^>]*>(?:(?!<\/w:del>).)*<w:sdt>(?:(?!<\/w:del>).)*<w:delText>Token<\/w:delText>/.test(
+      serializeOoxmlPart(m.surface.session.part())
+    );
+
+  test('a selection that covers a contentLocked control proposes deleting it whole', () => {
     const m = mount(line('contentLocked'), null, suggesting);
     caretAt(m, 1, 8);
     m.surface.deleteBackward();
-    expect(rejection(m)).not.toBeNull();
-    expect(bodyText(m)).toBe('aaTokenzz');
+    expect(rejection(m)).toBeNull();
+    // A proposal: the text stays until it is decided.
     expect(controls(m)).toBe(1);
+    expect(struckWhole(m)).toBe(true);
   });
 
-  test('the second Backspace beside a contentLocked control is refused', () => {
+  test('the second Backspace beside a contentLocked control proposes deleting it whole', () => {
     const m = mount(line('contentLocked'), null, suggesting);
     caretAt(m, 7);
     m.surface.deleteBackward();
+    expect(offsets(m)).toEqual([7, 2]);
+    m.surface.deleteBackward();
+    expect(rejection(m)).toBeNull();
+    expect(struckWhole(m)).toBe(true);
+  });
+
+  test('forward Delete steps past a control it already proposed for deletion', () => {
+    const m = mount(line('contentLocked'), null, suggesting);
+    caretAt(m, 2);
+    m.surface.deleteForward();
+    m.surface.deleteForward();
+    expect(struckWhole(m)).toBe(true);
+    // The next presses move on to the text after it instead of selecting it again.
+    m.surface.deleteForward();
+    m.surface.deleteForward();
+    expect(serializeOoxmlPart(m.surface.session.part())).toContain('<w:delText>z</w:delText>');
+  });
+
+  test('forward Delete beside a checkbox strikes it and moves on', () => {
+    const W14 = 'http://schemas.microsoft.com/office/word/2010/wordml';
+    const checkbox =
+      `<w:sdt><w:sdtPr><w:tag w:val="box"/><w14:checkbox xmlns:w14="${W14}">` +
+      `<w14:checked w14:val="0"/></w14:checkbox></w:sdtPr>` +
+      `<w:sdtContent>${run('☐')}</w:sdtContent></w:sdt>`;
+    const m = mount(`<w:p>${run('aa')}${checkbox}${run('zz')}</w:p>`, null, suggesting);
+    caretAt(m, 2);
+    m.surface.deleteForward();
+    m.surface.deleteForward();
+    const xml = serializeOoxmlPart(m.surface.session.part());
+    expect(xml).toContain('<w:delText>☐</w:delText>');
+    expect(xml).toContain('<w:delText>z</w:delText>');
+  });
+
+  test('an sdtContentLocked control is still refused', () => {
+    const m = mount(line('sdtContentLocked'), null, suggesting);
+    caretAt(m, 1, 8);
     m.surface.deleteBackward();
     expect(rejection(m)).not.toBeNull();
-    expect(controls(m)).toBe(1);
+    expect(serializeOoxmlPart(m.surface.session.part())).not.toContain('<w:del ');
   });
 });
 
@@ -248,4 +292,56 @@ test('Ctrl+Backspace and deleteSelection remove a selected contentLocked control
   caretAt(n, 1, 8);
   expect(n.surface.deleteSelection()).toBe(true);
   expect(bodyText(n)).toBe('az');
+});
+
+describe('ranges and joins across paragraphs', () => {
+  const two = (lock: string) => line(lock) + `<w:p>${run('next')}</w:p>`;
+  const select = (m: Mounted, from: number, to: number) => {
+    const second = m.surface.session.paragraphIds()[1]!;
+    m.surface.setSelection({
+      anchor: { paragraphId: m.paragraphId, offset: from },
+      head: { paragraphId: second, offset: to },
+    });
+  };
+
+  test('a selection across paragraphs that covers a contentLocked control removes it', () => {
+    const m = mount(two('contentLocked'), null);
+    select(m, 1, 2);
+    m.surface.deleteBackward();
+    expect(rejection(m)).toBeNull();
+    expect(bodyText(m)).toBe('axt');
+    expect(controls(m)).toBe(0);
+  });
+
+  test('a selection across paragraphs that covers an sdtContentLocked control is refused', () => {
+    const m = mount(two('sdtContentLocked'), null);
+    select(m, 1, 2);
+    m.surface.deleteBackward();
+    expect(rejection(m)).not.toBeNull();
+    expect(controls(m)).toBe(1);
+  });
+
+  test('typing over a selection that covers a contentLocked control replaces it', () => {
+    const m = mount(line('contentLocked'), null);
+    caretAt(m, 1, 8);
+    m.surface.type('Q');
+    expect(rejection(m)).toBeNull();
+    expect(bodyText(m)).toBe('aQz');
+    expect(controls(m)).toBe(0);
+  });
+
+  test('Backspace at the start of the next paragraph joins it to a locked control line', () => {
+    for (const lock of ['contentLocked', 'sdtContentLocked']) {
+      const m = mount(two(lock), null);
+      const second = m.surface.session.paragraphIds()[1]!;
+      m.surface.setSelection({
+        anchor: { paragraphId: second, offset: 0 },
+        head: { paragraphId: second, offset: 0 },
+      });
+      m.surface.deleteBackward();
+      expect(rejection(m)).toBeNull();
+      expect(m.surface.session.paragraphIds()).toHaveLength(1);
+      expect(controls(m)).toBe(1);
+    }
+  });
 });

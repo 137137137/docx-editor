@@ -1,3 +1,4 @@
+import { UnsupportedElementRegistryContext } from './unsupported-element-registry';
 import { EnginePopups } from './engine-popups';
 import { ConfiguredPopups } from './popup-config';
 import { DialogMount } from './dialog-host';
@@ -10,7 +11,7 @@ import { DialogMount } from './dialog-host';
 //
 // Paste and drop of supported raster formats route through the shared image-insert path.
 
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useCallback, useContext, useLayoutEffect, useRef } from 'react';
 import {
   clipboardDropLandsText,
   clipboardPasteLandsContent,
@@ -51,6 +52,14 @@ export function DocxEditorContent({ className }: DocxEditorContentProps) {
   const editor = useDocxEditor();
   const imageInsert = useImageInsertOptional();
   const elementRef = useRef<HTMLDivElement | null>(null);
+  const registry = useContext(UnsupportedElementRegistryContext);
+  const contentRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      elementRef.current = element;
+      registry?.setContainer(element);
+    },
+    [registry]
+  );
   const portalRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
@@ -129,7 +138,7 @@ export function DocxEditorContent({ className }: DocxEditorContentProps) {
   return (
     <div ref={portalRef} className="docx-content-mount">
       <div
-        ref={elementRef}
+        ref={contentRef}
         className={`docx-paginated-surface${className ? ` ${className}` : ''}`}
         onPaste={onPaste}
         onDragOver={onDragOver}

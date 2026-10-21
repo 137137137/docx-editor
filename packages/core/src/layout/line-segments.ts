@@ -56,6 +56,16 @@ const lineSegmentsCache = new WeakMap<LineRecord, readonly LineSegment[]>();
 export function lineSegments(line: LineRecord): readonly LineSegment[] {
   const cached = lineSegmentsCache.get(line);
   if (cached) return cached;
+  // Opaque blocks have geometry without editable model positions.
+  if (
+    line.spans.length > 0 &&
+    line.spans.every(
+      (span) =>
+        span.unsupported?.element.placement === 'block' &&
+        span.unsupported.element.nodeId === line.range.paragraphId
+    )
+  )
+    return [];
   const mixed =
     line.spans.some((span) => span.range.paragraphId !== line.range.paragraphId) ||
     (line.drawings ?? []).some((drawing) => drawing.paragraphId !== line.range.paragraphId);

@@ -70,6 +70,9 @@ export const PACKAGES = [
     forgottenExports: {
       logLevel: 'warning',
       protectedExportFiles: ['src/runtime/public.ts', 'src/model/index.ts'],
+      // The agent entry's helpers take the object model's own `RequestContext` and `Paragraph`,
+      // which a consumer imports from the root entry. Its declarations name them from there.
+      crossEntry: { agent: ['Paragraph', 'RequestContext'] },
       allowlist: {
         index: [
           'CommentBase',
@@ -113,6 +116,23 @@ export const PACKAGES = [
     root: 'packages/core',
     pkgSlug: 'docx-editor-core',
     tsconfigPath: 'packages/core/tsconfig.api.json',
+    // Unsupported-content signatures reference types owned by the layout/store subpaths.
+    // Keep those graphs at their owning entry points, as with the existing facade escape hatches.
+    forgottenExports: {
+      logLevel: 'warning',
+      allowlist: {
+        editor: ['AnchoredDrawingRecord', 'EquationSpanRecord', 'InlineDrawingRecord', 'LayoutBox'],
+        index: ['UnsupportedElementRule'],
+        layout: ['UnsupportedContentRecord', 'UnsupportedContentResolver'],
+        output: [
+          'AnchoredDrawingRecord',
+          'EquationSpanRecord',
+          'InlineDrawingRecord',
+          'LayoutBox',
+          'OoxmlElement',
+        ],
+      },
+    },
   },
   {
     name: '@docx-editor.dev/pro',

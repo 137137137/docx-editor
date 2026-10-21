@@ -646,3 +646,13 @@ export type {
   RevisionMarkupDialogSession,
   RevisionMarkupChromeHandlers,
 } from '@docx-editor.dev/core/editor';
+
+export type {
+  UnsupportedElement,
+  UnsupportedElementLayout,
+  UnsupportedElementRule,
+} from '@docx-editor.dev/core/editor';
+export {
+  DocxEditorUnsupportedElement,
+  type DocxEditorUnsupportedElementProps,
+} from './editor/DocxEditorUnsupportedElement';

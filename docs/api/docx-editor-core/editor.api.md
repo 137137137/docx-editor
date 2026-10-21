@@ -1482,6 +1482,7 @@ export interface DocxEditorConfig {
     revisionStyles?: RevisionStyles;
     tableInteractionLabel?: (key: 'table.insertRowBelow' | 'table.insertColumnRight') => string;
     translate?: (key: string, params?: Record<string, string | number>) => string;
+    unsupportedElementRules?: readonly UnsupportedElementRule[];
     zoom?: number;
     zoomMode?: ZoomMode | 'auto';
 }
@@ -1522,6 +1523,7 @@ export interface DocxEditorInstance extends Editor {
     setRevisionStyles(styles: RevisionStyles): void;
     setTextFormFieldChrome(handlers: TextFormFieldChromeHandlers, options?: PopupChromeRegistrationOptions): Unsubscribe;
     setTranslate(translate: ((key: string, params?: Record<string, string | number>) => string) | undefined): void;
+    setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
     showAllReviewAuthors(): void;
     stateVersion(): number;
     readonly surface: PaginatedSurface | null;
@@ -2334,6 +2336,9 @@ export const NO_MIXED_FIELDS: ParagraphDialogMixed;
 export function observeContentControlPopup(panel: HTMLElement, anchor: HTMLElement): () => void;
 
 // @public
+export function observeUnsupportedElements(container: HTMLElement, listener: (hosts: readonly UnsupportedElementHost[]) => void): () => void;
+
+// @public
 export function openEditorWindow(options?: OpenEditorWindowOptions): Promise<EditorWindow | null>;
 
 // @public
@@ -2628,7 +2633,7 @@ export interface PaginatedSurface {
     setRevisionMarkup(settings: ResolvedRevisionMarkup): void;
     // (undocumented)
     setRevisionStyles(colors: RevisionStyles | undefined): void;
-    setRunProperty(localName: string, attributes?: Record<string, string>): void;
+    setRunProperty(localName: string, attributes?: Record<string, string>): string | null;
     setSectionProperties(update: {
         readonly anchorParagraphId?: string;
         readonly marginBottomTwips?: number;
@@ -2645,6 +2650,8 @@ export interface PaginatedSurface {
     setTocLabels(labels: NonNullable<PaginatedSurfaceOptions['tocLabels']>): void;
     setTrackedChangesFilter(predicate: TrackedChangePredicate | null, mode?: TrackedChangeFilterMode): void;
     setTranslate(translate: PaginatedSurfaceOptions['translate']): void;
+    // (undocumented)
+    setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
     showAllRevisionAuthors(): void;
     // (undocumented)
     splitParagraph(): void;
@@ -2654,7 +2661,7 @@ export interface PaginatedSurface {
     storyScope(): StoryScope;
     textMeasurer?(): TextMeasurer;
     toggleList(kind: 'bullet' | 'ordered'): boolean;
-    toggleRunProperty(localName: string, attributes?: Record<string, string>): void;
+    toggleRunProperty(localName: string, attributes?: Record<string, string>): string | null;
     // (undocumented)
     type(text: string): void;
     undo(): void;
@@ -2714,6 +2721,8 @@ export interface PaginatedSurfaceOptions {
         readonly title: string;
     };
     readonly translate?: (key: string, params?: Record<string, string | number>) => string;
+    // (undocumented)
+    readonly unsupportedElementRules?: readonly UnsupportedElementRule[];
 }
 
 // @public
@@ -4232,6 +4241,58 @@ export const TWIPS_PER_INCH = 1440;
 
 // @public (undocumented)
 export const twipsToInches: (twips: number) => number;
+
+// @public
+export interface UnsupportedElement {
+    readonly bounds?: LayoutBox;
+    // (undocumented)
+    readonly drawing?: InlineDrawingRecord | AnchoredDrawingRecord;
+    // (undocumented)
+    readonly equation?: EquationSpanRecord;
+    // (undocumented)
+    readonly label: string;
+    // (undocumented)
+    readonly localName: string;
+    // (undocumented)
+    readonly namespaceUri: string | null;
+    // (undocumented)
+    readonly nodeId: string;
+    // (undocumented)
+    readonly ownerPartName: string;
+    // (undocumented)
+    readonly placement: 'inline' | 'block';
+    readonly source: OoxmlElement | null;
+}
+
+// @public
+export interface UnsupportedElementHost {
+    // (undocumented)
+    readonly element: HTMLElement;
+    // (undocumented)
+    readonly fallback: HTMLElement;
+    readonly key: string;
+    setCustomized(custom: boolean): void;
+    // (undocumented)
+    readonly slot: HTMLElement;
+    // (undocumented)
+    readonly unsupported: UnsupportedElement;
+}
+
+// @public
+export interface UnsupportedElementLayout {
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public
+export interface UnsupportedElementRule {
+    // (undocumented)
+    readonly layout?: UnsupportedElementLayout;
+    // (undocumented)
+    readonly match?: (element: UnsupportedElement) => boolean;
+}
 
 // @public
 export function validateDrawingPositionInput(position: DrawingPositionInput): boolean;

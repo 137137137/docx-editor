@@ -173,6 +173,9 @@ import { toolbarCommandState } from '@docx-editor.dev/core/editor';
 import { ToolbarValueMap } from '@docx-editor.dev/core/editor';
 import { TranslationKey } from '@docx-editor.dev/i18n';
 import { Translations } from '@docx-editor.dev/i18n';
+import { UnsupportedElement } from '@docx-editor.dev/core/editor';
+import { UnsupportedElementLayout } from '@docx-editor.dev/core/editor';
+import { UnsupportedElementRule } from '@docx-editor.dev/core/editor';
 import { ViewScope } from '@docx-editor.dev/core/contracts/editor';
 import { Watermark } from '@docx-editor.dev/core/contracts/editor';
 import { WatermarkState } from '@docx-editor.dev/core/contracts/editor';
@@ -1065,6 +1068,8 @@ export interface DocxEditorNamespace extends ForwardRefExoticComponent<DocxEdito
     readonly TextFormFieldDialog: typeof DocxEditorTextFormFieldDialog;
     // (undocumented)
     readonly Toolbar: typeof DocxEditorToolbar;
+    // (undocumented)
+    readonly UnsupportedElement: typeof DocxEditorUnsupportedElement;
     readonly VerticalRuler: typeof DocxEditorVerticalRuler;
     // (undocumented)
     readonly Viewport: typeof DocxEditorViewport;
@@ -1781,6 +1786,16 @@ export interface DocxEditorToolbarSlotProps {
     hidden?: boolean;
     overflowContent?: () => DocxEditorChildren;
     slotId: ChromeSlotId;
+}
+
+// @public
+export function DocxEditorUnsupportedElement(input: DocxEditorUnsupportedElementProps): react.JSX.Element[];
+
+// @public
+export interface DocxEditorUnsupportedElementProps extends UnsupportedElementRule {
+    children: (props: {
+        element: UnsupportedElement;
+    }) => ReactNode;
 }
 
 // @public
@@ -3167,6 +3182,12 @@ export interface ToolbarSlotPartProps {
 export type ToolbarTranslate = (key: string) => string;
 
 export { TranslationKey }
+
+export { UnsupportedElement }
+
+export { UnsupportedElementLayout }
+
+export { UnsupportedElementRule }
 
 // @public
 export function useBookmarkDialog(): UseBookmarkDialogReturn;

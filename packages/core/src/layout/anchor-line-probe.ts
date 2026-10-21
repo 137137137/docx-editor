@@ -64,6 +64,12 @@ export function anchorLineStartsByModelOffset(input: {
     probeLineIndex += 1;
   };
   for (const [pieceIndex, piece] of pieces.entries()) {
+    if (piece.unsupported) {
+      const width = piece.unsupported.width;
+      if (probeWidth > 0 && probeWidth + width > probeLineAvail()) closeProbeLine(piece.start);
+      probeWidth += width;
+      continue;
+    }
     const equation = equationLayoutOf(piece);
     if (equation) {
       const width = equation.geometry.box.width;
