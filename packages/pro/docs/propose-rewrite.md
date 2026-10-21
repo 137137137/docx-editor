@@ -49,7 +49,7 @@ A draft gives you two strings for the prompt:
 - `draft.text` is the paragraph text, with a numbered placeholder for each field, picture, equation, note reference, line break, and locked content control.
 - `draft.legend` states the placeholder rules and lists what each placeholder stands for. It is an empty string when the paragraph has no placeholders.
 
-Neither string holds an instruction. Put your own instruction first. Both strings come from the document, and a document can hold text that reads like an instruction. Treat them as data: wrap them in tags that the document text cannot close, and tell the model never to follow instructions inside the tags. A random tag name works because the document cannot predict it. The following function builds such a prompt:
+Neither string holds an instruction. Put your own instruction first. Both strings come from the document, and a document can hold text that reads like an instruction. Treat them as data: wrap them in tags that the document text cannot close, and tell the model never to follow instructions inside the tags. A random tag name reduces delimiter collisions. These prompt instructions do not guarantee that a model ignores instructions inside document text. The following function builds such a prompt:
 
 ```ts
 import type { RewriteDraft } from '@docx-editor.dev/editor-api/agent';
@@ -123,7 +123,7 @@ export async function rewriteParagraph(
 }
 ```
 
-`draft.apply()` runs the same checks, so you can skip `check()` and catch the error instead. After a `stale` or a `verification-failed` error, another edit changed the paragraph. Prepare it again, and ask the model again with the new draft.
+`draft.apply()` runs the same checks, so you can skip `check()` and catch the error instead. Even unchanged model text triggers a fresh read before `apply()` returns. If the paragraph text changed, `apply()` refuses with `stale`. If another participant deleted the paragraph while the model answered, `apply()` throws `write-failed`. If another edit deletes the paragraph, or joins it into another paragraph, while `apply()` writes, `apply()` throws `rollback-failed`. After a `stale` or a `verification-failed` error, another edit changed the paragraph. Prepare it again, and ask the model again with the new draft.
 
 ## Rewrite several paragraphs
 
@@ -180,7 +180,7 @@ Each paragraph gets its own guarantee: all of its changes, or none. A paragraph 
 
 ## Propose structural edits
 
-A rewrite stays inside one paragraph and keeps its fields and equations. To propose a structural edit, set `document.changeTrackingMode` to `TrackMineOnly` and call the Office.js member for it:
+A rewrite stays inside one paragraph. Use `keepPlaceholders: true` to require that it keeps fields, equations, and other placeholders. To propose a structural edit, set `document.changeTrackingMode` to `TrackMineOnly` and call the Office.js member for it:
 
 - To split a paragraph, replace the gap between two sentences with `'\n'` through `insertText()`. For more information, see [Propose a paragraph split](https://www.docx-editor.dev/docs/2.x/editor-api/revisions#propose-a-paragraph-split).
 - To add a field, call `insertField()`, and write its result with `field.result.insertText()`. For more information, see [Propose a field](https://www.docx-editor.dev/docs/2.x/editor-api/revisions#propose-a-field).
@@ -193,11 +193,11 @@ A rewrite stays inside one paragraph and keeps its fields and equations. To prop
 - `draft.apply()` checks the model text before it writes anything. Text that breaks a placeholder rule writes nothing.
 - You do not need to set `document.changeTrackingMode` first. If you do, an assignment of `TrackMineOnly` or `Off` that is not synced yet goes with the helper's first sync and does not count as a queued edit. Other queued commands fail with `context-used`.
 - In a browser, each writing sync is one undo step, so one rewrite can take several. To undo it as one step, call `runtime.run({ historyGroup: editor.beginHistoryGroup() }, callback)`.
-- If tracking is off, `draft.apply()` turns on `TrackMineOnly` for its writes and turns it off again. It never turns tracking off. If turning it off again fails, the proposal stands and `document.changeTrackingMode` reads `TrackMineOnly`.
+- If tracking is off, `draft.apply()` turns on `TrackMineOnly` for its writes and turns it off again. It keeps tracking on throughout the edits. If restoring the previous mode fails, the proposal stands and `document.changeTrackingMode` reads `TrackMineOnly`.
 
 ## Handle errors
 
-`prepareRewrite()` and `draft.apply()` throw a `RewriteError`, and `draft.check()` returns one. Every code except `rollback-failed` leaves the paragraph as it was. When `error.isModelError` is `true`, the model text broke a placeholder rule, nothing was written, and you can send `error.message` back to the model.
+`prepareRewrite()` and `draft.apply()` throw a `RewriteError`, and `draft.check()` returns one. Every code except `rollback-failed` leaves the paragraph as it was, unless another edit removed it. When `error.isModelError` is `true`, the model text broke a placeholder rule, nothing was written, and you can send `error.message` back to the model.
 
 `check()` tests only the model text. `apply()` can still throw `stale`, `locked`, or `write-failed` after `check()` returns `null`, because the document can change, and the writes can refuse, after the check. Some codes come from a `DocxEditorError` that the helper caught. `error.cause` holds that error:
 
@@ -205,7 +205,7 @@ A rewrite stays inside one paragraph and keeps its fields and equations. To prop
 | --- | --- |
 | `stale` | `StaleDocument` from a write |
 | `locked` | Any `DocxEditorError` whose `debugInfo.innerError.code` is `edit.protected-content` |
-| `write-failed` | Any other `DocxEditorError` from a write |
+| `write-failed` | Any other `DocxEditorError` from a write, or from the read of a deleted paragraph |
 | `tracking-unavailable` | A refused `changeTrackingMode = 'TrackMineOnly'`, such as `NotSupported` without the review module |
 | `read-failed` | Any error from the read in `prepareRewrite()` |
 
@@ -229,9 +229,9 @@ The following table lists every code:
 | `read-failed` | The document refused a read of the paragraph. `error.cause` holds the reason. | Read `error.cause`. |
 | `stale` | The paragraph changed after `prepareRewrite()`, through another participant or your own code. The rewrite was rolled back. | Prepare the paragraph again, and ask the model again. |
 | `locked` | An edit touched protected content. The rewrite was rolled back. | Keep the content whole. |
-| `write-failed` | The document refused an edit. The rewrite was rolled back. `error.cause` holds the reason. | Read `error.cause`. |
+| `write-failed` | The document refused an edit, or the paragraph no longer exists. The rewrite was rolled back. `error.cause` holds the reason. | If `error.cause.code` is `InvalidObjectPath`, the paragraph no longer exists: skip it. Otherwise, read `error.cause`. |
 | `verification-failed` | The paragraph would not read as the model text. The rewrite was rolled back. | Prepare the paragraph again, and ask the model again. |
-| `rollback-failed` | A write failed, and the rollback failed too or left the paragraph different from before. | Review the paragraph. `error.cause` holds both errors. |
+| `rollback-failed` | A write failed, and the rollback failed too, could not find the paragraph, or left the paragraph different from before. | Do not retry automatically. The changes stay as tracked changes by your `author`, also when another edit moved them into another paragraph. Review them. `error.cause` is an `AggregateError`, and `errors[0]` is the first `RewriteError`. |
 
 A failed model call is your own error, not a `RewriteError`. If a cleanup step fails after an error, such as turning tracking off again, `error.suppressed` holds that second error. It never replaces the first one.
 

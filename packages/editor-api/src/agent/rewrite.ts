@@ -188,8 +188,9 @@ async function prepare(
       } catch (rollbackError) {
         throw new RewriteError(
           'rollback-failed',
-          `${failure.message} Rejecting the rewrite's changes failed too: ` +
-            `${messageOf(rollbackError)}`,
+          'The rewrite failed, and rejecting its changes failed too, so the document can still ' +
+            'hold part of the proposal. Do not retry automatically. ' +
+            `First error: ${failure.message} Rollback error: ${messageOf(rollbackError)}`,
           { cause: new AggregateError([failure, rollbackError]) }
         );
       }
@@ -210,7 +211,20 @@ async function prepare(
     assertNothingQueued(context);
     assertUnused();
     const { hunks, expected } = plan(modelText);
-    if (hunks.length === 0) return { paragraphId, original, proposed: original, changes: 0 };
+    if (hunks.length === 0) {
+      // Even an unchanged answer must describe the paragraph that still exists now.
+      // A participant can edit it while the caller waits for the model.
+      try {
+        const proposed = paragraph.getReviewedText('Current');
+        const before = paragraph.getReviewedText('Original');
+        await helperSync(context);
+        if (before.value !== original || normal(proposed.value) !== expected)
+          throw concurrentEdit();
+        return { paragraphId, original, proposed: proposed.value, changes: 0 };
+      } catch (error) {
+        throw writeFailure(error);
+      }
+    }
     const restore = await startTracking(context);
     let result: RewriteResult;
     try {
