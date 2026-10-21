@@ -6,6 +6,7 @@ import {
   type OoxmlPart,
 } from '../store/package/ooxml-tree.ts';
 import { readLegacyPageField } from './legacy-footer-page-field.ts';
+import { paragraphFrameAttributes, translateParagraphFragment } from './paragraph-frame.ts';
 import { shiftParagraphFragment } from './note-fragment-geometry.ts';
 import type { BlockFragmentRecord, ParagraphFragmentRecord } from './semantic-records.ts';
 
@@ -90,6 +91,8 @@ export function positionFixedFooterPageFrame<
   flow: T,
   geometry: { readonly marginLeft: number; readonly pageWidth: number } | undefined
 ): T {
+  const horizontal = positionPageXFooterFrame(part, flow, geometry);
+  if (horizontal !== flow) return horizontal;
   if (
     !geometry ||
     !isW(part.root, 'ftr') ||
@@ -194,4 +197,116 @@ export function positionFixedFooterPageFrame<
     })),
   };
   return { ...flow, blocks: [clipped, shiftedAnchor], bottom: shiftedAnchor.box.height };
+}
+
+/** Honor bounded page-X and explicit exact text-anchored PAGE/empty-anchor frames. */
+function positionPageXFooterFrame<T extends { blocks: BlockFragmentRecord[]; bottom: number }>(
+  part: OoxmlPart,
+  flow: T,
+  geometry: { readonly marginLeft: number; readonly pageWidth: number } | undefined
+): T {
+  if (
+    !geometry ||
+    !isW(part.root, 'ftr') ||
+    flow.blocks.length !== 2 ||
+    !Number.isFinite(geometry.pageWidth) ||
+    geometry.pageWidth <= 0 ||
+    geometry.pageWidth > MAX_PT ||
+    !Number.isFinite(geometry.marginLeft) ||
+    geometry.marginLeft < 0 ||
+    geometry.marginLeft > geometry.pageWidth
+  )
+    return flow;
+  const paragraphs = elements(part.root);
+  const [first, anchor] = flow.blocks;
+  if (
+    paragraphs.length !== 2 ||
+    paragraphs.some((p) => p.kind !== 'paragraph') ||
+    !first ||
+    !anchor ||
+    !simple(first) ||
+    !simple(anchor) ||
+    first.paragraphId !== paragraphs[0]!.id ||
+    anchor.paragraphId !== paragraphs[1]!.id ||
+    first.indent.right !== 0 ||
+    !['left', 'center', 'right'].includes(first.alignment) ||
+    !emptyAnchor(paragraphs[1]!, anchor) ||
+    !supportedProperties(anchor, false) ||
+    readLegacyPageField(paragraphs[0]!) !== ''
+  )
+    return flow;
+  const frameProperties = first.props.filter((p) => p.localName === 'framePr');
+  if (
+    frameProperties.length === 0 ||
+    frameProperties.length > 8 ||
+    !supportedProperties(
+      { ...first, props: first.props.filter((p) => p.localName !== 'framePr') },
+      false
+    )
+  )
+    return flow;
+  const attrs = paragraphFrameAttributes(first.props)!;
+  const allowed = new Set(['w', 'h', 'hRule', 'wrap', 'vAnchor', 'hAnchor', 'x', 'y']);
+  if (
+    Object.keys(attrs).some((key) => !allowed.has(key)) ||
+    attrs.hAnchor !== 'page' ||
+    attrs.vAnchor !== 'text' ||
+    (attrs.wrap ?? 'around') !== 'around'
+  )
+    return flow;
+  const width = twips(attrs.w),
+    x = twips(attrs.x);
+  const y = readTwipsMeasure(attrs.y ?? '0');
+  if (
+    width === undefined ||
+    width <= 0 ||
+    x === undefined ||
+    x + width > geometry.pageWidth ||
+    y === null ||
+    Math.abs(y / 20) > MAX_PT ||
+    (attrs.h !== undefined && twips(attrs.h) === undefined) ||
+    (attrs.hRule !== undefined && !['auto', 'atLeast', 'exact'].includes(attrs.hRule)) ||
+    (attrs.hRule !== undefined && attrs.hRule !== 'auto' && attrs.h === undefined)
+  )
+    return flow;
+  const line = first.lines[0]!;
+  let left = Infinity,
+    right = -Infinity;
+  for (const span of line.spans) {
+    if (!Number.isFinite(span.box.x) || !Number.isFinite(span.box.width) || span.box.width < 0)
+      return flow;
+    if (!span.text.trim() || span.box.width === 0) continue;
+    left = Math.min(left, span.box.x);
+    right = Math.max(right, span.box.x + span.box.width);
+  }
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right - left > width) return flow;
+  const origin = x - geometry.marginLeft;
+  const inset =
+    first.alignment === 'right'
+      ? width - (right - left)
+      : first.alignment === 'center'
+        ? (width - (right - left)) / 2
+        : 0;
+  const moved = translateParagraphFragment(first, origin + inset - left, 0);
+  // A bounded exact-height text-anchored frame floats over its following text anchor.
+  // The anchor alone reserves footer flow; exact frames clip just as paragraph-frame-flow does.
+  const height = twips(attrs.h);
+  if (attrs.hRule === 'exact' && height !== undefined && height > 0 && attrs.y !== undefined) {
+    const opened = shiftParagraphFragment(anchor, -anchor.box.y);
+    const positioned = translateParagraphFragment(moved, 0, y / 20 - moved.box.y);
+    const floating: ParagraphFragmentRecord = {
+      ...positioned,
+      outOfFlow: true,
+      clipToBox: true,
+      box: { ...positioned.box, x: origin, width, height },
+    };
+    return { ...flow, blocks: [floating, opened], bottom: opened.box.height };
+  }
+  // Other height rules retain the existing horizontal-only placement lane.
+  const placed: ParagraphFragmentRecord = {
+    ...moved,
+    box: { ...moved.box, x: origin, width },
+    lines: moved.lines.map((item) => ({ ...item, box: { ...item.box, x: origin, width } })),
+  };
+  return { ...flow, blocks: [placed, anchor] };
 }

@@ -134,15 +134,15 @@ export const ToolbarFontSize = defineComponent({
 
     watch(open, (isOpen, _, onCleanup) => {
       if (!isOpen) return;
-      const onMouseDown = (event: MouseEvent) => {
+      const onOutsidePointerDown = (event: PointerEvent) => {
         const root = rootRef.value;
         if (root && isDomNode(event.target) && root.contains(event.target)) return;
         open.value = false;
         draft.value = null;
       };
       const doc = hostDocumentOf(rootRef.value);
-      doc.addEventListener('mousedown', onMouseDown);
-      onCleanup(() => doc.removeEventListener('mousedown', onMouseDown));
+      doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+      onCleanup(() => doc.removeEventListener('pointerdown', onOutsidePointerDown, true));
     });
 
     return () => {
@@ -290,14 +290,14 @@ export const ToolbarZoom = defineComponent({
 
     watch(open, (isOpen, _, onCleanup) => {
       if (!isOpen) return;
-      const onMouseDown = (event: MouseEvent) => {
+      const onOutsidePointerDown = (event: PointerEvent) => {
         const root = rootRef.value;
         if (root && isDomNode(event.target) && root.contains(event.target)) return;
         open.value = false;
       };
       const doc = hostDocumentOf(rootRef.value);
-      doc.addEventListener('mousedown', onMouseDown);
-      onCleanup(() => doc.removeEventListener('mousedown', onMouseDown));
+      doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+      onCleanup(() => doc.removeEventListener('pointerdown', onOutsidePointerDown, true));
     });
 
     return () => {

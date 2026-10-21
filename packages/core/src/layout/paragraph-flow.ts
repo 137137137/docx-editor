@@ -1,3 +1,5 @@
+import { appendUnsupportedContent } from './unsupported-content-flow.ts';
+import { paragraphContinuationPieces } from './paragraph-continuation-pieces.ts';
 import { revisionMarkupHidesDrawing } from './revision-markup-projection.ts';
 import {
   cellTabReplayScope,
@@ -234,31 +236,7 @@ export function breakParagraph(
   const firstLineOffset = slotOpen ? (flow?.firstLineOffset ?? 0) : 0;
   const markerBaselineFloor = slotOpen ? (flow?.firstLineMinimumBaseline ?? 0) : 0;
   const markerAscent = slotOpen ? Math.max(0, flow?.firstLineMarkerAscent ?? 0) : 0;
-  // A zero-width projected piece at the start offset (a `w:sym` glyph, a field-code atom)
-  // owns no model text, so `end <= startOffset` would drop it. At the paragraph start no
-  // earlier fragment can have painted it, so it always stays; a continuation keeps it only
-  // in field-code view, where the atom is the continuation's first visible token.
-  const visiblePieces = allPieces.flatMap((piece): FieldAwarePiece[] => {
-    if (
-      piece.end <= startOffset &&
-      !(
-        (startOffset === 0 || flow?.showFieldCodes) &&
-        piece.projected &&
-        piece.start === piece.end &&
-        piece.start === startOffset
-      )
-    )
-      return [];
-    if (piece.start >= startOffset) return [piece];
-    const trim = startOffset - piece.start;
-    return [
-      {
-        ...piece,
-        text: piece.projected ? piece.text : piece.text.slice(trim),
-        start: startOffset,
-      },
-    ];
-  });
+  const visiblePieces = paragraphContinuationPieces(allPieces, startOffset, flow?.showFieldCodes);
   const typography = flow?.typography ?? resolveCjkTypography(paragraphProperties());
   const { preserveColonAdvances } = advances;
   const pieces = compressCjkPieces(visiblePieces, typography, measurer, advances, available);
@@ -881,7 +859,8 @@ export function breakParagraph(
     // multiple's extra text band below it; an equation or a smaller multiple keeps the atom
     // as a floor, while a larger text multiple can still win.
     const hasUnscaledInlineExtent =
-      line.drawings.length > 0 || line.spans.some((span) => span.equation !== undefined);
+      line.drawings.length > 0 ||
+      line.spans.some((span) => span.equation !== undefined || span.unsupported !== undefined);
     const scalesTextBandOnly = lineSpacing.rule === 'auto' && hasUnscaledInlineExtent;
     const holdsUnscaledPicture =
       scalesTextBandOnly &&
@@ -1039,6 +1018,23 @@ export function breakParagraph(
       // after the break. Suppressing that remainder put "After Column Break" flush with
       // the prior column's first line.
       trailingLineBreak = true;
+      continue;
+    }
+    if (piece.unsupported) {
+      const unsupported = piece.unsupported;
+      const atomWidth = Math.min(unsupported.width, lineAvailable());
+      if (unsupported.display === 'block' && holdsContent()) closeLine();
+      if (holdsContent() && line.width + atomWidth > lineAvailable()) closeLine();
+      exclusionProbe.setMetrics(
+        { height: unsupported.height, baseline: unsupported.height },
+        atomWidth
+      );
+      applyInlineObjectSkipIfNeeded(atomWidth, unsupported.height);
+      if (!ensurePlacementWidth(atomWidth)) continue;
+      appendUnsupportedContent(line, piece, paragraphId, lineOrigin() + line.width, atomWidth);
+      wordStartSpan = -1;
+      lastEmitted = '';
+      if (unsupported.display === 'block') closeLine();
       continue;
     }
     if (piece.equation) {

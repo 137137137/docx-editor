@@ -61,6 +61,7 @@ import {
 import type { RevisionAttributionInput, TreeOpEffect, TreeOpResult } from './tree-op-validate.ts';
 import { build, revisionAttributes } from './tree-op-tracked-builders.ts';
 import { emptyParagraphRunProperties } from './mark-character-style-run.ts';
+import { formattingRunBesideRestrictedControl } from './tree-op-restricted-edge.ts';
 import { liftedOutOfForeignInsertions } from './tree-op-tracked-foreign-split.ts';
 
 export { sameEditingMoment } from './tree-op-tracked-adjacency.ts';
@@ -205,11 +206,12 @@ interface TrackedInsertionPayload {
    */
   readonly nodes: ((mint: () => string) => readonly OoxmlNode[]) | null;
   /**
-   * A complete run carrying its OWN `w:rPr` — a note citation, whose reference style must
-   * not be replaced by the formatting at the caret. Placed as a sibling run: alone under
-   * the wrapper, or beside the split halves when extending the author's own `w:ins`.
+   * Complete runs carrying their OWN `w:rPr` — a note citation, whose reference style must
+   * not be replaced by the formatting at the caret, or a complex field's marker runs. Placed
+   * as sibling runs: alone under the wrapper, or beside the split halves when extending the
+   * author's own `w:ins`.
    */
-  readonly run?: (mint: () => string) => OoxmlNode;
+  readonly runs?: (mint: () => string) => readonly OoxmlNode[];
 }
 
 /**
@@ -298,7 +300,8 @@ export function applyInsertTrackedElements(
 }
 
 /**
- * Insert one COMPLETE run — a note citation — at `offset` as a tracked insertion.
+ * Insert COMPLETE runs — a note citation, or a complex field's begin, instruction, separate,
+ * and end runs (one model unit) — at `offset` as ONE tracked insertion.
  *
  * The run arrives with its own `w:rPr` (the reference style) and keeps it: it is placed as
  * a sibling run under the wrapper, never spliced into a run whose formatting would restyle
@@ -310,15 +313,17 @@ export function applyInsertTrackedRun(
   part: OoxmlPart,
   paragraph: OoxmlParagraphNode,
   offset: number,
-  run: (mint: () => string) => OoxmlNode,
+  run: (mint: () => string) => OoxmlNode | readonly OoxmlNode[],
   revision: RevisionAttributionInput,
-  options?: EditOptions
+  options?: EditOptions,
+  length = 1
 ): TreeOpResult {
+  const runs = (mint: () => string) => [run(mint)].flat();
   return applyTrackedInsertion(
     part,
     paragraph,
     offset,
-    { length: 1, nodes: null, run },
+    { length, nodes: null, runs },
     revision,
     options
   );
@@ -404,6 +409,12 @@ function applyTrackedInsertion(
     : undefined;
   const fieldLeftRun = fieldLeftRunId ? findNode(part, fieldLeftRunId) : null;
   const fieldProperties = () => (fieldLeftRun ? insertedRunProperties(mint, fieldLeftRun) : []);
+  // Beside a control that typing cannot enter, the words take the text's formatting outside it.
+  const besideProperties = (): readonly OoxmlNode[] | null => {
+    if (replacesThisEdit) return null;
+    const run = formattingRunBesideRestrictedControl(paragraph, offset, offsets);
+    return run === undefined ? null : run ? insertedRunProperties(mint, run) : [];
+  };
   const rightBiasedDestination =
     bias === 'right' ? insertionDestination(paragraph, offset, null, bias) : null;
   // Minted LAZILY, on the first wrapper actually built: `nextRevisionId` walks the whole
@@ -487,11 +498,11 @@ function applyTrackedInsertion(
             runOf(mint, [
               ...(replacementRun
                 ? insertedRunProperties(mint, replacementRun)
-                : (markStyled() ?? properties)),
+                : (markStyled() ?? besideProperties() ?? properties)),
               ...payload.nodes(mint),
             ]),
           ]
-        : [payload.run!(mint)]
+        : payload.runs!(mint)
     );
     if (nextInlineContainerDepth(wrapper, depth) >= MAX_INLINE_CONTAINER_DEPTH) exceedsDepth = true;
     wrappers.add(wrapper.id);
@@ -551,10 +562,10 @@ function applyTrackedInsertion(
           const inserted =
             insertionAuthor(stack) === revision.author
               ? payload.nodes
-                ? runOf(mint, [...fieldProperties(), ...payload.nodes(mint)])
-                : payload.run!(mint)
-              : wrap(fieldProperties(), containerDepth);
-          out.push(inserted, node);
+                ? [runOf(mint, [...fieldProperties(), ...payload.nodes(mint)])]
+                : payload.runs!(mint)
+              : [wrap(fieldProperties(), containerDepth)];
+          out.push(...inserted, node);
           placed = true;
           cursor.offset = end;
           continue;
@@ -570,12 +581,12 @@ function applyTrackedInsertion(
           const own = insertionAuthor([...stack, node]) === revision.author;
           const inserted = own
             ? payload.nodes
-              ? runOf(mint, [...properties(), ...payload.nodes(mint)])
-              : payload.run!(mint)
-            : wrap(properties(), containerDepth);
+              ? [runOf(mint, [...properties(), ...payload.nodes(mint)])]
+              : payload.runs!(mint)
+            : [wrap(properties(), containerDepth)];
           out.push(
             ...(contentOf(head).length ? [head] : []),
-            inserted,
+            ...inserted,
             ...(contentOf(tail).length ? [tail] : [])
           );
           placed = true;
@@ -801,7 +812,7 @@ function applyTrackedInsertion(
 }
 
 /** Split a run at a local offset, keeping its `w:rPr` on both halves. */
-function splitRun(
+export function splitRun(
   mint: () => string,
   offsets: ParagraphOffsetIndex,
   run: OoxmlNode,
@@ -856,7 +867,7 @@ function splitRunAndInsert(
   // whatever formatting the caret sits in and lose its reference style.
   return [
     ...(contentOf(head).length > 0 ? [head] : []),
-    payload.run!(mint),
+    ...payload.runs!(mint),
     ...(contentOf(tail).length > 0 ? [tail] : []),
   ];
 }

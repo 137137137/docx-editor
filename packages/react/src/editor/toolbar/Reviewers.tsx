@@ -41,14 +41,14 @@ export function ToolbarReviewers({ className, hidden, icon }: ToolbarReviewersPr
   useEffect(() => {
     if (!open) return undefined;
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')?.focus();
-    const onMouseDown = (event: MouseEvent): void => {
+    const onOutsidePointerDown = (event: PointerEvent): void => {
       if (rootRef.current?.contains(event.target as Node)) return;
       setOpen(false);
     };
     const doc = hostDocumentOf(rootRef.current);
-    doc.addEventListener('mousedown', onMouseDown, true);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
     return () => {
-      doc.removeEventListener('mousedown', onMouseDown, true);
+      doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
     };
   }, [open]);
   // Escape through the shared rule: a host input keeps its own Escape.

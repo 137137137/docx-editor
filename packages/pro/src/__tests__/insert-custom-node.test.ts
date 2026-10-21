@@ -18,7 +18,10 @@ import {
   defineCustomNode,
   insertCustomNode,
   recognizeCustomNodes,
+  removeCustomNode,
+  updateCustomNode,
 } from '../index.ts';
+import { reviewModule } from '../review/review-module.ts';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
@@ -42,12 +45,12 @@ function docx(body: string): Uint8Array {
 
 const citation = defineCustomNode({ name: 'citation', tagPrefix: 'acme' });
 
-function mount(body: string): DocxEditorInstance {
+function mount(body: string, review = false): DocxEditorInstance {
   const editor = createDocxEditor({
     container: document.createElement('div'),
     document: docx(body),
     author: 'Demo Reviewer',
-    modules: [customNodesModule({ nodes: [citation] })],
+    modules: [customNodesModule({ nodes: [citation] }), ...(review ? [reviewModule()] : [])],
   });
   if (!editor.surface) throw new Error('surface failed to mount');
   return editor;
@@ -318,5 +321,161 @@ describe('insertCustomNode', () => {
     });
     const [node] = recognizeCustomNodes(reopened.surface!.session.part(), [citation]);
     expect(node?.attrs['q']).toBe(hostile);
+  });
+
+  test('a node inserted into a paragraph without one appears in the review list at once', () => {
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx('<w:p><w:r><w:t>before after</w:t></w:r></w:p>'),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [citation] }), reviewModule()],
+    });
+    const customItems = () => editor.getReviewItems().filter((item) => item.kind === 'custom');
+    // Read first, so the next read starts from a cached list.
+    expect(customItems()).toHaveLength(0);
+    insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 7 },
+    });
+    expect(customItems()).toHaveLength(1);
+    // Typing beside it keeps the item.
+    editor.surface!.setSelection({
+      anchor: { paragraphId: firstParagraphId(editor), offset: 0 },
+      head: { paragraphId: firstParagraphId(editor), offset: 0 },
+    });
+    editor.surface!.type('x');
+    expect(customItems()).toHaveLength(1);
+  });
+
+  test('typing inside a block-level node updates its review card', () => {
+    const block = defineCustomNode({
+      name: 'block',
+      tagPrefix: 'acme',
+      reviewCard: ({ text }) => ({ title: text }),
+    });
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx(
+        '<w:sdt><w:sdtPr><w:tag w:val="acme:block"/></w:sdtPr><w:sdtContent>' +
+          '<w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>abc</w:t></w:r></w:p>' +
+          '</w:sdtContent></w:sdt><w:p><w:r><w:t>after</w:t></w:r></w:p>'
+      ),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [block] }), reviewModule()],
+    });
+    const cardText = () =>
+      JSON.stringify(editor.getReviewItems().filter((item) => item.kind === 'custom'));
+    expect(cardText()).toContain('abc');
+    const second = editor.surface!.session.paragraphIds()[1]!;
+    editor.surface!.setSelection({
+      anchor: { paragraphId: second, offset: 1 },
+      head: { paragraphId: second, offset: 1 },
+    });
+    editor.surface!.type('Z');
+    expect(cardText()).toContain('aZbc');
+  });
+
+  test('typing that changes a node so its card appears updates the review list', () => {
+    const flagged = defineCustomNode({
+      name: 'flagged',
+      tagPrefix: 'acme',
+      reviewCard: ({ text }) => (text.includes('Z') ? { title: text } : null),
+    });
+    const editor = createDocxEditor({
+      container: document.createElement('div'),
+      document: docx('<w:p><w:r><w:t>before after</w:t></w:r></w:p>'),
+      author: 'Demo Reviewer',
+      modules: [customNodesModule({ nodes: [flagged] }), reviewModule()],
+    });
+    const customItems = () => editor.getReviewItems().filter((item) => item.kind === 'custom');
+    insertCustomNode(editor, flagged, {
+      attrs: {},
+      text: 'abc',
+      lock: false,
+      at: { paragraphId: firstParagraphId(editor), offset: 7 },
+    });
+    expect(customItems()).toHaveLength(0);
+    const inside = { paragraphId: firstParagraphId(editor), offset: 9 };
+    editor.surface!.setSelection({ anchor: inside, head: inside });
+    editor.surface!.type('Z');
+    expect(customItems()).toHaveLength(1);
+  });
+
+  test('in suggesting mode the node is proposed as a tracked insertion', async () => {
+    const editor = mount('<w:p><w:r><w:t>text</w:t></w:r></w:p>', true);
+    expect(editor.setEditingMode('suggesting').ok).toBe(true);
+    const result = insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 4 },
+    });
+    expect(result).toMatchObject({ ok: true, changed: true });
+    const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+    expect(xml).toMatch(/<w:ins w:author="Demo Reviewer" w:date="[^"]+" w:id="\d+"><w:sdt>/);
+    const revisions = editor.getReviewItems().filter((item) => item.kind === 'revision');
+    expect(revisions).toHaveLength(1);
+
+    // A proposed node cannot be rewritten in place: the rewrite would land untracked.
+    const [proposed] = recognizeCustomNodes(editor.surface!.session.part(), [citation]);
+    expect(updateCustomNode(editor, citation, proposed!.nodeId, { text: 'M' }).ok).toBe(false);
+
+    const rejected = editor.surface!.session.applyTreeOps([{ op: 'rejectAllRevisions' }]);
+    expect(rejected).toMatchObject({ committed: true });
+    expect(recognizeCustomNodes(editor.surface!.session.part(), [citation])).toEqual([]);
+    expect(editor.surface!.session.bodyText()).toBe('text');
+  });
+
+  test('removing a proposed node removes the proposal with it', async () => {
+    const editor = mount('<w:p><w:r><w:t>text</w:t></w:r></w:p>', true);
+    expect(editor.setEditingMode('suggesting').ok).toBe(true);
+    insertCustomNode(editor, citation, {
+      attrs: { sourceId: 's1' },
+      text: 'label',
+      at: { paragraphId: firstParagraphId(editor), offset: 4 },
+    });
+    const [proposed] = recognizeCustomNodes(editor.surface!.session.part(), [citation]);
+    expect(removeCustomNode(editor, proposed!.nodeId).ok).toBe(true);
+    const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+    expect(xml).not.toContain('<w:ins');
+    expect(editor.getReviewItems().filter((item) => item.kind === 'revision')).toHaveLength(0);
+  });
+
+  test('typing after a node at the end of a paragraph takes the text formatting', async () => {
+    // The node keeps its own style, bold, which text typed after it must not copy.
+    const node =
+      '<w:sdt><w:sdtPr><w:tag w:val="acme:citation"/><w:lock w:val="contentLocked"/></w:sdtPr>' +
+      '<w:sdtContent><w:r><w:rPr><w:b/></w:rPr><w:t>[1]</w:t></w:r></w:sdtContent></w:sdt>';
+    for (const suggesting of [false, true]) {
+      const editor = mount(
+        `<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>see</w:t></w:r>${node}</w:p>`,
+        true
+      );
+      if (suggesting) expect(editor.setEditingMode('suggesting').ok).toBe(true);
+      const end = { paragraphId: firstParagraphId(editor), offset: 6 };
+      editor.surface!.setSelection({ anchor: end, head: end });
+      expect(editor.snapshot().formatting).toMatchObject({ bold: false, italic: true });
+      editor.surface!.type('X');
+      const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+      expect(xml).toMatch(/<\/w:sdt>(?:<w:ins [^>]*>)?<w:r><w:rPr><w:i\/><\/w:rPr><w:t>X<\/w:t>/);
+      expect(xml.includes('<w:ins ')).toBe(suggesting);
+    }
+  });
+
+  test('the toolbar beside a node at a paragraph start, or alone, shows what typing writes', async () => {
+    const node =
+      '<w:sdt><w:sdtPr><w:tag w:val="acme:citation"/><w:lock w:val="contentLocked"/></w:sdtPr>' +
+      '<w:sdtContent><w:r><w:rPr><w:b/></w:rPr><w:t>[1]</w:t></w:r></w:sdtContent></w:sdt>';
+    const start = mount(`<w:p>${node}<w:r><w:rPr><w:i/></w:rPr><w:t>more</w:t></w:r></w:p>`);
+    const atStart = { paragraphId: firstParagraphId(start), offset: 0 };
+    start.surface!.setSelection({ anchor: atStart, head: atStart });
+    expect(start.snapshot().formatting).toMatchObject({ bold: false, italic: true });
+    const alone = mount(`<w:p>${node}</w:p>`);
+    const after = { paragraphId: firstParagraphId(alone), offset: 3 };
+    alone.surface!.setSelection({ anchor: after, head: after });
+    expect(alone.snapshot().formatting?.bold).not.toBe(true);
+    alone.surface!.type('X');
+    const xml = strFromU8(unzipSync(new Uint8Array(await alone.save()))['word/document.xml']!);
+    expect(xml).toContain('</w:sdt><w:r><w:t>X</w:t></w:r>');
   });
 });

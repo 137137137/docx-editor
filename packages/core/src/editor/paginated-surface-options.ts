@@ -1,3 +1,4 @@
+import type { UnsupportedElementRule } from '../layout/unsupported-content-types.ts';
 import type { ResolvedRevisionMarkup } from '../contracts/revision-markup.ts';
 // What `openPaginated` takes: the options record of the paginated surface.
 //
@@ -125,6 +126,7 @@ export interface PaginatedSurfaceOptions {
    * revision markup paints, whatever the {@link revisionDisplayMode} leaves visible.
    */
   readonly revisionStyles?: RevisionStyles;
+  readonly unsupportedElementRules?: readonly UnsupportedElementRule[];
   readonly revisionMarkup?: ResolvedRevisionMarkup;
   /**
    * The review module's derivation hooks for this surface's session. Absent,

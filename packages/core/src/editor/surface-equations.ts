@@ -1,5 +1,6 @@
 // Atomic Office Math reads and writes for the paginated surface.
 
+import { isUnsupportedComponentTarget } from '../output/unsupported-elements.ts';
 import type { TreeApplyResult, TreeDocxSessionView } from '@docx-editor.dev/core/binding';
 import type { SemanticPosition, SemanticSelection } from '@docx-editor.dev/core/layout';
 import {
@@ -15,11 +16,13 @@ import {
   type OoxmlPart,
   type StoryScope,
   type EquationExpression,
+  type TreeDocOp,
 } from '@docx-editor.dev/core/store';
 import { isElementNode } from './host-realm.ts';
 
-const SUGGESTING_EQUATION_REFUSAL =
-  'equation replacement and removal are not supported in suggesting mode';
+const SUGGESTING_EQUATION_REFUSAL = 'equation replacement is not supported in suggesting mode';
+const SUGGESTING_DISPLAY_REFUSAL =
+  'in suggesting mode, remove the whole equation block rather than one equation';
 const paragraphEquationCache = new WeakMap<OoxmlParagraphNode, readonly SurfaceEquation[]>();
 const sourcePreservingEquations = new WeakSet<SurfaceEquation>();
 
@@ -191,6 +194,8 @@ export interface EquationOpsDeps {
   storyScope(): StoryScope;
   editingMode(): 'edit' | 'suggest' | 'view';
   writeRefusal(op: EquationTreeOp): string | null;
+  /** The ops as suggesting mode writes them: attributed when an author is set. */
+  trackedOps(ops: readonly EquationTreeOp[]): EquationTreeOp[];
   selection(): SemanticSelection;
   selectionMark(): { paragraphId: string; start: number; end: number } | null;
   commit(
@@ -210,9 +215,7 @@ export type EquationCanResult =
       readonly reason: string;
     };
 
-type EquationTreeOp =
-  | { readonly op: 'setMathEquation'; readonly equationId: string; readonly linear: string }
-  | { readonly op: 'removeMathEquation'; readonly equationId: string };
+type EquationTreeOp = TreeDocOp;
 
 /** Surface equation reads and atomic replace/remove writes. */
 export interface EquationOps {
@@ -239,6 +242,7 @@ export function createEquationInteraction(deps: {
   let pressed: { readonly equationId: string; readonly rect: EquationActivation['rect'] } | null =
     null;
   const targetFrom = (value: EventTarget | null): HTMLElement | null => {
+    if (isUnsupportedComponentTarget(value)) return null;
     const view = deps.pagesLayer.ownerDocument.defaultView;
     if (!view || !isElementNode(value)) return null;
     const target = value.closest<HTMLElement>('[data-docx-equation]');
@@ -248,7 +252,7 @@ export function createEquationInteraction(deps: {
     const equation = deps.equationById(equationId);
     if (!equation) return;
     // Pages that are not editable (viewing) still show the popover, with its actions disabled,
-    // but a press there selects nothing, so the toolbar keeps its values.
+    // but the press does not select the equation whole, because nothing there can edit it.
     if (deps.pagesLayer.contentEditable !== 'false') {
       deps.setSelection({
         anchor: { paragraphId: equation.paragraphId, offset: equation.start },
@@ -335,13 +339,25 @@ export function createEquationOps(deps: EquationOpsDeps): EquationOps {
     }
     return null;
   };
-  const transact = (equation: SurfaceEquation, op: EquationTreeOp): boolean => {
+  /** In suggesting mode a removal is a tracked deletion of the equation's one offset. */
+  const removalOps = (equation: SurfaceEquation): EquationTreeOp[] =>
+    deps.editingMode() === 'suggest'
+      ? deps.trackedOps([
+          {
+            op: 'deleteText',
+            paragraphId: equation.paragraphId,
+            start: equation.start,
+            end: equation.end,
+          },
+        ])
+      : [{ op: 'removeMathEquation', equationId: equation.id }];
+  const transact = (equation: SurfaceEquation, ops: readonly EquationTreeOp[]): boolean => {
     let committed = false;
     const after = { paragraphId: equation.paragraphId, offset: equation.start };
     deps.commit(
       () => {
         const result = deps.session.applyTreeOps(
-          [op],
+          [...ops],
           deps.selectionMark(),
           { paragraphId: after.paragraphId, start: after.offset, end: after.offset },
           deps.storyScope()
@@ -356,10 +372,17 @@ export function createEquationOps(deps: EquationOpsDeps): EquationOps {
   const capability = (equationId: string, action: EquationAction): EquationCanResult => {
     const equation = byId(equationId);
     if (!equation) return { ok: false, code: 'notFound', reason: 'no equation with that id' };
-    // `trackedOps` cannot safely wrap an OMML replacement or removal today. Refuse before
-    // `applyTreeOps`, or Suggesting would make the change permanent and unreviewable.
+    // A tracked deletion strikes an equation whole; a REPLACEMENT has no tracked form yet, so
+    // it is refused before `applyTreeOps` rather than made permanent and unreviewable. One
+    // display holds every equation in it at ONE offset, so striking one would strike them all.
     if (deps.editingMode() === 'suggest') {
-      return { ok: false, code: 'unsupported', reason: SUGGESTING_EQUATION_REFUSAL };
+      if (action === 'replace') {
+        return { ok: false, code: 'unsupported', reason: SUGGESTING_EQUATION_REFUSAL };
+      }
+      const shared = equationsIn(equation.paragraphId).filter((e) => e.start === equation.start);
+      if (shared.length > 1) {
+        return { ok: false, code: 'unsupported', reason: SUGGESTING_DISPLAY_REFUSAL };
+      }
     }
     if (action === 'replace' && sourcePreservingEquations.has(equation)) {
       return {
@@ -368,11 +391,11 @@ export function createEquationOps(deps: EquationOpsDeps): EquationOps {
         reason: 'compact linear editing cannot preserve this equation source formatting',
       };
     }
-    const op: EquationTreeOp =
+    const [op] =
       action === 'replace'
-        ? { op: 'setMathEquation', equationId, linear: equation.linear }
-        : { op: 'removeMathEquation', equationId };
-    const reason = deps.writeRefusal(op);
+        ? [{ op: 'setMathEquation', equationId, linear: equation.linear } as const]
+        : removalOps(equation);
+    const reason = op ? deps.writeRefusal(op) : null;
     return reason === null ? { ok: true } : { ok: false, code: 'locked', reason };
   };
   const refuse = (result: Exclude<EquationCanResult, { readonly ok: true }>): false => {
@@ -396,14 +419,14 @@ export function createEquationOps(deps: EquationOpsDeps): EquationOps {
       const allowed = capability(equationId, 'replace');
       if (!allowed.ok) return refuse(allowed);
       if (equation.supported && equation.linear === linear) return true;
-      return transact(equation, { op: 'setMathEquation', equationId, linear });
+      return transact(equation, [{ op: 'setMathEquation', equationId, linear }]);
     },
     removeEquation(equationId) {
       const equation = byId(equationId);
       if (!equation) return false;
       const allowed = capability(equationId, 'remove');
       if (!allowed.ok) return refuse(allowed);
-      return transact(equation, { op: 'removeMathEquation', equationId });
+      return transact(equation, removalOps(equation));
     },
   };
 }

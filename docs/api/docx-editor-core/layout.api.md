@@ -319,7 +319,11 @@ export interface CellBorderBox {
     // (undocumented)
     readonly right: TableBorderSide;
     // (undocumented)
+    readonly tl2br?: TableBorderSide;
+    // (undocumented)
     readonly top: TableBorderSide;
+    // (undocumented)
+    readonly tr2bl?: TableBorderSide;
 }
 
 // @public
@@ -682,6 +686,12 @@ export const createShapedRun: (input: ShapedRun, environmentInput: ShapingEnviro
 
 // @public
 export const createShapingEnvironment: (input: ShapingEnvironmentInput) => ShapingEnvironment;
+
+// @internal
+export function createUnsupportedContentProjector(resolve: UnsupportedContentResolver): {
+    part(part: OoxmlPart): OoxmlPart;
+    view(view: HeadlessDocumentView): HeadlessDocumentView;
+};
 
 // @public
 export interface DeclaredFontSubstitution {
@@ -2974,6 +2984,8 @@ export interface ResolvedCellBorders {
     // (undocumented)
     readonly bottom?: ResolvedTableBorderEdge;
     // (undocumented)
+    readonly diagonals?: readonly TableCellDiagonalRecord[];
+    // (undocumented)
     readonly edgeSegments?: readonly ResolvedTableBorderEdgeSegment[];
     // (undocumented)
     readonly left?: ResolvedTableBorderEdge;
@@ -3714,6 +3726,8 @@ export interface SemanticLayoutOptions {
     readonly numberingIndex?: NumberingIndex;
     readonly pageBottomReserves?: ReadonlyMap<number, number>;
     // @internal
+    readonly pageBottomReservesFollowFlow?: boolean;
+    // @internal
     readonly pageBottomReservesFromPreviousPass?: boolean;
     readonly paragraphLineUnitPt?: number;
     readonly producer?: string;
@@ -4395,6 +4409,7 @@ export interface StyleSpanRecord {
     readonly tabLeaderAdvancePt?: number;
     // (undocumented)
     readonly text: string;
+    readonly unsupported?: UnsupportedContentRecord;
     readonly wrapAdvanceBefore?: number;
 }
 
@@ -4519,6 +4534,30 @@ export interface TableCellContext {
     readonly rows: number;
     // (undocumented)
     readonly tableId: string;
+}
+
+// @public
+export interface TableCellDiagonalRecord {
+    // (undocumented)
+    readonly clipHeight: number;
+    // (undocumented)
+    readonly clipWidth: number;
+    // (undocumented)
+    readonly color: string | null;
+    // (undocumented)
+    readonly cssStyle: 'solid' | 'dashed' | 'dotted';
+    // (undocumented)
+    readonly direction: 'tl2br' | 'tr2bl';
+    // (undocumented)
+    readonly widthPt: number;
+    // (undocumented)
+    readonly x1: number;
+    // (undocumented)
+    readonly x2: number;
+    // (undocumented)
+    readonly y1: number;
+    // (undocumented)
+    readonly y2: number;
 }
 
 // @public
@@ -4719,6 +4758,44 @@ export function tryCreateCanvasMeasurer(options?: CanvasMeasurerOptions): TextMe
 
 // @public
 export function unionLayoutBoxes(boxes: readonly LayoutBox[]): LayoutBox | null;
+
+// @public
+export interface UnsupportedElement {
+    readonly bounds?: LayoutBox;
+    // (undocumented)
+    readonly drawing?: InlineDrawingRecord | AnchoredDrawingRecord;
+    // (undocumented)
+    readonly equation?: EquationSpanRecord;
+    // (undocumented)
+    readonly label: string;
+    // (undocumented)
+    readonly localName: string;
+    // (undocumented)
+    readonly namespaceUri: string | null;
+    // (undocumented)
+    readonly nodeId: string;
+    // (undocumented)
+    readonly ownerPartName: string;
+    // (undocumented)
+    readonly placement: 'inline' | 'block';
+    readonly source: OoxmlElement | null;
+}
+
+// @public
+export interface UnsupportedElementLayout {
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public
+export interface UnsupportedElementRule {
+    // (undocumented)
+    readonly layout?: UnsupportedElementLayout;
+    // (undocumented)
+    readonly match?: (element: UnsupportedElement) => boolean;
+}
 
 // @public
 export class UnsupportedScriptError extends Error {

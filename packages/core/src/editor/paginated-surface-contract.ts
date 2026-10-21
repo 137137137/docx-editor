@@ -1,7 +1,6 @@
+import type { UnsupportedElementRule } from '../layout/unsupported-content-types.ts';
 import type { ResolvedRevisionMarkup } from '../contracts/revision-markup.ts';
-// The paginated surface's public contract owns the types a host programs against.
-// paginated-surface.ts implements and re-exports them, so importers keep one entry point.
-
+// paginated-surface.ts implements and re-exports this public surface contract.
 import type { SurfaceParagraphFormat, ParagraphPropertyEdit } from './paragraph-format-contract.ts';
 import type { TreeApplyResult, TreeDocxSessionView } from '@docx-editor.dev/core/binding';
 import type { BookmarkIndex, SelectionMark } from '@docx-editor.dev/core/store';
@@ -320,16 +319,17 @@ export interface PaginatedSurface {
    * caret-preserving edits (Backspace, Delete, Enter) and IME composition, and is
    * discarded when the caret moves elsewhere or the document is undone. A property the
    * store cannot author is refused at arm time rather than left to poison the keystroke.
+   * Returns the document's refusal reason, or null when the write landed, armed, or did nothing.
    */
-  toggleRunProperty(localName: string, attributes?: Record<string, string>): void;
+  toggleRunProperty(localName: string, attributes?: Record<string, string>): string | null;
   /**
    * SET a run property over the selection, rather than toggling it.
    *
    * Font family, size and colour are values, not switches: picking Arial twice must leave
    * the text in Arial, which a toggle would not. Arms at a collapsed caret on the same
-   * terms as `toggleRunProperty`.
+   * terms as `toggleRunProperty`, and returns a refusal the same way.
    */
-  setRunProperty(localName: string, attributes?: Record<string, string>): void;
+  setRunProperty(localName: string, attributes?: Record<string, string>): string | null;
   /**
    * Set a property on every paragraph the selection touches — alignment, style, spacing.
    *
@@ -592,6 +592,7 @@ export interface PaginatedSurface {
    */
   setRevisionMarkup(settings: ResolvedRevisionMarkup): void;
   setRevisionStyles(colors: RevisionStyles | undefined): void;
+  setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
   /** Toggle paragraph-end furniture without layout or document changes. */
   setShowParagraphMarks(show: boolean): void;
   /**

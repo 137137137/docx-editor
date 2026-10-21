@@ -37,6 +37,10 @@ TIFF, EMF, and WMF paint when conversion to a validated raster succeeds. The ori
 
 SVG is painted through an `<img>`, which puts the browser in secure static mode: scripts in the file never run and external references in it are never fetched. Its intrinsic size is read from `width`/`height`/`viewBox` for reset-to-natural-size; layout always uses the authored `wp:extent`. An SVG whose root element cannot be read renders as a placeholder rather than inferring missing dimensions.
 
+Inline pictures rotated by 90 or 270 degrees reserve their rotated width and height before effect margins. Text wrapping, pagination, and caret positions use these dimensions. Saving preserves the authored extent and rotation.
+
+Header drawings positioned relative to the top margin use the physical sheet top as their origin. For these drawings outside table cells, top-and-bottom wrapping clears header text from the same origin.
+
 ## Reading selection state
 
 Use the canonical read model shared by snapshot and imperative API:
@@ -174,6 +178,8 @@ A line break (`w:br`) with `w:clear` restarts the text after it on the next line
 
 Objects with no text wrapping, in front of text or behind it, are not cleared. If the restart line does not fit above the bottom margin, it starts on the next page or column. The value `none` lays out as an ordinary line break, and the attribute is kept when you save.
 
+A positioned table keeps its text wrap region when nearby pictures require immediate placement. Body text clears that region.
+
 An inline picture flows like a word. If it does not fit before a floating picture, it continues past the floating picture on the same line. Text after an inline picture starts at the picture's edge, and a click past the picture places the caret after it. A click in the space that a floating picture leaves between two pieces of content places the caret between them.
 
 ## Accessibility
@@ -186,6 +192,65 @@ Alt text uses `@descr`, then `@title`; `@name` is never announced. A picture wit
 - Embedded bytes are signature-checked and dimension-capped before decode.
 - Hyperlinks on drawings (`a:hlinkClick`) require an explicit gesture and pass through `sanitizeHref`.
 - Optional explicit download-and-embed path for external targets is user-initiated only (bounded size/content-type).
+
+## Custom unsupported-content components
+
+Register a component for unsupported inline or block content, or an existing drawing or equation fallback. Match the original OOXML namespace and element name without a fixed list of element kinds. Custom rendering preserves the canonical source and saved DOCX content.
+
+<FrameworkTabs>
+<Framework value="react">
+
+```tsx
+<DocxEditor document={bytes}>
+  <DocxEditor.UnsupportedElement
+    match={(element) => element.namespaceUri === 'urn:my-widgets'}
+    layout={{ width: 180, height: 48 }}
+  >
+    {({ element }) => <MyUnsupportedContent element={element} />}
+  </DocxEditor.UnsupportedElement>
+</DocxEditor>
+```
+
+Return `null`, `false`, an empty fragment or array, or whitespace to keep the built-in fallback. The check reads only the value that your function returns. A child component that renders `null` replaces the fallback with an empty box. The same declaration works inside `DocxEditor.Root` beside `DocxEditor.Content`.
+
+</Framework>
+<Framework value="vue">
+
+```vue
+<DocxEditor :document="bytes">
+  <DocxEditor.UnsupportedElement
+    :match="(element) => element.namespaceUri === 'urn:my-widgets'"
+    :layout="{ width: 180, height: 48 }"
+  >
+    <template #default="{ element }">
+      <MyUnsupportedContent :element="element" />
+    </template>
+  </DocxEditor.UnsupportedElement>
+</DocxEditor>
+```
+
+A default slot that renders nothing, such as a slot whose `v-if` is false, keeps the built-in fallback. The same declaration works inside `DocxEditor.Root` beside `DocxEditor.Content`.
+
+</Framework>
+</FrameworkTabs>
+
+Both packages export `UnsupportedElement` with these fields:
+
+- `nodeId` and `ownerPartName` identify the source element and its document part.
+- `namespaceUri` and `localName` identify the OOXML element.
+- `source` exposes the read-only canonical source. Treat document values as untrusted data.
+- `placement` is `inline` or `block`, as determined by the source position.
+- `label` contains the default fallback text.
+- Optional `drawing` and `equation` records provide engine metadata.
+- Optional `bounds` describes the box after layout. Use source metadata for matching before pagination.
+
+Omit `match` for a catch-all. The first mounted matching declaration wins. Prop updates retain priority. Removing and remounting a declaration gives it a later priority. Use matchers that do not overlap, or keep declarations mounted and change their matchers to disable them temporarily. An empty result keeps the fallback; it does not try the next declaration.
+
+`layout` reserves width and height in document points before pagination for opaque content. Defaults are 120 × 24 points for inline content and 240 × 96 points for blocks. Dimensions must be finite, positive, and at most 100,000 points. Existing drawing and equation fallbacks retain their engine layout boxes. Unmatched opaque content retains its invisible behavior.
+
+Components retain declaration-local framework context and local state across same-page repaints. They can unmount when an occurrence leaves its page, is virtualized, or the document or registration changes. Keep durable annotations in application state. Controls own their keyboard, clipboard, context-menu, and drop events. Fit controls within the reserved box, or use scrolling or an external panel.
+
+Properties, metadata, and private payloads inside owning drawing, equation, and field projections are not independent content occurrences. This presentation API does not implement native chart, SmartArt, or DrawingML rendering. Standalone low-level painters without a source lookup can expose `source: null`.
 
 ## Drawing limits
 

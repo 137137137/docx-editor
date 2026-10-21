@@ -51,6 +51,8 @@ const TRACKED_WRAPPER_OPS: ReadonlySet<string> = new Set([
   'insertHardBreak',
   'insertPageBreak',
   'insertPageField',
+  'insertComplexField',
+  'insertEquation',
   'insertDrawing',
   'deleteText',
   'setParagraphMarkRevision', // Mints from the same counter, so it does not reset it.

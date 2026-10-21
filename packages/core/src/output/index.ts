@@ -38,6 +38,14 @@ export {
 } from './semantic-selection-overlay.ts';
 
 export {
+  observeUnsupportedElements,
+  type UnsupportedElement,
+  type UnsupportedElementHost,
+  type UnsupportedElementLayout,
+  type UnsupportedElementRule,
+} from './unsupported-elements.ts';
+
+export {
   collectPageChangeBars,
   type PageChangeBars,
   type ChangeBarsMode,

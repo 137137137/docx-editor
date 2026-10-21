@@ -46,6 +46,9 @@ export interface LumTransfer {
 export function lumTransfer(brightPercent: number, contrastPercent: number): LumTransfer | null;
 
 // @public
+export function observeUnsupportedElements(container: HTMLElement, listener: (hosts: readonly UnsupportedElementHost[]) => void): () => void;
+
+// @public
 export interface OverlayRect {
     readonly activeBackground?: string;
     readonly className?: string;
@@ -113,6 +116,10 @@ export interface PaintOptions {
     readonly scale?: number;
     readonly shadeFormFields?: boolean;
     readonly showParagraphMarks?: boolean;
+    // (undocumented)
+    readonly unsupportedOwnerPartName?: (nodeId: string) => string;
+    // (undocumented)
+    readonly unsupportedSource?: (nodeId: string, ownerPartName?: string) => OoxmlElement | null;
 }
 
 // @public
@@ -153,6 +160,58 @@ export interface SelectionOverlayOptions {
     readonly className?: string;
     readonly pageOffsetX?: ReadonlyMap<number, number>;
     readonly scale: number;
+}
+
+// @public
+export interface UnsupportedElement {
+    readonly bounds?: LayoutBox;
+    // (undocumented)
+    readonly drawing?: InlineDrawingRecord | AnchoredDrawingRecord;
+    // (undocumented)
+    readonly equation?: EquationSpanRecord;
+    // (undocumented)
+    readonly label: string;
+    // (undocumented)
+    readonly localName: string;
+    // (undocumented)
+    readonly namespaceUri: string | null;
+    // (undocumented)
+    readonly nodeId: string;
+    // (undocumented)
+    readonly ownerPartName: string;
+    // (undocumented)
+    readonly placement: 'inline' | 'block';
+    readonly source: OoxmlElement | null;
+}
+
+// @public
+export interface UnsupportedElementHost {
+    // (undocumented)
+    readonly element: HTMLElement;
+    // (undocumented)
+    readonly fallback: HTMLElement;
+    readonly key: string;
+    setCustomized(custom: boolean): void;
+    // (undocumented)
+    readonly slot: HTMLElement;
+    // (undocumented)
+    readonly unsupported: UnsupportedElement;
+}
+
+// @public
+export interface UnsupportedElementLayout {
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public
+export interface UnsupportedElementRule {
+    // (undocumented)
+    readonly layout?: UnsupportedElementLayout;
+    // (undocumented)
+    readonly match?: (element: UnsupportedElement) => boolean;
 }
 
 ```

@@ -31,6 +31,13 @@ export type CollaborationUndoGroupErrorCode =
   | 'editor-attached'
   | 'collaboration-session-destroyed';
 
+const UNDO_GROUP_REMEDIES: Readonly<Record<CollaborationUndoGroupErrorCode, string>> = {
+  'undo-group-already-open': 'End the open group, or use another session for this operation.',
+  'editor-attached':
+    'Use editor.beginHistoryGroup() in the editor, or a separate session for the agent.',
+  'collaboration-session-destroyed': 'Join the room with a new session.',
+};
+
 /**
  * Thrown by `beginUndoGroup` when the session cannot open a group. Branch on `code`.
  * @public
@@ -40,7 +47,7 @@ export class CollaborationUndoGroupError extends Error {
     /** Stable refusal code. */
     readonly code: CollaborationUndoGroupErrorCode
   ) {
-    super(code);
+    super(`${code}: ${UNDO_GROUP_REMEDIES[code]}`);
     this.name = 'CollaborationUndoGroupError';
   }
 }
@@ -81,14 +88,16 @@ export class UndoGroups {
     return this.current !== null;
   }
 
-  begin(destroyed: () => boolean, editorAttached: boolean): CollaborationUndoGroup {
+  begin(destroyed: () => boolean, editorAttached: () => boolean): CollaborationUndoGroup {
     if (destroyed()) throw new CollaborationUndoGroupError('collaboration-session-destroyed');
-    if (editorAttached) throw new CollaborationUndoGroupError('editor-attached');
+    if (editorAttached()) throw new CollaborationUndoGroupError('editor-attached');
     if (this.current !== null) throw new CollaborationUndoGroupError('undo-group-already-open');
     // A journal still queued belongs to the writes before the group, not to its first step.
     this.flush();
-    // The flush runs host code (a status listener can destroy the room), so check again.
+    // The flush runs host code, which can change the session or open another group.
     if (destroyed()) throw new CollaborationUndoGroupError('collaboration-session-destroyed');
+    if (editorAttached()) throw new CollaborationUndoGroupError('editor-attached');
+    if (this.current !== null) throw new CollaborationUndoGroupError('undo-group-already-open');
     const token = {};
     this.current = token;
     this.capture.pin(Symbol('collaboration-undo-group'));

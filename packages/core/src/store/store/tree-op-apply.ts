@@ -76,6 +76,7 @@ import {
   withPropertyChangeRecord,
 } from './tree-op-tracked-properties.ts';
 import { nextRevisionId } from './tree-op-revision-ids.ts';
+import { build, revisionAttributes } from './tree-op-tracked-builders.ts';
 import {
   isValidParaId,
   mintParaId,
@@ -131,13 +132,16 @@ import {
 import {
   applySetListLevel,
   applySetParagraphMarkProperties,
-  withoutSectionMark,
   applySetListNumbering,
   applySetParagraphTabStops,
   applySetSectionMark,
   applySetSectionProperties,
 } from './tree-op-section.ts';
 import { pageFieldContentBuilders, pageFieldModelLength } from './tree-op-fields.ts';
+import { applyInsertComplexField } from './tree-op-field-insert.ts';
+import { applySetFieldResult } from './tree-op-field-result-write.ts';
+import { withoutOriginalMark } from './tree-op-split-mark.ts';
+import { applyInsertEquation } from './tree-op-equation-insert.ts';
 import { applyTrackedContentControl } from './tracked-content-control-insert.ts';
 import { applyInsertContentControl as applyAutomationInsertContentControl } from './tree-op-content-control-insert.ts';
 import {
@@ -150,11 +154,13 @@ import {
 import {
   insertionDestination,
   fieldInsertionEndAt,
+  paragraphOffsetIndex,
   runsUnder,
   segmentAncestryNodeId,
   segmentsOf,
   type Segment,
 } from './tree-op-segments.ts';
+import { formattingRunBesideRestrictedControl } from './tree-op-restricted-edge.ts';
 import {
   applyInsertToc,
   applyReplaceTocResult,
@@ -317,6 +323,8 @@ function applyValidatedTreeOp(part: OoxmlPart, op: TreeDocOp, options?: EditOpti
   if (op.op === 'rewriteTocPageNumbers') return applyRewriteTocPageNumbers(part, op, options);
   if (isFieldResultOp(op)) return applyFieldResultOp(part, op, options);
   if (op.op === 'setFieldCode') return applySetFieldCode(part, op, options);
+  if (op.op === 'setFieldResult') return applySetFieldResult(part, op, options);
+  if (op.op === 'insertEquation') return applyInsertEquation(part, op, options);
   if (op.op === 'joinParagraphs') return applyJoin(part, op.firstId, op.secondId, options);
   if ((op.op === 'setHyperlinkTarget' || op.op === 'removeHyperlink') && op.range) {
     return applyPartialHyperlink(part, op, options);
@@ -479,6 +487,8 @@ function applyValidatedTreeOp(part: OoxmlPart, op: TreeDocOp, options?: EditOpti
         options,
         nextId
       );
+    case 'insertComplexField':
+      return applyInsertComplexField(part, paragraph, op, options);
     case 'insertPageField': {
       // ONE builder list per field, shared by the tracked and untracked arms — the same
       // rule the tab/break ops state, so suggesting mode cannot insert a different field
@@ -821,8 +831,19 @@ function applyInsertContent(
     // The left run still wins its formatting. A minted run at a wrapper's leading edge sits
     // right after the preceding run, so typing there inherits that run's properties exactly
     // as it does at an ordinary boundary; a bare run came out unformatted instead.
+    // Beside a control that typing cannot enter, the run outside it wins instead.
+    const besideControl = formattingRunBesideRestrictedControl(
+      paragraph,
+      offset,
+      paragraphOffsetIndex(paragraph)
+    );
     const leftSegment = findLast(segments, (segment) => segment.end === offset);
-    const leftRun = leftSegment ? findNode(part, leftSegment.runId) : null;
+    const leftRun =
+      besideControl !== undefined
+        ? besideControl
+        : leftSegment
+          ? findNode(part, leftSegment.runId)
+          : null;
     const inheritedProperties =
       leftRun && leftRun.kind === 'run'
         ? fieldInsertionEndAt(paragraph, offset)
@@ -1641,6 +1662,7 @@ function applyInsertInlineContentControl(
       readonly xpath: string;
       readonly storeItemId: string;
     };
+    readonly revision?: RevisionAttributionInput;
   },
   options?: EditOptions
 ): TreeOpResult {
@@ -1696,11 +1718,17 @@ function applyInsertInlineContentControl(
   const inheritedProperties =
     anchorRun && anchorRun.kind === 'run' ? runPropertiesNodeOf(anchorRun) : null;
 
-  const control = inlineContentControlElement(
+  const built = inlineContentControlElement(
     nextId,
     op,
     inheritedProperties ? remintClone(inheritedProperties, nextId) : null
   );
+  // A proposed control is one tracked insertion: the whole `w:sdt` inside a `w:ins`, so a
+  // reject takes the control with its text and an accept keeps it.
+  const revisionId = op.revision ? nextRevisionId(part)() : '';
+  const control = op.revision
+    ? build(nextId(), 'revisionInsert', 'ins', revisionAttributes(revisionId, op.revision), [built])
+    : built;
   const pPr = paragraphPropertiesNodeOf(paragraph);
   const children = [...(pPr ? [pPr] : []), ...before, control, ...after];
   return fromEdit(replaceChildren(part, paragraph.id, children, options), effect);
@@ -2544,8 +2572,9 @@ function applySplit(
   // inserting a fresh mark before the existing one, so the original mark — and the
   // section boundary it carries — stays after ALL the paragraph's content. Cloning it
   // onto both halves minted a phantom section (and a spurious page break) on every
-  // Enter in a section's last paragraph.
-  const headPPr = pPr ? withoutSectionMark(pPr) : undefined;
+  // Enter in a section's last paragraph. The mark's own revisions stay on the tail too
+  // (`tree-op-split-mark.ts`).
+  const headPPr = pPr ? withoutOriginalMark(pPr) : undefined;
   // The HEAD keeps the original paragraph's `w14:paraId` (it is spread below); the tail
   // is the new paragraph and gets a fresh deterministic mint, exactly as Word assigns a
   // new id to the paragraph an Enter creates. Seeded by (head id, offset) so one
@@ -2887,8 +2916,9 @@ function applySplitMany(
 
   // A `w:sectPr` in the mark belongs to the LAST piece only — the original mark ends up
   // after all the paragraph's content, exactly as the single-split rule keeps it on the
-  // tail. Duplicating it minted one phantom section per pasted line.
-  const strippedPPr = pPr ? withoutSectionMark(pPr) : undefined;
+  // tail. Duplicating it minted one phantom section per pasted line. The mark's own
+  // revisions stay on the last piece for the same reason (`tree-op-split-mark.ts`).
+  const strippedPPr = pPr ? withoutOriginalMark(pPr) : undefined;
   // Tail `w14:paraId`s, minted in DESCENDING piece order: the equivalent sequence of
   // single splits runs last-offset-first, so its used-set grows from the last tail
   // backwards. Mirroring that order (including how a repeated offset's seed collision

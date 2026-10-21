@@ -27,7 +27,8 @@ import {
   type FormattingDisplayMode,
   type FormattingRevisionAuthorFilter,
 } from './formattable-runs.ts';
-import { segmentsOf } from './tree-op-segments.ts';
+import { paragraphOffsetIndex, segmentsOf } from './tree-op-segments.ts';
+import { formattingRunBesideRestrictedControl } from './tree-op-restricted-edge.ts';
 import {
   containerIsComplexScript,
   withComplexScriptCompanions,
@@ -374,6 +375,13 @@ export function formattingRunAt(
   authorFilter?: FormattingRevisionAuthorFilter
 ): OoxmlNode | null {
   if (paragraph.kind !== 'paragraph') return null;
+  // Beside a control that typing cannot enter, the run the store will copy, whatever the view.
+  const beside = formattingRunBesideRestrictedControl(
+    paragraph,
+    offset,
+    paragraphOffsetIndex(paragraph)
+  );
+  if (beside !== undefined) return beside;
   const ranges = runAddressRanges(paragraph);
   let left: OoxmlNode | null = null;
   let right: OoxmlNode | null = null;
@@ -384,6 +392,23 @@ export function formattingRunAt(
     if (!right && range.start <= offset && offset < range.end) right = run;
   }
   return left ?? right;
+}
+
+/**
+ * Where text typed at `offset` beside a control that typing cannot enter takes its formatting
+ * from, for a reader that resolves formatting by offset, such as the toolbar: the offsets of
+ * the source run, `null` when the text gets no direct formatting, or `undefined` when the
+ * ordinary rule applies. See `formattingRunBesideRestrictedControl`.
+ */
+export function formattingRangeBesideRestrictedControl(
+  paragraph: OoxmlNode,
+  offset: number
+): { readonly start: number; readonly end: number } | null | undefined {
+  if (paragraph.kind !== 'paragraph') return undefined;
+  const offsets = paragraphOffsetIndex(paragraph);
+  const run = formattingRunBesideRestrictedControl(paragraph, offset, offsets);
+  if (!run) return run;
+  return offsets.spanOf(run) ?? undefined;
 }
 
 function withMultiSettingsKept(

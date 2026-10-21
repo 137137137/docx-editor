@@ -3,6 +3,9 @@ import { validateSetLegacyDropdown } from './legacy-dropdown-fields.ts';
 import { validateBookmarkOp } from './tree-op-bookmarks.ts';
 import { validateHyperlinkRange } from './tree-op-hyperlink-range.ts';
 import { validateSetFieldCode } from './tree-op-field-code.ts';
+import { validateFieldInsertion } from './tree-op-field-insert.ts';
+import { validateSetFieldResult } from './tree-op-field-result-write.ts';
+import { validateInsertEquation } from './tree-op-equation-insert.ts';
 import { validateTableAuthoring } from './tree-op-table-batch.ts';
 import { validateTableProperties } from './tree-op-table-authoring.ts';
 import { validateCommitTextFormField } from './tree-op-field-results.ts';
@@ -35,6 +38,8 @@ import {
   rejectContentEdit,
   nodeTouchesContentRestriction,
   validateRemoveContentControl,
+  controlsStruckWhole,
+  enclosingContentLockRefusal,
   validateSetContentControlValue,
 } from './tree-op-validate-controls.ts';
 import {
@@ -329,6 +334,7 @@ export function validateTreeOp(
       }
       if (op.lock !== undefined && !CONTENT_CONTROL_LOCKS.has(op.lock)) return 'invalidArgs';
     }
+    if (op.op === 'removeContentControl') return enclosingContentLockRefusal(part, control.id);
     return null;
   }
   if (op.op === 'insertContentControl') return validateInsertContentControl(part, op);
@@ -411,6 +417,8 @@ export function validateTreeOp(
   }
   if (op.op === 'commitTextFormField') return validateCommitTextFormField(part, op);
   if (op.op === 'setFieldCode') return validateSetFieldCode(part, op);
+  if (op.op === 'setFieldResult') return validateSetFieldResult(part, op);
+  if (op.op === 'insertEquation') return validateInsertEquation(part, op);
   if (op.op === 'setTextFormFieldDefault') return validateTextFormFieldDefault(part, op);
   if (op.op === 'setLegacyDropdown') return validateSetLegacyDropdown(part, op);
   if (op.op === 'setLegacyCheckbox') return validateSetLegacyCheckbox(part, op);
@@ -762,26 +770,9 @@ export function validateTreeOp(
       if (splitsSurrogate(paragraph, op.offset)) return 'splits-surrogate-pair';
       return rejectContentEdit(part, paragraph, op.offset, op.offset);
     }
-    case 'insertPageField': {
-      if (!Number.isInteger(op.offset) || op.offset < 0 || op.offset > length) {
-        return 'offset-out-of-range';
-      }
-      if (splitsSurrogate(paragraph, op.offset)) return 'splits-surrogate-pair';
-      if (
-        op.field !== 'PAGE' &&
-        op.field !== 'NUMPAGES' &&
-        op.field !== 'SECTIONPAGES' &&
-        op.field !== 'PAGE_X_OF_Y'
-      ) {
-        return 'invalidArgs';
-      }
-      // `CT_TrackChange` makes `@w:author` required, so a tracked variant with an empty one
-      // would serialize a proposal no reader can attribute or resolve.
-      if (op.revision !== undefined && invalidRevisionAttribution(op.revision)) {
-        return 'invalid-property-value';
-      }
-      return rejectContentEdit(part, paragraph, op.offset, op.offset);
-    }
+    case 'insertPageField':
+    case 'insertComplexField':
+      return validateFieldInsertion(part, paragraph, length, op);
     case 'splitParagraph': {
       if (!Number.isInteger(op.offset) || op.offset < 0 || op.offset > length) {
         return 'offset-out-of-range';
@@ -830,7 +821,10 @@ export function validateTreeOp(
         const refusal = coveredTextFormDefinitionRefusal(part, paragraph, op.start, op.end);
         if (refusal) return refusal;
       }
-      return rejectContentEdit(part, paragraph, op.start, op.end);
+      const struck = op.revision && controlsStruckWhole(part, paragraph, op.start, op.end);
+      return rejectContentEdit(part, paragraph, op.start, op.end, {
+        struckWhole: struck || undefined,
+      });
     }
     case 'setRunProperties': {
       if (!Number.isInteger(op.start) || !Number.isInteger(op.end)) return 'invalid-range';
@@ -871,6 +865,9 @@ export function validateTreeOp(
         return 'invalid-property-value';
       }
       if (op.dataBinding !== undefined && !isAuthorableDataBinding(op.dataBinding)) {
+        return 'invalid-property-value';
+      }
+      if (op.revision !== undefined && invalidRevisionAttribution(op.revision)) {
         return 'invalid-property-value';
       }
       return null;

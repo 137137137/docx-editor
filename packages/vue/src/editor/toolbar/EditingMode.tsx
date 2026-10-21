@@ -120,15 +120,15 @@ export const ToolbarEditingMode = defineComponent({
 
     watch(open, (isOpen, _, onCleanup) => {
       if (!isOpen) return;
-      const onMouseDown = (event: MouseEvent) => {
+      const onOutsidePointerDown = (event: PointerEvent) => {
         const root = rootRef.value;
         if (root && isDomNode(event.target) && root.contains(event.target)) return;
         open.value = false;
       };
       const doc = hostDocumentOf(rootRef.value);
-      doc.addEventListener('mousedown', onMouseDown, true);
+      doc.addEventListener('pointerdown', onOutsidePointerDown, true);
       onCleanup(() => {
-        doc.removeEventListener('mousedown', onMouseDown, true);
+        doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
       });
     });
     // Escape through the shared rule: a host input keeps its own Escape.

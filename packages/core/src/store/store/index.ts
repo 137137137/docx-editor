@@ -214,6 +214,9 @@ export { materializeGlossaryPlaceholders } from './placeholder-materialize.ts';
 export { formsProtectionEnabled, sectionProtectsForms } from './tree-op-content-controls.ts';
 
 export type { InsertTextOp, DeleteTextOp } from './text-edit-op-types.ts';
+export type { InsertComplexFieldOp, InsertPageFieldOp } from './tree-op-field-insert.ts';
+export type { SetFieldResultOp } from './tree-op-field-result-write.ts';
+export type { InsertEquationOp } from './tree-op-equation-insert.ts';
 export type { SetTextFormFieldDefaultOp } from './text-form-fields.ts';
 
 export { type TextFormFieldOptions, type TextFormFieldType } from './text-form-field-options.ts';

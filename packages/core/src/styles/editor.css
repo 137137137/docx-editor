@@ -1497,6 +1497,23 @@ a.docx-hyperlink:focus-visible {
   color: var(--doc-text-muted, #6b7280);
 }
 
+:where(.docx-unsupported-slot) {
+  font: 11px/1.3 var(--doc-font-ui, system-ui, sans-serif);
+  white-space: normal;
+}
+
+.docx-drawing-placeholder-card[data-docx-customized] {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.docx-drawing-placeholder-card[data-docx-customized] > .docx-unsupported-slot {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .docx-drawing-placeholder-label {
   font: 11px/1.3 var(--doc-font-ui, system-ui, sans-serif);
   text-align: center;
@@ -1520,8 +1537,8 @@ a.docx-hyperlink:focus-visible {
   image-orientation: from-image;
 }
 
-.docx-editor.dark .docx-drawing-placeholder-card,
-.dark .docx-drawing-placeholder-card {
+.docx-editor.dark .docx-drawing-placeholder-card:not([data-docx-customized]),
+.dark .docx-drawing-placeholder-card:not([data-docx-customized]) {
   background: var(--doc-surface-muted, #2a2a2a);
   border-color: var(--doc-border, #404040);
   color: var(--doc-text-muted, #a3a3a3);
@@ -3355,11 +3372,8 @@ a.docx-hyperlink:focus-visible {
   cursor: default;
 }
 
-/* Viewing places no caret, so the body shows the arrow too. Links keep their pointer:
- * `a.docx-hyperlink` sets it on itself. Text stays `user-select: text`, because the browser
- * paints the highlight of a selection the host sets (a find match); the surface refuses the
- * reader's own selections in `selectstart` instead. */
-.docx-paginated-surface--viewing .docx-page-content,
+/* Viewing selects body text, so the body keeps the I-beam. Text boxes are not entered in
+ * viewing, so they show the arrow. */
 .docx-paginated-surface--viewing .docx-drawing-textbox {
   cursor: default;
 }
@@ -5113,28 +5127,15 @@ a.docx-hyperlink:focus-visible {
 
 /* Once the opening document has mounted and lays out its remaining pages, the engine marks
    its container for exactly that phase. The overlay steps aside, so the scroll container
-   scrolls. The pages show muted and take no pointer input, and the indicator sits on the
-   FIRST PAGE (`.docx-opening-indicator`), so it scrolls with the document instead of
-   floating over it. */
+   scrolls and the pages take input. The indicator sits in a band BELOW THE LAST LAID-OUT
+   PAGE (`.docx-opening-indicator`), so it scrolls with the document instead of floating
+   over it. */
 :where(:has([data-docx-opening-preview])) > .docx-editor__loading--overlay {
   display: none;
 }
 
-[data-docx-opening-preview] .docx-pages {
-  pointer-events: none;
-}
-
-[data-docx-opening-preview] .docx-page::before {
-  position: absolute;
-  inset: 0;
-  z-index: var(--doc-z-overlay);
-  background: color-mix(in srgb, var(--doc-page-bg-rendered) 55%, transparent);
-  content: '';
-}
-
-/* The loading indicator over the first page: a real element the engine positions on the
-   page's own box, so a host can render its own content into it. Only its content takes
-   pointer input, so a host can offer a button there. */
+/* A real element the engine positions below the laid-out pages, so a host can render its own
+   content into it. Only its content takes pointer input, so a host can offer a button there. */
 .docx-opening-indicator {
   position: absolute;
   z-index: var(--doc-z-overlay);

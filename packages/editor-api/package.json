@@ -1,6 +1,6 @@
 {
   "name": "@docx-editor.dev/editor-api",
-  "version": "2.31.0",
+  "version": "2.32.0",
   "description": "Document automation for DOCX: a batching object model that drives a document from a server or from an editor already open in a page",
   "sideEffects": false,
   "engines": {
@@ -20,12 +20,20 @@
       "import": "./dist/browser.mjs",
       "require": "./dist/browser.js"
     },
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.mjs",
+      "require": "./dist/agent.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "browser": [
         "./dist/browser.d.ts"
+      ],
+      "agent": [
+        "./dist/agent.d.ts"
       ]
     }
   },
@@ -84,6 +92,6 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@docx-editor.dev/core": "~2.31.0"
+    "@docx-editor.dev/core": "~2.32.0"
   }
 }

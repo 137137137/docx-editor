@@ -1,3 +1,4 @@
+import type { UnsupportedElementRule } from '../layout/unsupported-content-types.ts';
 import type {
   RevisionMarkupOptions,
   RevisionMarkupChromeHandlers,
@@ -142,6 +143,8 @@ export interface DocxEditorConfig {
    * the proposed view still marks surviving insertions.
    */
   revisionStyles?: RevisionStyles;
+  /** Ordered unsupported-content registrations; the first matching rule reserves a layout box. */
+  unsupportedElementRules?: readonly UnsupportedElementRule[];
   /** Initial local revision presentation and tracking preferences. */
   revisionMarkup?: RevisionMarkupOptions;
   /** Initial review projection. Markup modes require a review module. */
@@ -582,6 +585,8 @@ export interface DocxEditorInstance extends Editor {
    * of calling it. Call it directly from headless and non-React hosts.
    */
   setRevisionStyles(styles: RevisionStyles): void;
+  /** Replace registrations while preserving document edits and undo history. */
+  setUnsupportedElementRules(rules: readonly UnsupportedElementRule[]): void;
   /** Merge local preferences and emit revisionMarkupChange after a change.
    * Invalid settings throw TypeError without changing the previous settings.
    */

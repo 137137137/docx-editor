@@ -138,17 +138,16 @@ export function ToolbarEditingMode({ className, hidden }: ToolbarEditingModeProp
 
   useEffect(() => {
     if (!open) return undefined;
-    const onMouseDown = (event: MouseEvent): void => {
+    const onOutsidePointerDown = (event: PointerEvent): void => {
       const root = rootRef.current;
       if (root && isDomNode(event.target) && root.contains(event.target)) return;
       setOpen(false);
     };
-    // Capture, like the link popover: the surface prevents default on its own pointer
-    // handling, so a bubbling listener never sees a click that lands on the pages.
+    // Capture before the surface cancels compatibility mouse events or stops propagation.
     const doc = hostDocumentOf(rootRef.current);
-    doc.addEventListener('mousedown', onMouseDown, true);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
     return () => {
-      doc.removeEventListener('mousedown', onMouseDown, true);
+      doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
     };
   }, [open]);
   // Escape through the shared rule: a host input keeps its own Escape.

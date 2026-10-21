@@ -402,14 +402,14 @@ function createColorSplit(config: ColorSplitConfig): ToolbarColorSplitComponent 
 
       watch(open, (isOpen, _, onCleanup) => {
         if (!isOpen) return;
-        const onMouseDown = (event: MouseEvent) => {
+        const onOutsidePointerDown = (event: PointerEvent) => {
           const root = rootRef.value;
           if (root && isDomNode(event.target) && root.contains(event.target)) return;
           open.value = false;
         };
         const doc = hostDocumentOf(rootRef.value);
-        doc.addEventListener('mousedown', onMouseDown);
-        onCleanup(() => doc.removeEventListener('mousedown', onMouseDown));
+        doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+        onCleanup(() => doc.removeEventListener('pointerdown', onOutsidePointerDown, true));
       });
 
       const apply = (value: string) => {

@@ -1,3 +1,4 @@
+import type { UnsupportedContentRecord } from './unsupported-content.ts';
 // The unit layout measures: one run of text with everything paint will need to draw it.
 //
 // A "piece" is what the paragraph walk emits and `paragraph-flow.ts` breaks into lines. It is
@@ -185,6 +186,8 @@ export interface FieldAwarePiece {
    * learns it carries a tracked change (the margin bar reads it; see #479).
    */
   readonly anchoredAtom?: true;
+  /** Zero-model-width component geometry for opaque content. */
+  readonly unsupported?: UnsupportedContentRecord;
   /** Bounded paragraph-level OMML projection occupying one UTF-16 model unit. */
   readonly equation?: OmmlEquationProjection;
   /**
@@ -368,6 +371,7 @@ export interface PieceEmitExtras {
   readonly inlineDrawing?: InlineDrawingLayoutInput;
   readonly anchoredAtom?: true;
   readonly equation?: FieldAwarePiece['equation'];
+  readonly unsupported?: FieldAwarePiece['unsupported'];
   /**
    * Attribution to attach INSTEAD of the walk's live stack, for text emitted after the walk
    * has left the wrapper that owns it — an atomic field's flushed result is the case. Passing
@@ -492,10 +496,12 @@ export interface PendingFieldProjection {
   capturedResultStyleIsDirectional?: boolean;
   /** Cached result text (for inert display or demotion flush). */
   cachedText: string;
+  /** Drawing placeholders in the cached display, without additional atomic model units. */
+  cachedDrawings?: import('./field-result-drawings.ts').CachedFieldDrawing[];
   /**
    * True once result-phase content the current display mode KEEPS was seen — visible or
-   * vanish-hidden. Only content with model text sets it (result text, tab / break, `w:sym`);
-   * drawings, `w:ptab` and note references never do.
+   * vanish-hidden. Result text, tab / break, `w:sym`, and drawings set it;
+   * `w:ptab` and note references never do.
    *
    * `cachedText` alone cannot tell "the file cached no result" from "the file cached one and
    * hid it": both leave it empty. Synthesis (MACROBUTTON / GOTOBUTTON display text, the
