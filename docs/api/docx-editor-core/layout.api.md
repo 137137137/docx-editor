@@ -319,7 +319,11 @@ export interface CellBorderBox {
     // (undocumented)
     readonly right: TableBorderSide;
     // (undocumented)
+    readonly tl2br?: TableBorderSide;
+    // (undocumented)
     readonly top: TableBorderSide;
+    // (undocumented)
+    readonly tr2bl?: TableBorderSide;
 }
 
 // @public
@@ -2980,6 +2984,8 @@ export interface ResolvedCellBorders {
     // (undocumented)
     readonly bottom?: ResolvedTableBorderEdge;
     // (undocumented)
+    readonly diagonals?: readonly TableCellDiagonalRecord[];
+    // (undocumented)
     readonly edgeSegments?: readonly ResolvedTableBorderEdgeSegment[];
     // (undocumented)
     readonly left?: ResolvedTableBorderEdge;
@@ -4528,6 +4534,30 @@ export interface TableCellContext {
     readonly rows: number;
     // (undocumented)
     readonly tableId: string;
+}
+
+// @public
+export interface TableCellDiagonalRecord {
+    // (undocumented)
+    readonly clipHeight: number;
+    // (undocumented)
+    readonly clipWidth: number;
+    // (undocumented)
+    readonly color: string | null;
+    // (undocumented)
+    readonly cssStyle: 'solid' | 'dashed' | 'dotted';
+    // (undocumented)
+    readonly direction: 'tl2br' | 'tr2bl';
+    // (undocumented)
+    readonly widthPt: number;
+    // (undocumented)
+    readonly x1: number;
+    // (undocumented)
+    readonly x2: number;
+    // (undocumented)
+    readonly y1: number;
+    // (undocumented)
+    readonly y2: number;
 }
 
 // @public

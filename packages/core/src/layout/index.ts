@@ -747,6 +747,7 @@ export {
   type TableBorderSide,
   type TableBorderSideName,
   type TableBorderStrokeRecord,
+  type TableCellDiagonalRecord,
   type TableBorderStyle,
 } from './table-borders.ts';
 
