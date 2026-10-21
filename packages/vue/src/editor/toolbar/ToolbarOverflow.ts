@@ -189,7 +189,7 @@ export const ToolbarOverflow = defineComponent({
 
     watch(open, (isOpen, _, onCleanup) => {
       if (!isOpen) return;
-      const onPointerDown = (event: MouseEvent) => {
+      const onPointerDown = (event: PointerEvent) => {
         const target = event.target;
         if (isDomNode(target) && rootRef.value?.contains(target)) return;
         open.value = false;
@@ -221,9 +221,9 @@ export const ToolbarOverflow = defineComponent({
           })
         : undefined;
       const doc = hostDocumentOf(rootRef.value);
-      doc.addEventListener('mousedown', onPointerDown, true);
+      doc.addEventListener('pointerdown', onPointerDown, true);
       onCleanup(() => {
-        doc.removeEventListener('mousedown', onPointerDown, true);
+        doc.removeEventListener('pointerdown', onPointerDown, true);
         stopEscape?.();
         stopFocus?.();
       });

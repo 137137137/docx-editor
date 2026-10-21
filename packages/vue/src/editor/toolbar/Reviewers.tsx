@@ -47,14 +47,14 @@ export const ToolbarReviewers = Object.assign(
         (isOpen, _, onCleanup) => {
           if (!isOpen) return;
           menuRef.value?.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')?.focus();
-          const onMouseDown = (event: MouseEvent) => {
+          const onOutsidePointerDown = (event: PointerEvent) => {
             if (rootRef.value?.contains(event.target as Node)) return;
             open.value = false;
           };
           const doc = hostDocumentOf(rootRef.value);
-          doc.addEventListener('mousedown', onMouseDown, true);
+          doc.addEventListener('pointerdown', onOutsidePointerDown, true);
           onCleanup(() => {
-            doc.removeEventListener('mousedown', onMouseDown, true);
+            doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
           });
         },
         { flush: 'post' }

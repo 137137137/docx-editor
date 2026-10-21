@@ -167,12 +167,10 @@ export function ToolbarOverflow({ sections, className }: ToolbarOverflowProps) {
 
   const panelContext = useMemo<OverflowPanelContextValue>(() => ({ close }), [close]);
 
-  // Outside press closes. Capture, for the same reason the review rail listens in capture:
-  // the painted surface calls `preventDefault` on its own pointer handling and a bubbling
-  // listener never sees a press that landed on the pages.
+  // Capture before the surface cancels compatibility mouse events or stops propagation.
   useEffect(() => {
     if (!open) return undefined;
-    const onPointerDown = (event: MouseEvent): void => {
+    const onPointerDown = (event: PointerEvent): void => {
       const target = event.target;
       if (isDomNode(target) && rootRef.current?.contains(target)) return;
       setOpen(false);
@@ -198,9 +196,9 @@ export function ToolbarOverflow({ sections, className }: ToolbarOverflowProps) {
       ? listenForPopupFocusLeave({ popup: root, contains, close: () => setOpen(false) })
       : undefined;
     const doc = hostDocumentOf(root);
-    doc.addEventListener('mousedown', onPointerDown, true);
+    doc.addEventListener('pointerdown', onPointerDown, true);
     return () => {
-      doc.removeEventListener('mousedown', onPointerDown, true);
+      doc.removeEventListener('pointerdown', onPointerDown, true);
       stopEscape?.();
       stopFocus?.();
     };

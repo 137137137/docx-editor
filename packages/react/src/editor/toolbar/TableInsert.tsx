@@ -36,13 +36,13 @@ function ToolbarTableInsertImpl({ className, hidden, icon, asChild, children }: 
   useEffect(() => {
     const doc = rootRef.current?.ownerDocument;
     if (!open || !doc) return undefined;
-    const onMouseDown = (event: globalThis.MouseEvent) => {
+    const onOutsidePointerDown = (event: PointerEvent) => {
       const root = rootRef.current;
       if (root && isDomNode(event.target) && root.contains(event.target)) return;
       setOpen(false);
     };
-    doc.addEventListener('mousedown', onMouseDown, true);
-    return () => doc.removeEventListener('mousedown', onMouseDown, true);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+    return () => doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
   }, [open]);
 
   // Every open, by pointer or key, moves focus into the grid's tab stop, so the grid's own

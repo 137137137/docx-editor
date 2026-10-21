@@ -165,18 +165,18 @@ function ToolbarFontSizeImpl({ className, hidden }: ToolbarSlotPartProps) {
     [editor]
   );
 
-  // Outside mousedown closes the list, the same pattern the zoom menu uses.
+  // Capture pointer presses before the surface cancels compatibility mouse events.
   useEffect(() => {
     if (!open) return undefined;
-    const onMouseDown = (event: globalThis.MouseEvent) => {
+    const onOutsidePointerDown = (event: PointerEvent) => {
       const root = rootRef.current;
       if (root && isDomNode(event.target) && root.contains(event.target)) return;
       setOpen(false);
       setDraft(null);
     };
     const doc = hostDocumentOf(rootRef.current);
-    doc.addEventListener('mousedown', onMouseDown);
-    return () => doc.removeEventListener('mousedown', onMouseDown);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+    return () => doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
   }, [open]);
 
   if (hidden) return null;
@@ -320,17 +320,17 @@ function ToolbarZoomImpl({ className, hidden }: ToolbarSlotPartProps) {
   const rootRef = useRef<HTMLSpanElement | null>(null);
   usePickerKeyboard(rootRef, open, () => setOpen(false));
 
-  // Outside mousedown closes the level menu (same pattern as FontFamily.Content).
+  // Outside pointer presses close the level menu, as in FontFamily.Content.
   useEffect(() => {
     if (!open) return undefined;
-    const onMouseDown = (event: globalThis.MouseEvent) => {
+    const onOutsidePointerDown = (event: PointerEvent) => {
       const root = rootRef.current;
       if (root && isDomNode(event.target) && root.contains(event.target)) return;
       setOpen(false);
     };
     const doc = hostDocumentOf(rootRef.current);
-    doc.addEventListener('mousedown', onMouseDown);
-    return () => doc.removeEventListener('mousedown', onMouseDown);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+    return () => doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
   }, [open]);
 
   const apply = useCallback(

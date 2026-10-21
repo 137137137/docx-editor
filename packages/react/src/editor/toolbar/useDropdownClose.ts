@@ -32,7 +32,7 @@ export function useDropdownClose(
     if (!open || hidden || !root) return;
     const doc = root.ownerDocument;
     const contains = (node: Node) => root.contains(node);
-    const onMouseDown = (event: MouseEvent) => {
+    const onOutsidePointerDown = (event: PointerEvent) => {
       if (!event.composedPath().includes(root)) setOpen(false);
     };
     const stopEscape = listenForPopupEscape({
@@ -50,9 +50,9 @@ export function useDropdownClose(
       contains,
       close: () => setOpen(false),
     });
-    doc.addEventListener('mousedown', onMouseDown);
+    doc.addEventListener('pointerdown', onOutsidePointerDown, true);
     return () => {
-      doc.removeEventListener('mousedown', onMouseDown);
+      doc.removeEventListener('pointerdown', onOutsidePointerDown, true);
       stopEscape();
       stopFocus();
     };

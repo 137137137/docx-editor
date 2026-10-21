@@ -47,13 +47,13 @@ export const ToolbarTableInsert = defineComponent({
     watch(open, (isOpen, _, onCleanup) => {
       const doc = rootRef.value?.ownerDocument;
       if (!isOpen || !doc) return;
-      const onMouseDown = (event: MouseEvent) => {
+      const onOutsidePointerDown = (event: PointerEvent) => {
         const root = rootRef.value;
         if (root && isDomNode(event.target) && root.contains(event.target)) return;
         open.value = false;
       };
-      doc.addEventListener('mousedown', onMouseDown, true);
-      onCleanup(() => doc.removeEventListener('mousedown', onMouseDown, true));
+      doc.addEventListener('pointerdown', onOutsidePointerDown, true);
+      onCleanup(() => doc.removeEventListener('pointerdown', onOutsidePointerDown, true));
       void nextTick(() => {
         placePopup();
         // Every open, by pointer or key, moves focus into the grid's tab stop, so the grid's
