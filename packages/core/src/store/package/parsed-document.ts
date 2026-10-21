@@ -10,28 +10,18 @@
 // Neither half touches a DOM, a window or a canvas: this lane compiles without the DOM lib.
 //
 // OPTIONAL. Nothing in an ordinary open comes here: an editor handed bytes reads them itself,
-// in its own slices, exactly as it does without this module. Only a host that calls
-// `parseDocument` (typically in a worker it started, the moment a file is chosen) and hands
-// the answer to the editor takes this path.
+// in its own slices, exactly as it does without this module.
 //
-// Trust model. The read is produced by `parseDocument` and nothing else: the reader's own
-// bounded read, in a same-origin worker the host started itself. A parsed document is not a
-// format to accept from a server, another origin or storage. Even so the editor does not take
-// a read on faith: it opens one only when the wire version is this engine's, the stream
-// decodes completely, the read names the file it travels with (its length and a fingerprint
-// of the zip's central directory, which records every entry's CRC-32 and sizes), and the
-// rebuilt package is within the reader's own limits (entries, total and ratio of expanded
-// bytes, XML parts, part size, relationships, and every tree's depth and node count). Any
-// value that fails one of those opens from its BYTES, which always travel with it, through
-// the ordinary bounded read — so no value can carry the editor past the reader's limits.
+// Provenance. A read stands in for the bounded read of its bytes only when THIS realm issued
+// it: `parseDocument` ran here, or `issueParsedDocument` accepted it as the reply to a request
+// this page sent to a worker it registered (`createDocumentParser`, editor entry). Nothing
+// about a value proves where it came from — a forged read can carry any length, fingerprint or
+// hash of the real file — so no property of the value is consulted. Issuance is recorded by
+// identity in a WeakSet no other realm can reach: a clone, a value from storage, a server or
+// another origin, or a hand-built object is never in it, and opens from its BYTES, which always
+// travel with it, through the ordinary bounded read.
 
-import {
-  DEFAULT_OOXML_PACKAGE_LIMITS,
-  readOoxmlPackage,
-  type OoxmlPackageResult,
-} from './ooxml-package.ts';
-import { DEFAULT_ZIP_LIMITS, ZIP_RATIO_EXEMPT_BYTES } from './zip.ts';
-import { MAX_XML_DEPTH, XML_DEFAULT_MAX_ELEMENTS, XML_HARD_MAX_BYTES } from './xml-reader.ts';
+import { readOoxmlPackage, type OoxmlPackageResult } from './ooxml-package.ts';
 import {
   createValueGraphDecoder,
   encodeValueGraph,
@@ -47,9 +37,10 @@ import {
  * Reading a package — unzipping it and turning its XML parts into trees — is most of what an
  * open costs before layout, and none of it needs the page. {@link parseDocument} does that read
  * anywhere, a worker included, and answers this: plain data that crosses `postMessage`. Handed
- * to `createDocxEditor({ document })`, `load()` or an adapter's `document` prop, the open skips
- * the read and goes straight to fonts and the first layout, on exactly the model a read of
- * `bytes` in place would have produced.
+ * to `createDocxEditor({ document })`, `load()` or an adapter's `document` prop, an open of a
+ * parsed document this page issued skips the read and goes straight to fonts and the first
+ * layout, on exactly the model a read of `bytes` in place would have produced. Any other
+ * parsed document opens from its bytes.
  *
  * @public
  */
@@ -60,86 +51,50 @@ export interface ParsedDocument {
   readonly version: number;
   /** The file that was read: what the editor keeps, saves from, and reads embedded fonts from. */
   readonly bytes: Uint8Array;
-  /**
-   * The read itself. Opaque: only the engine's own {@link parseDocument} writes it, and a read
-   * that fails the editor's checks (version, integrity, the reader's limits) is ignored and the
-   * bytes are read in place instead.
-   */
+  /** The read itself. Opaque, and used only when this page issued the document. */
   readonly read: unknown;
 }
 
 const KIND = 'docx-editor.parsed-document';
 /** The wire format. Bumped whenever the codec or the read's shape changes incompatibly. */
-const VERSION = 2;
+const VERSION = 3;
 
-/** What the wire carries: the read, and the file it was read from. */
-interface WireRead {
-  readonly byteLength: number;
-  readonly fingerprint: number;
-  readonly result: OoxmlPackageResult;
-}
+/** The message a page sends its parse worker, and the worker's answer to it. */
+export const PARSE_REQUEST = 'docx-editor.parse-request';
+export const PARSE_REPLY = 'docx-editor.parse-reply';
 
-/** Bytes at the end of a file the fingerprint covers: the zip's central directory, usually whole. */
-const FINGERPRINT_TAIL = 128 * 1024;
-
-/**
- * A fingerprint of a file, cheap at any size: FNV-1a over its length and its last
- * {@link FINGERPRINT_TAIL} bytes. A zip ends with its central directory, which records every
- * entry's name, CRC-32 and sizes, so a read paired with any other file — a different document,
- * an edited copy, a truncated one — is told apart without hashing the whole file.
- */
-function fingerprintOf(bytes: Uint8Array): number {
-  let hash = 0x811c9dc5;
-  const mix = (byte: number): void => {
-    hash = Math.imul(hash ^ byte, 0x01000193);
-  };
-  for (let length = bytes.byteLength, i = 0; i < 4; i += 1, length = Math.floor(length / 256)) {
-    mix(length & 0xff);
-  }
-  for (let index = Math.max(0, bytes.byteLength - FINGERPRINT_TAIL); index < bytes.byteLength; ) {
-    mix(bytes[index++]!);
-  }
-  return hash >>> 0;
-}
+/** Parsed documents this realm issued: the only ones whose read is used. */
+const issued = new WeakSet<ParsedDocument>();
 
 /**
  * Read DOCX bytes into a {@link ParsedDocument}, on any thread.
  *
- * An OPTIONAL path for reading a file before any editor exists — in a worker the host starts
- * itself, the moment the file is chosen — so the editor that later opens it skips the read.
- * An editor handed plain bytes never comes here and opens exactly as it otherwise would.
- *
  * The read is the one an open runs, under the same limits, and a file it refuses is carried
  * as that refusal: the editor reports it exactly as it reports the same file opened from
- * bytes. The editor checks a read before it uses one (wire version, integrity against the
- * bytes it travels with, the reader's limits) and opens the bytes in place when it fails, so
- * only answers of this function are ever opened as reads. Post the answer with
- * {@link parsedDocumentTransferables} to move its buffers rather than copy them.
+ * bytes. An answer is used as a read only in the realm that issued it — here, or a page that
+ * received it from its own worker through `createDocumentParser`; anywhere else it opens from
+ * its bytes.
  *
  * @public
  */
 export function parseDocument(bytes: Uint8Array): ParsedDocument {
   const result = readOoxmlPackage(bytes);
-  const wire: WireRead = {
-    byteLength: bytes.byteLength,
-    fingerprint: fingerprintOf(bytes),
-    result,
-  };
   let encoded: EncodedValueGraph | null = null;
   try {
-    encoded = encodeValueGraph(wire);
+    encoded = encodeValueGraph(result);
   } catch (error) {
     // A read the codec cannot carry exactly is not offered at all: the editor then reads the
     // bytes in place, as it would have without this module.
     if (!(error instanceof UnencodableValueError)) throw error;
   }
-  return { kind: KIND, version: VERSION, bytes, read: encoded };
+  const parsed: ParsedDocument = { kind: KIND, version: VERSION, bytes, read: encoded };
+  issued.add(parsed);
+  return parsed;
 }
 
 /**
  * The buffers a {@link ParsedDocument} can transfer in `postMessage` rather than copy: its
- * bytes and the read's. Transferring them detaches them on the sending side, so pass this
- * only where the sender is done with them — a worker that just parsed.
+ * bytes and the read's. Transferring them detaches them on the sending side.
  *
  * @public
  */
@@ -157,11 +112,47 @@ export function parsedDocumentTransferables(parsed: ParsedDocument): ArrayBuffer
   return [...buffers];
 }
 
-/** Whether a value is a {@link ParsedDocument}, by its tag and its bytes. */
+/** The scope a parse worker answers from: `self` in a dedicated worker. @public */
+export interface ParseWorkerScope {
+  addEventListener(type: 'message', listener: (event: { readonly data: unknown }) => void): void;
+  postMessage(message: unknown, transfer: ArrayBuffer[]): void;
+}
+
+/**
+ * Answer a page's parse requests from inside a dedicated worker: call it once with `self`.
+ * The page side is `createDocumentParser` from `@docx-editor.dev/core/editor`.
+ *
+ * @public
+ */
+export function serveDocumentParsing(scope: ParseWorkerScope): void {
+  scope.addEventListener('message', ({ data }) => {
+    const request = data as { kind?: unknown; id?: unknown; bytes?: unknown } | null;
+    if (request?.kind !== PARSE_REQUEST || typeof request.id !== 'number') return;
+    if (!(request.bytes instanceof Uint8Array)) return;
+    const parsed = parseDocument(request.bytes);
+    scope.postMessage(
+      { kind: PARSE_REPLY, id: request.id, parsed },
+      parsedDocumentTransferables(parsed)
+    );
+  });
+}
+
+/** Whether a value is shaped as a {@link ParsedDocument}, by its tag and its bytes. */
 export function isParsedDocument(value: unknown): value is ParsedDocument {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Partial<ParsedDocument>;
   return candidate.kind === KIND && candidate.bytes instanceof Uint8Array;
+}
+
+/**
+ * Mark a parsed document received as the reply to this page's own request as issued here.
+ * Only `createDocumentParser` calls it, and only for a reply its own worker sent to a request
+ * still pending. Answers the document, or `null` for a value that is not one.
+ */
+export function issueParsedDocument(value: unknown): ParsedDocument | null {
+  if (!isParsedDocument(value)) return null;
+  issued.add(value);
+  return value;
 }
 
 /** A parsed document's rebuild: in progress, or done with its read (or with none usable). */
@@ -177,7 +168,8 @@ const rebuilds = new WeakMap<ParsedDocument, Rebuild>();
 function rebuildOf(parsed: ParsedDocument): Rebuild {
   let rebuild = rebuilds.get(parsed);
   if (!rebuild) {
-    const usable = parsed.version === VERSION && isEncodedValueGraph(parsed.read);
+    const usable =
+      issued.has(parsed) && parsed.version === VERSION && isEncodedValueGraph(parsed.read);
     rebuild = usable
       ? {
           decoder: createValueGraphDecoder(parsed.read as EncodedValueGraph),
@@ -195,21 +187,20 @@ function advance(parsed: ParsedDocument, rebuild: Rebuild, pause?: () => boolean
   if (rebuild.done) return true;
   if (!rebuild.decoder!.run(pause)) return false;
   const decoded = rebuild.decoder!.result();
-  rebuild.read = decoded ? usableRead(decoded.value, parsed.bytes) : null;
+  rebuild.read = decoded && isPackageResult(decoded.value) ? decoded.value : null;
   rebuild.done = true;
   releaseWireForm(parsed.read as EncodedValueGraph);
   return true;
 }
 
 /**
- * The read a {@link ParsedDocument} carries, rebuilt on this thread — or `null` when it has
- * none this engine can use (another wire version, a damaged stream), and the bytes must be
- * read in place instead.
+ * The read a {@link ParsedDocument} carries, rebuilt on this thread — or `null` when this
+ * realm did not issue it, or it has none this engine can use (another wire version, a damaged
+ * stream), and the bytes must be read in place instead.
  *
  * Rebuilding is one pass of object creation, a fraction of the read it replaces, and happens
- * once per parsed document; a rebuild a host started in slices is finished here in one go.
- * After it the wire form is released, so a host holding the parsed document (as an adapter
- * prop does) does not also hold a second copy of the read.
+ * once per parsed document. After it the wire form is released, so a host holding the parsed
+ * document (as an adapter prop does) does not also hold a second copy of the read.
  */
 export function parsedDocumentRead(parsed: ParsedDocument): OoxmlPackageResult | null {
   const rebuild = rebuildOf(parsed);
@@ -217,48 +208,16 @@ export function parsedDocumentRead(parsed: ParsedDocument): OoxmlPackageResult |
   return rebuild.read;
 }
 
-/**
- * Rebuild a received {@link ParsedDocument}'s read now — in the message handler that received
- * it, say — so that the open which follows costs nothing more. Answers the document, or `null`
- * for a value that is not one.
- *
- * Optional: an editor handed a parsed document rebuilds it on open if this has not.
- *
- * @public
- */
-export function receiveParsedDocument(value: unknown): ParsedDocument | null {
-  if (!isParsedDocument(value)) return null;
-  parsedDocumentRead(value);
-  return value;
-}
-
-/** How {@link receiveParsedDocumentInSlices} spreads the rebuild. */
-export interface ReceiveInSlicesOptions {
-  /** The longest a slice runs before it yields, in milliseconds. Default 8. */
-  readonly sliceMs?: number;
-  /** How a slice yields to the thread. Default: the platform's `scheduler.yield`, else a
-   *  message-channel task, else `setTimeout(0)`. */
-  readonly yieldToHost?: () => Promise<void>;
-}
-
-/**
- * {@link receiveParsedDocument}, a slice at a time: the rebuild runs in short tasks so the
- * page never stalls on it, and the promise settles when it is done. Opening the document
- * before then is fine — the open finishes what is left of the rebuild at once.
- *
- * @public
- */
-export async function receiveParsedDocumentInSlices(
-  value: unknown,
-  options: ReceiveInSlicesOptions = {}
-): Promise<ParsedDocument | null> {
-  if (!isParsedDocument(value)) return null;
-  const sliceMs = options.sliceMs ?? 8;
-  const yieldToHost = options.yieldToHost ?? platformYield;
-  const rebuild = rebuildOf(value);
+/** Rebuild a parsed document's read in tasks of about `sliceMs`, yielding between them. */
+export async function rebuildParsedDocumentInSlices(
+  parsed: ParsedDocument,
+  sliceMs = 8,
+  yieldToHost: () => Promise<void> = platformYield
+): Promise<void> {
+  const rebuild = rebuildOf(parsed);
   for (;;) {
     const deadline = now() + sliceMs;
-    if (advance(value, rebuild, () => now() >= deadline)) return value;
+    if (advance(parsed, rebuild, () => now() >= deadline)) return;
     await yieldToHost();
   }
 }
@@ -292,78 +251,7 @@ function platformYield(): Promise<void> {
   return new Promise((resolve) => host.setTimeout!(resolve, 0));
 }
 
-/**
- * The read a decoded wire value carries, when it may stand in for a read of `bytes`: it names
- * those bytes, has a read's members, and is within the reader's limits. Otherwise `null`, and
- * the bytes are read in place.
- */
-function usableRead(value: unknown, bytes: Uint8Array): OoxmlPackageResult | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const wire = value as Partial<WireRead>;
-  if (wire.byteLength !== bytes.byteLength || wire.fingerprint !== fingerprintOf(bytes)) {
-    return null;
-  }
-  const result = wire.result;
-  return isPackageResult(result) && withinReaderLimits(result, bytes) ? result : null;
-}
-
-/**
- * Whether a rebuilt package is one the reader could have produced from `bytes` under the
- * limits an open applies (`readOoxmlPackage` with none configured): entry count, expanded
- * bytes and their ratio to the file, XML parts and each one's source size, relationships, and
- * each tree's depth and node count. A refusal carries nothing to bound.
- */
-function withinReaderLimits(result: OoxmlPackageResult, bytes: Uint8Array): boolean {
-  if (!result.ok) return true;
-  const pkg = result.package;
-  if (pkg.partBytes.size > DEFAULT_ZIP_LIMITS.maxEntries) return false;
-  let expanded = 0;
-  for (const [name, data] of pkg.partBytes) {
-    if (typeof name !== 'string' || !(data instanceof Uint8Array)) return false;
-    expanded += data.byteLength;
-  }
-  if (expanded > DEFAULT_ZIP_LIMITS.maxTotalBytes) return false;
-  const maxRatio = DEFAULT_ZIP_LIMITS.maxRatio ?? 200;
-  if (expanded > ZIP_RATIO_EXEMPT_BYTES && expanded / Math.max(1, bytes.byteLength) > maxRatio) {
-    return false;
-  }
-  if (pkg.parts.size > DEFAULT_OOXML_PACKAGE_LIMITS.maxXmlParts) return false;
-  for (const [name, part] of pkg.parts) {
-    const source = pkg.partBytes.get(name);
-    if (!source || source.byteLength > XML_HARD_MAX_BYTES) return false;
-    if (typeof part !== 'object' || part === null || !treeWithinLimits(part.root)) return false;
-  }
-  let relationships = pkg.externalTargets.length;
-  for (const records of pkg.relationships.values()) {
-    if (!Array.isArray(records)) return false;
-    relationships += records.length;
-  }
-  return relationships <= DEFAULT_OOXML_PACKAGE_LIMITS.maxRelationships;
-}
-
-/**
- * Whether a part's tree is no deeper than the XML reader admits and holds no more nodes than
- * it could produce (elements, plus at most one text node beside each). Walked with its own
- * stack, so a forged tree cannot exhaust the call stack; a cycle exceeds the count and stops.
- */
-function treeWithinLimits(root: unknown): boolean {
-  const maxNodes = 2 * XML_DEFAULT_MAX_ELEMENTS + 1;
-  const stack: { readonly node: unknown; readonly depth: number }[] = [{ node: root, depth: 1 }];
-  let nodes = 0;
-  while (stack.length > 0) {
-    const { node, depth } = stack.pop()!;
-    if (typeof node !== 'object' || node === null) return false;
-    nodes += 1;
-    if (nodes > maxNodes || depth > MAX_XML_DEPTH + 1) return false;
-    const children = (node as { children?: unknown }).children;
-    if (children === undefined) continue;
-    if (!Array.isArray(children)) return false;
-    for (const child of children) stack.push({ node: child, depth: depth + 1 });
-  }
-  return true;
-}
-
-/** The members a read's result has, checked before it stands in for a read of the bytes. */
+/** The members a read's result has: a decode that lost them is not used. */
 function isPackageResult(value: unknown): value is OoxmlPackageResult {
   if (typeof value !== 'object' || value === null) return false;
   const result = value as { ok?: unknown; reason?: unknown; package?: unknown };

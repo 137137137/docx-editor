@@ -19,15 +19,16 @@ export function parsedDocumentTransferables(parsed: ParsedDocument): ArrayBuffer
 export function parseDocument(bytes: Uint8Array): ParsedDocument;
 
 // @public
-export interface ReceiveInSlicesOptions {
-    readonly sliceMs?: number;
-    readonly yieldToHost?: () => Promise<void>;
+export interface ParseWorkerScope {
+    // (undocumented)
+    onmessage: ((event: {
+        readonly data: unknown;
+    }) => void) | null;
+    // (undocumented)
+    postMessage(message: unknown, transfer: ArrayBuffer[]): void;
 }
 
 // @public
-export function receiveParsedDocument(value: unknown): ParsedDocument | null;
-
-// @public
-export function receiveParsedDocumentInSlices(value: unknown, options?: ReceiveInSlicesOptions): Promise<ParsedDocument | null>;
+export function serveDocumentParsing(scope: ParseWorkerScope): void;
 
 ```

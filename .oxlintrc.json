@@ -432,7 +432,7 @@
         "packages/pro/src/__tests__/review-facade.test.ts"
       ],
       "rules": {
-        "max-lines": ["error", { "max": 1710, "skipBlankLines": false, "skipComments": false }]
+        "max-lines": ["error", { "max": 1700, "skipBlankLines": false, "skipComments": false }]
       }
     },
     {

@@ -260,37 +260,65 @@ async function pick(event: Event) {
 
 ### Parsing in a worker (optional)
 
-This is an opt-in path for prefetching: reading a file before any editor exists, for example the moment it is picked, so the editor that later opens it starts at the fonts and the first layout. An editor handed bytes never uses it and opens exactly as it otherwise would; it already reads a long package in short slices on the page, so use this only where the read can happen earlier than the open.
+This is an opt-in path for prefetching: reading a file on a worker before its editor opens, for example from the moment the file is picked, so the editor that opens it starts at the fonts and the first layout. It helps only when the read has finished by the time the editor opens. An editor handed bytes never uses it and opens exactly as it otherwise would; it already reads a long package in short slices on the page. If the reader opens the document before the worker answers, open the bytes and abort the parse.
 
-Reading the package (the unzip, and the XML of the body, notes and styles) is most of what opening a long document costs before layout. `parseDocument` from `@docx-editor.dev/core/parse` does that read on any thread, so a Web Worker can do it while the page stays responsive, for example as soon as a file is picked. What it returns crosses `postMessage`. Pass it to `document` or `load()` and the editor opens on the same model as the bytes, without reading them again:
+The worker reads the package (the unzip, and the XML of the body, notes and styles) under the same size, zip and XML limits as an open from bytes:
 
 ```ts
 // parse.worker.ts
-import { parseDocument, parsedDocumentTransferables } from '@docx-editor.dev/core/parse';
+import { serveDocumentParsing } from '@docx-editor.dev/core/parse';
 
-self.onmessage = (event: MessageEvent<Uint8Array>) => {
-  const parsed = parseDocument(event.data);
-  self.postMessage(parsed, parsedDocumentTransferables(parsed));
-};
+serveDocumentParsing(self);
 ```
+
+The page sends it files through `createDocumentParser`. `parse()` copies the bytes, so the page can still open them, and settles with the parsed document once its read is rebuilt on the page in short tasks, or `null` if the request was aborted:
 
 <FrameworkTabs>
 <Framework value="react">
 
 ```tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DocxEditor } from '@docx-editor.dev/react';
-import { receiveParsedDocumentInSlices, type ParsedDocument } from '@docx-editor.dev/core/parse';
+import {
+  createDocumentParser,
+  type DocumentParser,
+  type ParsedDocument,
+} from '@docx-editor.dev/core/editor';
 
-export function WorkerEditor({ worker }: { worker: Worker }) {
-  const [doc, setDoc] = useState<ParsedDocument>();
+export function WorkerEditor() {
+  const parser = useRef<DocumentParser | null>(null);
+  const pick = useRef<AbortController | null>(null);
+  const [doc, setDoc] = useState<ParsedDocument | Uint8Array>();
   useEffect(() => {
-    worker.onmessage = async (event) => {
-      const parsed = await receiveParsedDocumentInSlices(event.data);
-      if (parsed) setDoc(parsed);
+    const worker = new Worker(new URL('./parse.worker.ts', import.meta.url), { type: 'module' });
+    parser.current = createDocumentParser(worker);
+    return () => {
+      parser.current?.dispose();
+      worker.terminate();
     };
-  }, [worker]);
-  return doc ? <DocxEditor document={doc} /> : null;
+  }, []);
+
+  async function choose(bytes: Uint8Array) {
+    // A newer pick replaces the older one: its answer, if it still comes, settles null.
+    pick.current?.abort();
+    const controller = (pick.current = new AbortController());
+    const parsed = await parser.current?.parse(bytes, { signal: controller.signal });
+    if (!controller.signal.aborted) setDoc(parsed ?? bytes);
+  }
+
+  return (
+    <>
+      <input
+        type="file"
+        accept=".docx"
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          if (file) await choose(new Uint8Array(await file.arrayBuffer()));
+        }}
+      />
+      {doc ? <DocxEditor document={doc} /> : null}
+    </>
+  );
 }
 ```
 
@@ -298,21 +326,27 @@ export function WorkerEditor({ worker }: { worker: Worker }) {
 <Framework value="vue">
 
 ```ts
-import { receiveParsedDocumentInSlices, type ParsedDocument } from '@docx-editor.dev/core/parse';
+import { createDocumentParser, type ParsedDocument } from '@docx-editor.dev/core/editor';
 
-const doc = shallowRef<ParsedDocument>();
-worker.onmessage = async (event) => {
-  const parsed = await receiveParsedDocumentInSlices(event.data);
-  if (parsed) doc.value = parsed;
-};
+const worker = new Worker(new URL('./parse.worker.ts', import.meta.url), { type: 'module' });
+const parser = createDocumentParser(worker);
+const doc = shallowRef<ParsedDocument | Uint8Array>();
+let pick: AbortController | undefined;
+
+async function choose(bytes: Uint8Array) {
+  pick?.abort();
+  const controller = (pick = new AbortController());
+  const parsed = await parser.parse(bytes, { signal: controller.signal });
+  if (!controller.signal.aborted) doc.value = parsed ?? bytes;
+}
 ```
 
 </Framework>
 </FrameworkTabs>
 
-`receiveParsedDocumentInSlices` rebuilds the read on the page in short tasks; `receiveParsedDocument` does it in one, and the editor does it on open if neither has run. The worker applies the same size, zip and XML limits as an open from bytes, and a file it refuses is reported the same way. The parsed document keeps the file's bytes, so `save()`, embedded fonts and images work as they do for bytes.
+A file the worker refuses is reported the same way as the same bytes. The parsed document keeps the file's bytes, so `save()`, embedded fonts and images work as they do for bytes.
 
-A parsed document is meant to come from `parseDocument` in a same-origin worker you start yourself. It is not a format to accept from a server, another origin or storage. The editor does not take the read on trust either: it uses it only when the wire version is its own, the read names the bytes it travels with (their length and a fingerprint of the zip's central directory), and the rebuilt package is within the reader's own limits (entries, expanded size and ratio, XML parts and their size, relationships, tree depth and node count). Anything else opens from the bytes through the ordinary bounded read, so no value can open a package the reader would have refused.
+A parsed document skips the read only on the page that issued it: the reply its own worker sent to a request the parser is still waiting on. Nothing about a value can prove where it came from, so the editor does not inspect one to decide. A parsed document that reaches it any other way (a copy, one from a server, another origin or storage, or one built by hand) opens from its bytes through the ordinary bounded read.
 
 A host that knows the document will be opened soon (a file picked, and the reader still choosing what to do with it) can also take the open's next step early. `prepareParsedDocument(parsed)` from `@docx-editor.dev/core/editor` opens the document's session on the page and reads the font families the open asks its font resolver for. The editor that is later handed the same parsed document opens from that session, so its open starts at the fonts. It is main-thread work, as much as the open itself would do at that point. The session is taken once; an editor with a review module or a content-lock policy opens its own from the read, and an editor handed the plain bytes reads them as usual.
 

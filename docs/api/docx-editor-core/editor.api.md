@@ -1285,6 +1285,9 @@ export function createBrowserAutomationHost(editor: DocxEditorInstance): Browser
 export function createContentControlListNavigation(locale?: string): ContentControlListNavigation;
 
 // @public
+export function createDocumentParser(worker: Worker): DocumentParser;
+
+// @public
 export function createDocumentRefresh(editor: DocxEditorInstance): DocumentRefresh;
 
 // @public
@@ -1371,6 +1374,17 @@ export function defineFontResolver<T extends FontResolver>(resolve: T): MarkedFo
 
 // @public
 export function disposeLayoutShaping(shaping: LayoutShapingOptions): void;
+
+// @public (undocumented)
+export interface DocumentParseOptions {
+    readonly signal?: AbortSignal;
+}
+
+// @public (undocumented)
+export interface DocumentParser {
+    dispose(): void;
+    parse(bytes: Uint8Array, options?: DocumentParseOptions): Promise<ParsedDocument | null>;
+}
 
 // @public
 export interface DocumentRefresh {

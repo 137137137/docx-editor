@@ -12,8 +12,8 @@
 // document then starts from that session: its own open is the fonts and the first layout.
 //
 // The session is the one the editor would have opened. It is opened from the same read — one
-// that passed the checks `parsedDocumentRead` applies (wire version, the bytes it names, the
-// reader's limits) — with the options an editor opens with when it has no review module and
+// this page issued, which is the only kind `parsedDocumentRead` answers — with the options an
+// editor opens with when it has no review module and
 // no content-lock policy, and nothing touches it before the editor takes it, so the editor
 // sees the revision it would have seen. An editor with other options opens its own session
 // from the read, as before, and the waiting one is dropped. A session is taken once: a later
@@ -50,8 +50,8 @@ const waiting = new Map<Uint8Array, OpenTreeSessionResult>();
  * Opt-in, for prefetching: an editor handed bytes never uses it. Main-thread work, as much as
  * the editor's own open would do at that point: call it when the page has a moment, once a
  * document is certain to be opened soon. Answers whether a session is waiting for the
- * document. A document whose read the editor would not use (refused, another wire version,
- * paired with other bytes, past the reader's limits), or one already waiting, does nothing.
+ * document. A document whose read the editor would not use (refused, not issued by this page,
+ * another wire version), or one already waiting, does nothing.
  *
  * @public
  */

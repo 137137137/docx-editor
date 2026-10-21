@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import type { PageRecord } from '@docx-editor.dev/core/layout';
 import { ooxmlPackageReadCount } from '../../store/package/ooxml-package.ts';
 import {
+  issueParsedDocument,
   parseDocument,
   parsedDocumentTransferables,
   type ParsedDocument,
@@ -45,10 +46,12 @@ const EXTRA_FILES = extra
 
 const bytesOf = (path: string) => new Uint8Array(readFileSync(path));
 
-/** What a worker's answer is on arrival. */
+/** A worker's answer as this page's parser hands it on: received, and accepted as its own. */
 function posted(bytes: Uint8Array): ParsedDocument {
   const parsed = parseDocument(bytes.slice());
-  return structuredClone(parsed, { transfer: parsedDocumentTransferables(parsed) });
+  return issueParsedDocument(
+    structuredClone(parsed, { transfer: parsedDocumentTransferables(parsed) })
+  )!;
 }
 
 function pageText(page: PageRecord): string {
@@ -76,43 +79,71 @@ async function opened(
   const container = window.document.createElement('div');
   window.document.body.appendChild(container);
   editor.attach(container);
-  const deadline = Date.now() + 20_000;
-  while ((editor.surface === null || editor.snapshot().isOpening) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  // Done when the open, the fonts and the passes after them have settled: nothing pending, and
+  // the same pages on consecutive looks.
+  const deadline = Date.now() + 90_000;
+  let last = '';
+  let steady = 0;
+  while (steady < 3 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const settling =
+      editor.surface === null ||
+      editor.snapshot().isOpening ||
+      editor.fontMeasurement().resolving ||
+      container.hasAttribute('data-docx-layout-pending');
+    const now = settling ? '' : JSON.stringify(editor.surface!.layout().pages.map(pageText));
+    steady = now !== '' && now === last ? steady + 1 : 0;
+    last = now;
   }
   if (!editor.surface) throw new Error(`no surface: ${editor.snapshot().parseError ?? ''}`);
   return editor;
 }
 
+/**
+ * What an editor on `document` shows and saves, and how many package reads its open took. The
+ * editor is destroyed before this answers: two live editors in one process can lay the same
+ * bytes out differently, so each comparison sees one at a time.
+ */
+async function shown(
+  document: Uint8Array | ParsedDocument,
+  seen: (editor: DocxEditorInstance) => void = () => {}
+) {
+  const before = ooxmlPackageReadCount();
+  const editor = await opened(document);
+  const reads = ooxmlPackageReadCount() - before;
+  seen(editor);
+  const pages = editor.surface!.layout().pages.map(pageText);
+  const saved = Buffer.from(await editor.save());
+  editors.splice(editors.indexOf(editor), 1);
+  editor.destroy();
+  return { pages, saved, reads };
+}
+
 describe('an editor opened on a document prepared ahead', () => {
   for (const path of [...FILES, ...EXTRA_FILES]) {
     test(`${path.slice(path.lastIndexOf('/') + 1)}: takes the session, same pages, same save`, async () => {
-      const plain = await opened(posted(bytesOf(path)));
+      const plain = await shown(posted(bytesOf(path)));
       const parsed = posted(bytesOf(path));
       expect(prepareParsedDocument(parsed)).toBe(true);
       expect(openedAheadWaiting(parsed.bytes)).toBe(true);
-      const reads = ooxmlPackageReadCount();
-      const ahead = await opened(parsed);
-      expect(ooxmlPackageReadCount()).toBe(reads);
+      const ahead = await shown(parsed);
+      expect(ahead.reads).toBe(0);
       expect(openedAheadWaiting(parsed.bytes)).toBe(false);
-      expect(ahead.surface!.layout().pages.map(pageText)).toEqual(
-        plain.surface!.layout().pages.map(pageText)
-      );
-      const [left, right] = await Promise.all([ahead.save(), plain.save()]);
-      expect(Buffer.from(left).equals(Buffer.from(right))).toBe(true);
-    }, 60_000);
+      expect(ahead.pages).toEqual(plain.pages);
+      expect(ahead.saved.equals(plain.saved)).toBe(true);
+    }, 240_000);
   }
 
   test('a session is taken once: a second editor on the same document opens its own', async () => {
     const parsed = posted(bytesOf(FILES[0]!));
     prepareParsedDocument(parsed);
-    const first = await opened(parsed);
-    const second = await opened(parsed);
-    expect(second.surface!.session).not.toBe(first.surface!.session);
-    expect(second.surface!.layout().pages.map(pageText)).toEqual(
-      first.surface!.layout().pages.map(pageText)
+    let firstSession: unknown;
+    const first = await shown(parsed, (editor) => (firstSession = editor.surface!.session));
+    const second = await shown(parsed, (editor) =>
+      expect(editor.surface!.session).not.toBe(firstSession)
     );
-  }, 60_000);
+    expect(second.pages).toEqual(first.pages);
+  }, 240_000);
 
   test('an editor with a review module opens its own session, and drops the waiting one', async () => {
     const parsed = posted(bytesOf(FILES[0]!));
@@ -122,7 +153,7 @@ describe('an editor opened on a document prepared ahead', () => {
     expect(ooxmlPackageReadCount()).toBe(reads);
     expect(editor.snapshot().parseError).toBeNull();
     expect(openedAheadWaiting(parsed.bytes)).toBe(false);
-  }, 60_000);
+  }, 240_000);
 
   test('an editor with a content-lock policy opens its own session', async () => {
     const parsed = posted(bytesOf(FILES[0]!));
@@ -132,7 +163,7 @@ describe('an editor opened on a document prepared ahead', () => {
     });
     expect(editor.snapshot().parseError).toBeNull();
     expect(openedAheadWaiting(parsed.bytes)).toBe(false);
-  }, 60_000);
+  }, 240_000);
 
   test('an editor handed plain bytes reads them, and leaves a prepared session alone', async () => {
     const parsed = posted(bytesOf(FILES[0]!));
@@ -141,19 +172,15 @@ describe('an editor opened on a document prepared ahead', () => {
     await opened(parsed.bytes);
     expect(ooxmlPackageReadCount()).toBe(reads + 1);
     expect(openedAheadWaiting(parsed.bytes)).toBe(true);
-  }, 60_000);
+  }, 240_000);
 
-  test('a read paired with other bytes prepares nothing, and the editor reads the bytes', async () => {
+  test('a parsed document this page did not issue prepares nothing, and opens from its bytes', async () => {
     const parsed = { ...posted(bytesOf(FILES[0]!)), bytes: bytesOf(FILES[1]!) };
     expect(prepareParsedDocument(parsed)).toBe(false);
-    const reads = ooxmlPackageReadCount();
-    const fromParsed = await opened(parsed);
-    expect(ooxmlPackageReadCount()).toBe(reads + 1);
-    const plain = await opened(bytesOf(FILES[1]!));
-    expect(fromParsed.surface!.layout().pages.map(pageText)).toEqual(
-      plain.surface!.layout().pages.map(pageText)
-    );
-  }, 60_000);
+    const fromParsed = await shown(parsed);
+    expect(fromParsed.reads).toBe(1);
+    expect(fromParsed.pages).toEqual((await shown(bytesOf(FILES[1]!))).pages);
+  }, 240_000);
 
   test('a refused file prepares nothing, and opens refused as before', () => {
     const parsed = posted(new TextEncoder().encode('not a zip'));

@@ -14,11 +14,7 @@ import { updateSurfaceMeasurement } from './surface-measurement.ts';
 import { createLiveFontResolution, liveFontFamilies } from './live-font-resolution.ts';
 import { createFontResolutionLifetime } from './font-resolution-lifetime.ts';
 import { composeFontOrigins, defineFontResolver } from './font-resolver.ts';
-import {
-  createReviewCommands,
-  reviewActivationRefusal,
-  reviewModelOption,
-} from './docx-editor-review-commands.ts';
+import { createReviewCommands, reviewActivationRefusal } from './docx-editor-review-commands.ts';
 import { canEditorViewCommand, createEditorViews } from './docx-editor-view-commands.ts';
 import { bindCommentDraftRequests } from './comment-draft-chrome.ts';
 import { completePendingSuggesting } from './opening-editing-mode.ts';
@@ -111,7 +107,6 @@ import {
   createTocContextCache,
   editorError,
   formattingEqual,
-  normalizeSource,
   pageEqual,
   pageSetupEqual,
   selectionsMatch,
@@ -277,6 +272,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
    */
   const modules = resolveEditorModules(config.modules);
   const reportDiagnostic = customNodeDiagnosticReporter(modules);
+  const sessionOptions = preparedOpen.sessionOptionsFor(modules, reportDiagnostic, config);
   const reviewEnabled = modules.review !== null;
   // Review pane view settings: seeded by the review module, changed by `setReviewPaneOptions`.
   const reviewPane = createReviewPaneState(modules.review?.pane, {
@@ -303,7 +299,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     mount: (bytes) => mountBytes(bytes),
     // Fonts resolved before the mount are laid out once, by the mount; see `preparedOpenHook`.
     prepare: preparedOpen.preparedOpenHook(
-      () => preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
+      sessionOptions,
       (bytes, session) => {
         if (deferredRefreshBytes === bytes) return null;
         preparedFontSession = session;
@@ -645,7 +641,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       reviewAuthorSlots,
       revisionAuthorVisibility: reviewAuthorVisibility,
       revisionMarkup: revisionMarkupState.current(),
-      ...preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config),
+      ...sessionOptions(),
       pairsReplacements: pairedPin.lightsPair,
       ...(shapedMeasurer
         ? { measurer: shapedMeasurer, ...(shapedProducer ? { producer: shapedProducer } : {}) }
@@ -692,9 +688,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       // default (`all-markup`), which is what the review rail annotates.
       revisionDisplayMode: reviewEnabled ? reviewDisplayMode : 'proposed',
       ...diagnostics.surfaceHooks(suggesting, () => surface),
-      ...preparedOpen.takePreparedOpen(bytes, () =>
-        preparedOpen.sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config)
-      ),
+      ...preparedOpen.takePreparedOpen(bytes, sessionOptions),
       ...(modules.collaboration ? { collaborationModel: modules.collaboration } : {}),
       onHostMoved: followHost,
       onTrackedChange: () => {
@@ -1391,11 +1385,9 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
   }
 
   if (config.document) {
-    const bytes = normalizeSource(config.document);
-    if (bytes) {
-      preparedOpen.holdParsedRead(config.document, bytes);
-      loadBytes(bytes);
-    } else {
+    const bytes = preparedOpen.sourceBytes(config.document);
+    if (bytes) loadBytes(bytes);
+    else {
       emitError(editorError('unsupported', openFailure.refuseSource(config.document)));
       diagnostics.openRejected('unsupported');
     }
@@ -1933,7 +1925,7 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
     },
 
     load(document) {
-      const bytes = normalizeSource(document);
+      const bytes = preparedOpen.sourceBytes(document);
       if (!bytes) {
         // A handle is identity, not content, and an unrecognized string is a typo. A mounted
         // document stays; with none, the refusal is what the reader sees.
@@ -1944,7 +1936,6 @@ export function createDocxEditor(config: DocxEditorConfig): DocxEditorInstance {
       }
       refreshHost?.invalidate();
       highlights.reset();
-      preparedOpen.holdParsedRead(document, bytes);
       loadBytes(bytes);
     },
 

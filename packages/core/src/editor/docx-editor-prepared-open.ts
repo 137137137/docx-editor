@@ -3,10 +3,11 @@
 // Keyed by the exact bytes object, and taken once: a session is live editing state, so two
 // mounts must never share one. An entry whose mount never comes dies with its bytes.
 //
-// The OPTIONAL parsed-document path (`@docx-editor.dev/core/parse`, `prepareParsedDocument`)
-// joins here and nowhere else: a read held for bytes, or a session opened ahead from it,
-// stands in for the package read. Bytes with neither — every ordinary source — take the same
-// steps as before; the only addition on their path is a WeakMap miss.
+// The OPTIONAL parsed-document path (`@docx-editor.dev/core/parse`, `createDocumentParser`,
+// `prepareParsedDocument`) joins here and nowhere else: the read of a parsed document this page
+// issued, held for its bytes, or a session opened ahead from it, stands in for the package read.
+// Bytes with neither — every ordinary source — take the same steps as before; the only addition
+// on their path is a WeakMap miss.
 
 import { openTreeSession, type OpenTreeSessionResult } from '@docx-editor.dev/core/binding';
 import {
@@ -31,6 +32,10 @@ import {
 import { warmLayoutNodeDigests } from '../layout/layout-cache.ts';
 import { setOpeningIndicatorHost, type OpeningIndicatorHost } from './surface-opening-indicator.ts';
 import { PROGRESSIVE_OPEN_FIRST_BLOCKS } from './surface-progressive-open.ts';
+import { normalizeSource } from './docx-editor-support.ts';
+import { reviewModelOption } from './docx-editor-review-commands.ts';
+import type { DocumentSource } from '@docx-editor.dev/core/contracts/editor';
+import type { EditorModuleRegistry } from '../contracts/modules.ts';
 
 /** About how long one font warm-up step runs, in milliseconds. */
 const FONT_WARM_STEP_MS = 40;
@@ -52,14 +57,30 @@ const parsedReads = new WeakMap<Uint8Array, OoxmlPackageResult>();
 /**
  * Keep the read a {@link ParsedDocument} carries beside the bytes it opens, so their open skips
  * reading them. Any other source, and a parsed document whose read this engine will not use
- * (another wire version, a damaged stream, a read that does not name these bytes or exceeds
- * the reader's limits; see `parsedDocumentRead`), opens from its bytes as before — through
- * the bounded reader, so no source skips its limits.
+ * (one this page did not issue, another wire version, a damaged stream; see
+ * `parsedDocumentRead`), opens from its bytes as before — through the bounded reader, so no
+ * source skips its limits.
  */
 export function holdParsedRead(source: unknown, bytes: Uint8Array): void {
   if (!isParsedDocument(source)) return;
   const read = parsedDocumentRead(source as ParsedDocument);
   if (read) parsedReads.set(bytes, read);
+}
+
+/** The bytes a source opens (`normalizeSource`), with a parsed document's read held for them. */
+export function sourceBytes(source: DocumentSource): Uint8Array | null {
+  const bytes = normalizeSource(source);
+  if (bytes) holdParsedRead(source, bytes);
+  return bytes;
+}
+
+/** The session options of every open of one editor, asked when an open needs them. */
+export function sessionOptionsFor(
+  modules: EditorModuleRegistry,
+  reportDiagnostic: (diagnostic: unknown) => void,
+  config: Pick<OpenTreeSessionOptions, 'contentLockPolicy'>
+): () => PreparedOpenOptions {
+  return () => sessionOpenOptions(reviewModelOption(modules, reportDiagnostic), config);
 }
 
 /**

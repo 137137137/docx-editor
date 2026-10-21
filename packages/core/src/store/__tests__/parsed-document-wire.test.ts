@@ -1,4 +1,5 @@
-// A package read on one thread and rebuilt on another is the package read in place.
+// A package read on one thread and rebuilt on another is the package read in place, and only a
+// read this realm issued is ever used.
 //
 // `structuredClone` stands in for `postMessage`: it is the same algorithm, so what survives it
 // is what a worker's answer delivers. The comparison is stricter than deep equality — key
@@ -10,11 +11,11 @@ import { strToU8, zipSync } from 'fflate';
 import { readOoxmlPackage } from '../package/ooxml-package.ts';
 import {
   isParsedDocument,
+  issueParsedDocument,
   parseDocument,
   parsedDocumentRead,
   parsedDocumentTransferables,
-  receiveParsedDocument,
-  receiveParsedDocumentInSlices,
+  rebuildParsedDocumentInSlices,
   type ParsedDocument,
 } from '../package/parsed-document.ts';
 import {
@@ -23,7 +24,6 @@ import {
   UnencodableValueError,
 } from '../package/parsed-document-codec.ts';
 import { sameGraph } from './same-graph.ts';
-
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
 const REL = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -56,10 +56,23 @@ const BYTES = docx(
     '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Two</w:t></w:r></w:p>'
 );
 
-/** What a worker's answer is on arrival: the parse, through the structured clone. */
-function posted(bytes: Uint8Array): ParsedDocument {
+/** A worker's answer as it arrives, before the page's parser has accepted it. */
+function cloned(bytes: Uint8Array): ParsedDocument {
   const parsed = parseDocument(bytes);
   return structuredClone(parsed, { transfer: parsedDocumentTransferables(parsed) });
+}
+
+/** A worker's answer as the page's parser hands it on: accepted as this page's own. */
+const posted = (bytes: Uint8Array): ParsedDocument => issueParsedDocument(cloned(bytes))!;
+
+/** A read as `parseDocument` writes it, with its package changed by `forge`. */
+function forged(forge: (pkg: Record<string, unknown>) => Record<string, unknown>): ParsedDocument {
+  const parsed = parseDocument(BYTES.slice());
+  const result = decodeValueGraph(parsed.read as never)!.value as {
+    ok: true;
+    package: Record<string, unknown>;
+  };
+  return { ...parsed, read: encodeValueGraph({ ok: true, package: forge({ ...result.package }) }) };
 }
 
 describe('a parsed document', () => {
@@ -92,108 +105,86 @@ describe('a parsed document', () => {
 
   test('is rebuilt once, and its wire form released after', () => {
     const received = posted(BYTES.slice());
-    expect(receiveParsedDocument(received)).toBe(received);
     const first = parsedDocumentRead(received);
     expect(parsedDocumentRead(received)).toBe(first);
     expect((received.read as { ops: Int32Array }).ops.length).toBe(0);
   });
 
   test('of another wire version, or damaged, offers no read, so the bytes are read in place', () => {
-    const other = { ...posted(BYTES.slice()), version: 999 };
+    const other = issueParsedDocument({ ...cloned(BYTES.slice()), version: 999 })!;
     expect(parsedDocumentRead(other)).toBeNull();
     const damaged = posted(BYTES.slice());
     const graph = damaged.read as { ops: Int32Array };
     graph.ops = graph.ops.subarray(0, graph.ops.length - 3);
     expect(parsedDocumentRead(damaged)).toBeNull();
   });
+});
 
-  test('paired with any other bytes offers no read, so those bytes are read in place', () => {
-    const other = docx('<w:p><w:r><w:t>Another document.</w:t></w:r></w:p>');
-    expect(parsedDocumentRead({ ...posted(BYTES.slice()), bytes: other })).toBeNull();
-    // Same length, one byte changed in the central directory's tail.
-    const edited = BYTES.slice();
-    edited[edited.length - 30] ^= 0xff;
-    expect(parsedDocumentRead({ ...posted(BYTES.slice()), bytes: edited })).toBeNull();
+describe('provenance', () => {
+  test('a parse in this realm is issued here', () => {
+    expect(parsedDocumentRead(parseDocument(BYTES.slice()))?.ok).toBe(true);
   });
 
-  test("beyond the reader's limits offers no read, so the bytes are read in place", () => {
-    /** A wire value as `parseDocument` writes it, with its package changed by `forge`. */
-    const forged = (forge: (pkg: Record<string, unknown>) => Record<string, unknown>) => {
-      const parsed = parseDocument(BYTES.slice());
-      const wire = decodeValueGraph(parsed.read as never)!.value as {
-        result: { ok: true; package: Record<string, unknown> };
-      };
-      const result = { ok: true, package: forge({ ...wire.result.package }) };
-      return { ...parsed, read: encodeValueGraph({ ...wire, result }) };
-    };
-    // The same read, re-encoded unchanged, is still a read: only the limits refuse below.
-    expect(parsedDocumentRead(forged((pkg) => pkg))?.ok).toBe(true);
+  test('a clone is not: nothing about a value says where it came from', () => {
+    expect(parsedDocumentRead(cloned(BYTES.slice()))).toBeNull();
+    expect(parsedDocumentRead(structuredClone(parseDocument(BYTES.slice())))).toBeNull();
+  });
 
-    const tooManyParts = forged((pkg) => {
-      const parts = pkg.parts as Map<string, unknown>;
-      const partBytes = pkg.partBytes as Map<string, Uint8Array>;
-      const [name, part] = [...parts][0]!;
-      const more = new Map(parts);
-      const moreBytes = new Map(partBytes);
-      for (let index = 0; index < 600; index += 1) {
-        more.set(`/extra/${index}.xml`, part);
-        moreBytes.set(`/extra/${index}.xml`, partBytes.get(name)!);
-      }
-      return { ...pkg, parts: more, partBytes: moreBytes };
-    });
-    expect(parsedDocumentRead(tooManyParts)).toBeNull();
-
-    const tooDeep = forged((pkg) => {
+  test('a forged read is never used, however it names its bytes', () => {
+    const text = forged((pkg) => {
       const parts = new Map(pkg.parts as Map<string, { root: unknown }>);
-      let root: unknown = { kind: 'leaf', children: [] };
-      for (let depth = 0; depth < 400; depth += 1) root = { kind: 'nest', children: [root] };
-      const [name, part] = [...parts].find(([key]) => key === pkg.mainDocumentPart)!;
-      parts.set(name, { ...part, root });
+      const main = parts.get(pkg.mainDocumentPart as string)!;
+      const root = JSON.parse(JSON.stringify(main.root).replaceAll('Two', 'Forged')) as unknown;
+      parts.set(pkg.mainDocumentPart as string, { ...main, root });
       return { ...pkg, parts };
     });
-    expect(parsedDocumentRead(tooDeep)).toBeNull();
-
-    const expandedPastRatio = forged((pkg) => {
-      const partBytes = new Map(pkg.partBytes as Map<string, Uint8Array>);
-      partBytes.set('/word/media/huge.bin', new Uint8Array(16 * 1024 * 1024));
-      return { ...pkg, partBytes };
+    expect(parsedDocumentRead(text)).toBeNull();
+    // A forged read with every part twice under new names, so every id repeats.
+    const duplicateIds = forged((pkg) => {
+      const parts = new Map(pkg.parts as Map<string, unknown>);
+      for (const [name, part] of pkg.parts as Map<string, unknown>) parts.set(`${name}.copy`, part);
+      return { ...pkg, parts };
     });
-    expect(parsedDocumentRead(expandedPastRatio)).toBeNull();
+    expect(parsedDocumentRead(duplicateIds)).toBeNull();
   });
 
-  test('rebuilds in slices into the same read, and an open mid-way finishes it', async () => {
+  test('a read paired with other bytes is the read of the bytes it was issued with', () => {
+    const other = docx('<w:p><w:r><w:t>Another document.</w:t></w:r></w:p>');
+    expect(parsedDocumentRead({ ...posted(BYTES.slice()), bytes: other })).toBeNull();
+  });
+
+  test('a value that is not a parsed document is not issued', () => {
+    expect(issueParsedDocument({ revision: 3 })).toBeNull();
+    expect(issueParsedDocument('blank')).toBeNull();
+    expect(issueParsedDocument({ kind: 'docx-editor.parsed-document', version: 1 })).toBeNull();
+  });
+});
+
+describe('a rebuild in slices', () => {
+  test('rebuilds into the same read, and an open mid-way finishes it', async () => {
     const long = docx('<w:p><w:r><w:t>A paragraph of its own.</w:t></w:r></w:p>'.repeat(300));
     const expected = readOoxmlPackage(long);
     let yields = 0;
     const sliced = posted(long.slice());
-    const received = await receiveParsedDocumentInSlices(sliced, {
-      sliceMs: 0,
-      yieldToHost: async () => {
-        yields += 1;
-      },
+    await rebuildParsedDocumentInSlices(sliced, 0, async () => {
+      yields += 1;
     });
-    expect(received).toBe(sliced);
     expect(yields).toBeGreaterThan(3);
     expect(sameGraph(parsedDocumentRead(sliced), expected)).toBeNull();
 
     const interrupted = posted(long.slice());
     let resume: () => void = () => {};
-    const pending = receiveParsedDocumentInSlices(interrupted, {
-      sliceMs: 0,
-      yieldToHost: () => new Promise<void>((resolve) => (resume = resolve)),
-    });
+    const pending = rebuildParsedDocumentInSlices(
+      interrupted,
+      0,
+      () => new Promise<void>((resolve) => (resume = resolve))
+    );
     await Promise.resolve();
     const read = parsedDocumentRead(interrupted);
     expect(sameGraph(read, expected)).toBeNull();
     resume();
-    expect(await pending).toBe(interrupted);
+    await pending;
     expect(parsedDocumentRead(interrupted)).toBe(read);
-  });
-
-  test('is told apart from what is not one', () => {
-    expect(receiveParsedDocument({ revision: 3 })).toBeNull();
-    expect(receiveParsedDocument('blank')).toBeNull();
-    expect(receiveParsedDocument({ kind: 'docx-editor.parsed-document', version: 1 })).toBeNull();
   });
 });
 
