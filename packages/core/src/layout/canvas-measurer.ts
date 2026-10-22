@@ -137,9 +137,8 @@ interface LruEntry<K, V> {
 }
 
 /**
- * Least recently used first out. The recency order is a linked list beside the map, so a hit
- * moves two links instead of deleting and re-inserting its key, which a measurer asked for the
- * same words all through a document did on every word.
+ * A bounded least-recently-used cache. A linked list beside the map holds the recency order,
+ * so a hit relinks one entry instead of deleting and re-inserting its key.
  */
 function createBoundedLruCache<K, V>(capacity: number): BoundedLruCache<K, V> {
   const entries = new Map<K, LruEntry<K, V>>();
