@@ -20,6 +20,7 @@ import {
   isElementNode,
   isStaleImageInteractionCommit,
   selectedDrawingOverlayTargetOf,
+  textboxFrameReason,
   type ImageInteractionSession,
   type ImageOverlayScrollPort,
   type ImageResizeHandle,
@@ -564,6 +565,9 @@ export function ImageSelectionOverlay({
     };
     const showHandles = active.canResize;
     const showMove = active.kind === 'anchored' && active.canMove;
+    // A text box frame says why it takes no caret or offers no handles.
+    const frameReason = textboxFrameReason(active, editor.surface.editingMode());
+    const frameLabel = frameReason ? t(frameReason) : undefined;
     return (
       <div
         ref={overlayRef}
@@ -577,6 +581,9 @@ export function ImageSelectionOverlay({
             showMove ? ' docx-editor-one-surface__overlay-control' : ''
           }`}
           data-textbox={active.textbox ? 'true' : undefined}
+          // To pointer and screen reader users alike.
+          title={frameLabel}
+          aria-description={frameLabel}
           role="group"
           aria-label={t('imageOverlay.selection')}
           style={{

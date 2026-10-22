@@ -610,7 +610,20 @@ function readProjection(node: OoxmlElement, preview?: OoxmlElement): DrawingProj
           }),
         }
       : {}),
-    locks: Object.freeze({ select: true, move: true, resize: true, changeAspect: true }),
+    // An upright text box moves and resizes through its `style`; a turned one, and a size the
+    // writer keeps as a percentage of a frame, stay as authored. Every other shape is read-only.
+    locks:
+      textboxStory && !style.has('rotation')
+        ? Object.freeze({
+            select: false,
+            move: !floating,
+            // `0` is the writer's "no percentage", so the absolute size is the one kept.
+            resize: ['mso-width-percent', 'mso-height-percent'].some(
+              (key) => (style.get(key) ?? '0') !== '0'
+            ),
+            changeAspect: false,
+          })
+        : Object.freeze({ select: true, move: true, resize: true, changeAspect: true }),
     effects:
       photo && effects ? effects : Object.freeze({ grayscale: false, brightness: 0, contrast: 0 }),
     compatibilityBranchNodeId: null,

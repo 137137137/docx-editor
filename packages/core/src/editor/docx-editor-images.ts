@@ -26,6 +26,8 @@ import { verticalMarginInsets } from '../layout/page-body-margins.ts';
 import { lineAtIndexedPosition } from '../layout/paragraph-lines.ts';
 import type { AnchoredDrawingRecord, InlineDrawingRecord } from '../layout/drawing-layout.ts';
 import { findDrawingOverlayFrameInLayout } from '../layout/semantic-hit-test.ts';
+import { editedTextboxOverlayFrame, textboxTextEditable } from './textbox-overlay-frame.ts';
+import { partOfNodeId } from './surface-scope.ts';
 import { findNode } from '../store/package/ooxml-edit.ts';
 import type {
   DrawingPositionInput,
@@ -68,7 +70,7 @@ export {
   pointsToEmu,
   type ImageResizeHandle,
 } from './image-overlay-geometry.ts';
-import type { ImageResizeHandle } from './image-overlay-geometry.ts';
+import { pointsToEmu, type ImageResizeHandle } from './image-overlay-geometry.ts';
 
 const IMAGE_ASYNC_COMMAND_TYPES = new Set(['insertImage', 'replaceImage']);
 const IMAGE_COMMAND_TYPES = new Set([
@@ -235,10 +237,10 @@ function capabilityFlags(
   projection: DrawingProjection
 ): Pick<SelectedImageState, 'canResize' | 'canMove' | 'canChangeWrap' | 'canCrop'> {
   const locks = projection.locks;
-  // An inline text box flows with its line: it is neither dragged nor resized in place.
+  // An inline text box flows with its line: it resizes in place but is never dragged.
   const fixed = projection.kind === 'inline' && projection.textboxStory !== null;
   return Object.freeze({
-    canResize: !fixed && !locks.resize && !projection.hidden,
+    canResize: !locks.resize && !projection.hidden,
     canMove: !fixed && !locks.move && !projection.hidden,
     canChangeWrap: projection.picture !== null && !locks.move && !projection.hidden,
     canCrop:
@@ -1165,6 +1167,11 @@ export interface ImageOverlayScrollPort {
 export interface SelectedDrawingOverlayTarget {
   /** Keep the text area available for pointer editing through the frame. */
   readonly textbox?: boolean;
+  /**
+   * False for a text box whose text takes no caret: rotated or vertical text, or a story
+   * holding a table. Absent for a drawing that is not a text box.
+   */
+  readonly textEditable?: boolean;
   readonly id: string;
   readonly pageIndex: number;
   readonly x: number;
@@ -1216,46 +1223,59 @@ export function selectedDrawingOverlayTargetOf(
     (anchor.paragraphId !== head.paragraphId || anchor.offset !== head.offset)
   )
     return null;
-  const record =
+  // `layout()`, not only `publishedLayout()`: the caller is about to act on this geometry —
+  // place handles, stamp a drag session — so a pass still parked on the scheduler's timer must
+  // land first. Nothing pending makes this a plain read.
+  const layout = surface.layout();
+  const edited =
     scope.kind === 'frame'
-      ? findDrawingOverlayFrameInLayout(surface.layout(), scope.drawingNodeId)?.record
-      : resolveSelectedDrawingRecord(surface);
+      ? editedTextboxOverlayFrame(layout, scope, surface.currentPage('caret') - 1)
+      : null;
+  const record = scope.kind === 'frame' ? edited?.record : resolveSelectedDrawingRecord(surface);
   if (!record) return null;
   if (record.accessibility.hidden) return null;
-  // `layout()`, not `publishedLayout()`: the caller is about to act on this geometry — place
-  // handles, stamp a drag session — so a pass still parked on the scheduler's timer must land
-  // first. Nothing pending makes this a plain read.
-  const layout = surface.layout();
-  const frame = findDrawingOverlayFrameInLayout(layout, record.drawingNodeId);
+  const frame = edited ?? findDrawingOverlayFrameInLayout(layout, record.drawingNodeId);
   if (!frame) return null;
   const projection = projectDrawingForRecord(surface, record);
-  if (!projection || projection.locks.select) return null;
-  const caps = overlayCapabilityFlags(record, projection);
+  // A text box being edited keeps its frame even when its shape cannot be selected, moved or
+  // resized, as a legacy shape cannot: the frame shows which box the caret is in.
+  const shapeSelectable = projection !== null && !projection.locks.select;
+  if (!shapeSelectable && scope.kind !== 'frame') return null;
+  const caps = shapeSelectable
+    ? overlayCapabilityFlags(record, projection)
+    : { canResize: false, canMove: false, aspectLocked: true };
   // The MODE, on top of the drawing's own OOXML locks. Without it a viewing-mode reader got
   // eight resize handles, a `move` cursor and a live drag preview that auto-scrolled the
   // document — then snapped back when the write was refused. The selection ring stays: the
   // image is still selectable, copyable and describable in a document open for viewing.
   const writable = surface.editingMode() === 'edit' && surface.session.editable;
   const gated = writable ? caps : { ...caps, canResize: false, canMove: false };
+  // The frame origins are in the record's own coordinates, which for a header or footer
+  // drawing on a story-relative axis are the story's. The overlay frame is in page-content
+  // coordinates, so the origin moves by the same shift: none for a body or page-relative axis.
   const anchorFrameOrigin =
     record.kind === 'anchoredDrawing'
       ? Object.freeze({
-          x: record.horizontalFrameOrigin,
-          y: record.verticalFrameOrigin,
+          x: record.horizontalFrameOrigin + frame.x - record.paintBounds.x,
+          y: record.verticalFrameOrigin + frame.y - record.paintBounds.y,
         })
       : null;
   return Object.freeze({
     id: record.drawingNodeId,
     textbox: 'textboxStory' in record && !!record.textboxStory,
+    ...textboxTextEditable(
+      record,
+      partOfNodeId(surface.session, record.drawingNodeId) ?? surface.session.part()
+    ),
     pageIndex: frame.pageIndex,
     x: frame.x,
     y: frame.y,
     width: frame.width,
     height: frame.height,
     kind: record.kind === 'inlineDrawing' ? 'inline' : 'anchored',
-    widthEmu: projection.extentEmu.cx,
-    heightEmu: projection.extentEmu.cy,
-    position: positionInputOf(projection),
+    widthEmu: projection?.extentEmu.cx ?? pointsToEmu(frame.width),
+    heightEmu: projection?.extentEmu.cy ?? pointsToEmu(frame.height),
+    position: projection ? positionInputOf(projection) : null,
     anchorFrameOrigin,
     transform: record.transform,
     ...gated,

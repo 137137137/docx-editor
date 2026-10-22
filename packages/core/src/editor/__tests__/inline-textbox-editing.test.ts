@@ -110,7 +110,7 @@ test('Find reaches an inline box, and its story takes typing, undo, redo, and sa
   }
 });
 
-test('selecting a match selects the inline box without move or resize', () => {
+test('selecting a match selects the inline box, which resizes but does not move', async () => {
   const editor = createDocxEditor({
     container: document.createElement('div'),
     document: inlineTextboxDocx(),
@@ -123,12 +123,18 @@ test('selecting a match selects the inline box without move or resize', () => {
     expect(image?.id).toBe(drawingNodeId);
     expect(image?.kind).toBe('inline');
     expect(image?.canMove).toBe(false);
-    expect(image?.canResize).toBe(false);
+    expect(image?.canResize).toBe(true);
     expect(image?.canChangeWrap).toBe(false);
     const overlay = selectedDrawingOverlayTargetOf(editor.surface!);
     expect(overlay?.textbox).toBe(true);
     expect(overlay?.canMove).toBe(false);
-    expect(overlay?.canResize).toBe(false);
+    expect(overlay?.canResize).toBe(true);
+    expect(
+      editor.exec({ type: 'setImageProperties', widthEmu: 2286000, heightEmu: 571500 }).ok
+    ).toBe(true);
+    expect(editor.findMatches('boxed needle')[0]?.scope?.kind).toBe('frame');
+    const xml = strFromU8(unzipSync(new Uint8Array(await editor.save()))['word/document.xml']!);
+    expect(xml).toContain('cx="2286000"');
   } finally {
     editor.destroy();
   }
@@ -228,7 +234,7 @@ test('an inline box in a table cell is editable like an anchored one', () => {
   }
 });
 
-test('an inline box in a header is found but stays read-only', () => {
+test('an inline box in a header is found and edits inside the header', () => {
   const editor = createDocxEditor({
     container: document.createElement('div'),
     document: inlineTextboxDocx({ inHeader: true }),
@@ -237,7 +243,11 @@ test('an inline box in a header is found but stays read-only', () => {
     const match = editor.findMatches('header needle')[0]!;
     expect(match.scope?.kind).toBe('frame');
     expect(match.scope?.kind === 'frame' && match.scope.owner).toBeTruthy();
-    expect(editor.surface!.setActiveScope(match.scope!)).toBe(false);
+    expect(editor.surface!.setActiveScope(match.scope!)).toBe(true);
+    const end = { paragraphId: match.blockId, offset: match.start + match.length };
+    editor.surface!.setSelection({ anchor: end, head: end });
+    expect(editor.exec({ type: 'insertText', text: ' typed' }).ok).toBe(true);
+    expect(editor.findMatches('header needle typed')[0]?.scope?.kind).toBe('frame');
   } finally {
     editor.destroy();
   }

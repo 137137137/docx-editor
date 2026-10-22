@@ -16,6 +16,8 @@
 // clamp comes from `semantic-hit-test.ts`.
 
 import { cellSelectionBetween, type CellSelection } from '../layout/semantic-cell-selection.ts';
+import { pressTakenByTextbox } from './surface-drawing-gestures.ts';
+import { MULTI_CLICK_MS, MULTI_CLICK_SLOP_PX } from './surface-multi-click.ts';
 import {
   contentControlAtPoint,
   hitTestFragments,
@@ -189,10 +191,6 @@ export interface PointerController {
   destroy(): void;
 }
 
-/** How long after a click a second one still counts as a double. */
-const MULTI_CLICK_MS = 500;
-/** How far it may move and still count — a click, not a tiny drag. */
-const MULTI_CLICK_SLOP_PX = 4;
 /** How close to the scroller's edge a drag must reach before the view starts following it. */
 const AUTO_SCROLL_EDGE_PX = 40;
 /** Fastest the view follows, per frame. */
@@ -640,12 +638,19 @@ export function createPointerController(
         active !== null && storyMatchesBinding(bandHit.story, scopeBinding(active)),
         host.measurer()
       );
-    const storyHit = yieldsToBody ? null : bandHit;
+    // A press in the text box being edited is a press in that box, even inside a header band.
+    const inEditedBox =
+      pressTakenByTextbox(event) ||
+      (event.target as Element | null)?.closest(
+        '.docx-drawing-textbox[data-docx-textbox-active="true"]'
+      );
+    const storyHit = yieldsToBody || inEditedBox ? null : bandHit;
     const noteHit = findNoteAtSheetPoint(layout, sheet, host.pageOffsetX);
     // The painted story can sit in front of the body text, so its element is the target too.
-    const furnitureDom = yieldsToBody
-      ? null
-      : (event.target as Element | null)?.closest('[data-docx-hf]');
+    const furnitureDom =
+      yieldsToBody || inEditedBox
+        ? null
+        : (event.target as Element | null)?.closest('[data-docx-hf]');
     const onFurniture = Boolean(furnitureDom || storyHit);
     const target = event.target as Element | null;
     const noteRefEl = target?.closest<HTMLElement>('[data-docx-note-ref]');
@@ -775,7 +780,7 @@ export function createPointerController(
         }
       }
       return;
-    } else if (clicks() >= 2) {
+    } else if (clicks() >= 2 && !inEditedBox) {
       // No painted furniture under the press: a double click in the blank header/footer
       // margin band creates that story and opens it, matching Word. Single presses keep
       // falling through to body hit-testing — a click in the top margin still just places

@@ -41,6 +41,13 @@ import {
   type OoxmlPart,
 } from '../package/ooxml-tree.ts';
 import { cloneWithNewIds, fromEdit, paragraphContainingNode, TEXT_DEPS } from './tree-op-nodes.ts';
+import { drawingEffect, drawingOpImpact, isValidXmlMetadata } from './tree-op-drawing-kinds.ts';
+import {
+  applyLegacyVmlGeometryOp,
+  legacyVmlDrawingOp,
+  legacyVmlGeometryRejection,
+} from './tree-op-legacy-vml-geometry.ts';
+
 import { applyInsertTrackedRun, build as buildTrackedNode } from './tree-op-tracked.ts';
 import { invalidRevisionAttribution } from './tree-op-types.ts';
 import { insertRunPayloadAtOffset, offsetInsideAtomicSegment } from './tree-op-insert-offset.ts';
@@ -48,12 +55,12 @@ import { isTableNested } from './tree-op-section-address.ts';
 import { isParagraph, paragraphLength, segmentsOf, splitsSurrogate } from './tree-op-segments.ts';
 import type {
   DrawingTreeDocOp,
-  ImpactClass,
-  TreeDocOp,
   TreeOpEffect,
   TreeOpRejection,
   TreeOpResult,
 } from './tree-op-types.ts';
+
+export { drawingOpImpact, isDrawingTreeDocOp } from './tree-op-drawing-kinds.ts';
 
 const MAX_CROP_PERMILLE = 100_000;
 
@@ -337,30 +344,10 @@ function validateRelationshipId(value: string): boolean {
   return value.length > 0 && value.length <= 512 && /^[A-Za-z0-9._-]+$/.test(value);
 }
 
-export function drawingOpImpact(op: DrawingTreeDocOp): ImpactClass {
-  switch (op.op) {
-    case 'setDrawingMetadata':
-    case 'setDrawingLocks':
-    case 'replaceDrawingResource':
-      return 'text-local';
-    case 'insertDrawing':
-    case 'deleteDrawing':
-    case 'resizeDrawing':
-    case 'cropDrawing':
-    case 'positionDrawing':
-    case 'setDrawingWrap':
-    case 'transformDrawing':
-      return 'flow-structural';
-    default: {
-      const _exhaustive: never = op;
-      void _exhaustive;
-      return 'flow-structural';
-    }
-  }
-}
-
 /** Validate a drawing op's extents, crops and positions before it reaches the store. */
 export function validateDrawingOp(part: OoxmlPart, op: DrawingTreeDocOp): TreeOpRejection | null {
+  const legacy = legacyVmlDrawingOp(part, op);
+  if (legacy) return legacyVmlGeometryRejection(part, legacy);
   switch (op.op) {
     case 'insertDrawing': {
       const paragraph = findNode(part, op.paragraphId);
@@ -479,35 +466,6 @@ export function validateDrawingOp(part: OoxmlPart, op: DrawingTreeDocOp): TreeOp
       return 'unknown-op';
     }
   }
-}
-
-function isValidXmlMetadata(value: string): boolean {
-  if (typeof value !== 'string' || value.length > 2048) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (
-      code === 0 ||
-      (code >= 0x1 && code <= 0x8) ||
-      code === 0xb ||
-      code === 0xc ||
-      (code >= 0xe && code <= 0x1f)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function drawingEffect(part: OoxmlPart, drawingId: string, op: DrawingTreeDocOp): TreeOpEffect {
-  const paragraph = paragraphContainingNode(part, drawingId);
-  const dirty = paragraph ? [paragraph.id, drawingId] : [drawingId];
-  return {
-    dirty,
-    created: [],
-    deleted: [],
-    dependencyKeys: TEXT_DEPS,
-    impact: drawingOpImpact(op),
-  };
 }
 
 function updateExtent(anchor: OoxmlElement, cx: number, cy: number): OoxmlElement {
@@ -1505,6 +1463,8 @@ export function applyDrawingOp(
   op: DrawingTreeDocOp,
   options?: EditOptions
 ): TreeOpResult {
+  const legacy = legacyVmlDrawingOp(part, op);
+  if (legacy) return applyLegacyVmlGeometryOp(part, legacy, options);
   const rejection = validateDrawingOp(part, op);
   if (rejection) return { ok: false, reason: rejection };
 
@@ -1629,20 +1589,4 @@ export function applyDrawingOp(
       return { ok: false, reason: 'unknown-op' };
     }
   }
-}
-
-/** Whether an op is one of the drawing ops. Narrows the type. */
-export function isDrawingTreeDocOp(op: TreeDocOp): op is DrawingTreeDocOp {
-  return (
-    op.op === 'insertDrawing' ||
-    op.op === 'replaceDrawingResource' ||
-    op.op === 'deleteDrawing' ||
-    op.op === 'resizeDrawing' ||
-    op.op === 'cropDrawing' ||
-    op.op === 'positionDrawing' ||
-    op.op === 'setDrawingWrap' ||
-    op.op === 'setDrawingMetadata' ||
-    op.op === 'setDrawingLocks' ||
-    op.op === 'transformDrawing'
-  );
 }

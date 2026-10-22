@@ -3560,6 +3560,7 @@ export interface SelectedDrawingOverlayTarget {
     // (undocumented)
     readonly position: DrawingPositionInput | null;
     readonly textbox?: boolean;
+    readonly textEditable?: boolean;
     // (undocumented)
     readonly transform: DrawingTransform;
     // (undocumented)
@@ -3577,13 +3578,9 @@ export function selectedDrawingOverlayTargetOf(surface: PaginatedSurface | null)
 
 // @public
 export interface SelectedImageState {
-    // (undocumented)
     readonly canChangeWrap: boolean;
-    // (undocumented)
     readonly canCrop: boolean;
-    // (undocumented)
     readonly canMove: boolean;
-    // (undocumented)
     readonly canResize: boolean;
     readonly crop: ImageCropPercent;
     // (undocumented)
@@ -3704,6 +3701,12 @@ export interface SplitCellLimits {
     // (undocumented)
     readonly maxRows: number;
 }
+
+// @public
+export function storyLabelTop(storyRect: {
+    readonly bottom: number;
+    readonly top: number;
+}, sheetTop: number | undefined, barHeight: number, clearance: number): number;
 
 // @public
 export type SupportedImageMime = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/bmp' | 'image/webp';
@@ -3963,6 +3966,14 @@ export const TEXT_FORM_FORMATS: {
     readonly number: readonly ['', '0', '0.00', '#,##0', '#,##0.00', '0%', '0.00%'];
     readonly regular: readonly ['', 'Uppercase', 'Lowercase', 'First capital', 'Title case'];
 };
+
+// @public
+export function textboxFrameReason(target: {
+    readonly canMove: boolean;
+    readonly canResize: boolean;
+    readonly textEditable?: boolean;
+    readonly textbox?: boolean;
+}, editingMode: string): 'imageOverlay.textLocked' | 'imageOverlay.locked' | null;
 
 // @public
 export interface TextFormFieldChromeHandlers {
