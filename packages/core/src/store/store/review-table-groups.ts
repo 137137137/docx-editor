@@ -13,9 +13,11 @@ import {
 } from './review-items.ts';
 import type { SiteLocation } from './review-site-locations.ts';
 import type { RevisionSite } from './tree-op-revisions.ts';
+import { sourcelessMoveSites } from './review-sourceless-moves.ts';
 import { textUnder } from './review-text.ts';
 import { groupTableFormatting } from './review-table-format-groups.ts';
 import { groupAdjacentRunFormatting } from './review-run-format-groups.ts';
+import { groupCellColumns } from './review-cell-column-groups.ts';
 import { keepsSubtreeMemo } from '../package/subtree-memo-policy.ts';
 import { ancestorIdsOf } from './node-ancestors.ts';
 
@@ -43,6 +45,20 @@ function holdsTableStructure(node: OoxmlNode): boolean {
   const result = isW(node, 'tbl') || isW(node, 'tr') || node.children.some(holdsTableStructure);
   if (keepsSubtreeMemo(node)) tableStructureCache.set(node, result);
   return result;
+}
+
+/** A table's row-level children, with the rows of row-level controls and custom XML in place. */
+function rowLevelChildren(node: OoxmlElement): OoxmlNode[] {
+  const out: OoxmlNode[] = [];
+  for (const child of node.children) {
+    if (isW(child, 'sdt') && child.kind !== 'textValue') {
+      const content = child.children.find((n) => isW(n, 'sdtContent'));
+      if (content && content.kind !== 'textValue') out.push(...rowLevelChildren(content));
+    } else if (isW(child, 'customXml') && child.kind !== 'textValue') {
+      out.push(...rowLevelChildren(child));
+    } else out.push(child);
+  }
+  return out;
 }
 
 // Word-created nested rows include tracked cell paragraph marks. Those marks
@@ -110,6 +126,8 @@ function groupRowRevisions(
   );
   if (rowSites.size === 0) return [...items];
   const sitesById = new Map(sites.map((site) => [site.node.id, site]));
+  // A move destination with no source is an insertion of the row it sits in.
+  const sourceless = sourcelessMoveSites(part.root, sites);
   // Built on first use: only a nested row marker reads it, and it walks every site location.
   let paragraphLengths: Map<string, number> | undefined;
   const paragraphLength = (id: string): number => {
@@ -132,11 +150,14 @@ function groupRowRevisions(
     if (
       site &&
       !site.propertyChange &&
-      node.localName === group.direction &&
+      (sourceless.has(node.id) ? 'ins' : node.localName) === group.direction &&
       !site.refused &&
       (rowMarker
         ? attribute(node, 'author') === group.author
-        : site.paragraphMark || node.kind === 'revisionInsert' || node.kind === 'revisionDelete')
+        : site.paragraphMark ||
+          node.kind === 'revisionInsert' ||
+          node.kind === 'revisionDelete' ||
+          sourceless.has(node.id))
     ) {
       ownerBySite.set(node.id, group);
       if (rowMarker) group.markerIds.add(node.id);
@@ -157,7 +178,7 @@ function groupRowRevisions(
     }
     if (isW(node, 'tbl')) {
       let current: RowGroup | undefined;
-      for (const child of node.children) {
+      for (const child of rowLevelChildren(node)) {
         if (child.kind === 'textValue' || !isW(child, 'tr')) {
           current = undefined;
           continue;
@@ -368,11 +389,17 @@ export function groupTableRevisions(
   items: readonly ReviewRevisionItem[],
   sites: readonly RevisionSite[],
   locations: ReadonlyMap<string, SiteLocation>,
-  order: ReadonlyMap<string, number>
+  order: ReadonlyMap<string, number>,
+  segmentOf: (item: ReviewRevisionItem) => string = () => ''
 ): ReviewRevisionItem[] {
   const grouped = groupAdjacentRunFormatting(
-    groupTableFormatting(part, groupRowRevisions(part, items, sites, locations), sites),
-    sites
+    groupTableFormatting(
+      part,
+      groupCellColumns(part, groupRowRevisions(part, items, sites, locations), sites),
+      sites
+    ),
+    sites,
+    segmentOf
   );
   // Row markers start in property XML but nested decisions belong at row ends.
   // Preserve the existing site-order contract for paragraph-local derivations.

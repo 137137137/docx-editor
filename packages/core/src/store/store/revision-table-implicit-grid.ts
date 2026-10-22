@@ -1,5 +1,5 @@
 import { readTwipsMeasure } from '../units.ts';
-import { WML_NAMESPACE_URI, type OoxmlElement } from '../package/ooxml-tree.ts';
+import { WML_NAMESPACE_URI, type OoxmlElement, type OoxmlNode } from '../package/ooxml-tree.ts';
 import { tableChildren, replaceTableChildren } from './revision-table-children.ts';
 import { recordedProperties } from './tree-op-tracked-properties.ts';
 function elements(node: OoxmlElement): OoxmlElement[] {
@@ -19,17 +19,20 @@ export function implicitGridRows(table: OoxmlElement, restored: ReadonlySet<stri
   const grid = child(table, 'tblGrid');
   if (!grid || child(grid, 'tblGridChange')) return result;
   const rows = tableChildren(table, 'tableRow');
-  if (!rows.some((row) => !child(child(row, 'trPr'), 'trPrChange'))) return result;
+  // A row exception records no row geometry, so rejecting one restores the row as an empty
+  // row snapshot does.
+  const exception = (row: OoxmlElement) => {
+    const record = child(child(row, 'tblPrEx'), 'tblPrExChange');
+    return record && restored.has(record.id) ? record : undefined;
+  };
+  if (!rows.some((row) => !child(child(row, 'trPr'), 'trPrChange') && !exception(row)))
+    return result;
   for (const row of rows) {
     const record = child(child(row, 'trPr'), 'trPrChange');
     const cells = tableChildren(row, 'tableCell');
-    if (
-      !record ||
-      !restored.has(record.id) ||
-      recordedProperties(record)?.length !== 0 ||
-      !cells.length
-    )
-      continue;
+    const emptySnapshot =
+      record && restored.has(record.id) && recordedProperties(record)?.length === 0;
+    if (!(emptySnapshot || (!record && exception(row))) || !cells.length) continue;
     if (
       cells.some((cell) => {
         const pr = child(cell, 'tcPr');
@@ -189,9 +192,25 @@ export function restoreImplicitRowGrid(
       );
       children.splice(index < 0 ? children.length : index, 0, replacement);
     }
+    const patched = { ...pr, children } as OoxmlNode;
+    // An existing container keeps its place; a new `w:trPr` follows the row's `w:tblPrEx`.
+    if (node.children.some((n) => n.id === pr.id))
+      return {
+        ...node,
+        children: node.children.map((n) => (n.id === pr.id ? patched : n)),
+      } as OoxmlElement;
+    const at =
+      name === 'trPr'
+        ? node.children.findIndex(
+            (n) =>
+              n.kind !== 'textValue' &&
+              n.namespaceUri === WML_NAMESPACE_URI &&
+              n.localName === 'tblPrEx'
+          ) + 1
+        : 0;
     return {
       ...node,
-      children: [{ ...pr, children }, ...node.children.filter((n) => n.id !== pr.id)],
+      children: [...node.children.slice(0, at), patched, ...node.children.slice(at)],
     } as OoxmlElement;
   };
   const fixed = attr(child(child(original, 'tblPr'), 'tblLayout'), 'type') === 'fixed';
