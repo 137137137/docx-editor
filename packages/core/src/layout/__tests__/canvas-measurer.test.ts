@@ -268,6 +268,47 @@ describe('canvas measurer cache bounds', () => {
     expect(ctx.measureCalls.filter((text) => text === 'repeat').length).toBe(1);
   });
 
+  test('a width cache hit keeps the entry and moves it to most recently used', () => {
+    const ctx = countingContext();
+    const measurer = tryCreateCanvasMeasurer({ context: ctx, maxWidthEntries: 3 })!;
+    const s = () => style({ fontSizePt: 11 });
+    const calls = (text: string) => ctx.measureCalls.filter((call) => call === text).length;
+
+    measurer.measure('aaa', s);
+    measurer.measure('bbb', s);
+    measurer.measure('ccc', s);
+    // Hit the middle entry, then the oldest: recency becomes ccc, bbb, aaa.
+    measurer.measure('bbb', s);
+    measurer.measure('aaa', s);
+    expect(calls('aaa')).toBe(1);
+    expect(calls('bbb')).toBe(1);
+
+    measurer.measure('ddd', s); // evicts ccc, now the least recently used
+    measurer.measure('aaa', s);
+    measurer.measure('bbb', s);
+    expect(calls('aaa')).toBe(1);
+    expect(calls('bbb')).toBe(1);
+    measurer.measure('ccc', s);
+    expect(calls('ccc')).toBe(2);
+  });
+
+  test('a line-metrics cache hit keeps the entry and moves it to most recently used', () => {
+    const ctx = countingContext();
+    const measurer = tryCreateCanvasMeasurer({ context: ctx, maxMetricsEntries: 2 })!;
+    const probes = () => ctx.measureCalls.filter((text) => text === 'Hxg').length;
+
+    measurer.lineMetrics(style({ fontSizePt: 10 }));
+    measurer.lineMetrics(style({ fontSizePt: 12 }));
+    measurer.lineMetrics(style({ fontSizePt: 10 })); // hit: 10pt becomes most recent
+    expect(probes()).toBe(2);
+
+    measurer.lineMetrics(style({ fontSizePt: 14 })); // evicts 12pt, not 10pt
+    measurer.lineMetrics(style({ fontSizePt: 10 }));
+    expect(probes()).toBe(3);
+    measurer.lineMetrics(style({ fontSizePt: 12 }));
+    expect(probes()).toBe(4);
+  });
+
   test('line-metrics cache evicts least-recent font shorthands at the configured limit', () => {
     const ctx = countingContext();
     const measurer = tryCreateCanvasMeasurer({ context: ctx, maxMetricsEntries: 2 })!;

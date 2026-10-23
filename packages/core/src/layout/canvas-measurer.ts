@@ -129,24 +129,64 @@ function normalizeCacheCapacity(raw: number | undefined, fallback: number): numb
   return Math.max(1, Math.floor(raw));
 }
 
+interface LruEntry<K, V> {
+  readonly key: K;
+  value: V;
+  older: LruEntry<K, V> | null;
+  newer: LruEntry<K, V> | null;
+}
+
+/**
+ * A bounded least-recently-used cache. A linked list beside the map holds the recency order,
+ * so a hit relinks one entry instead of deleting and re-inserting its key.
+ */
 function createBoundedLruCache<K, V>(capacity: number): BoundedLruCache<K, V> {
-  const entries = new Map<K, V>();
+  const entries = new Map<K, LruEntry<K, V>>();
+  let oldest: LruEntry<K, V> | null = null;
+  let newest: LruEntry<K, V> | null = null;
   let evictions = 0;
+  const unlink = (entry: LruEntry<K, V>): void => {
+    if (entry.older) entry.older.newer = entry.newer;
+    else oldest = entry.newer;
+    if (entry.newer) entry.newer.older = entry.older;
+    else newest = entry.older;
+    entry.older = null;
+    entry.newer = null;
+  };
+  const append = (entry: LruEntry<K, V>): void => {
+    entry.older = newest;
+    entry.newer = null;
+    if (newest) newest.newer = entry;
+    else oldest = entry;
+    newest = entry;
+  };
   return {
     get(key) {
-      const value = entries.get(key);
-      if (value === undefined) return undefined;
-      entries.delete(key);
-      entries.set(key, value);
-      return value;
+      const entry = entries.get(key);
+      if (entry === undefined) return undefined;
+      if (entry !== newest) {
+        unlink(entry);
+        append(entry);
+      }
+      return entry.value;
     },
     set(key, value) {
-      if (entries.has(key)) entries.delete(key);
-      entries.set(key, value);
-      while (entries.size > capacity) {
-        const oldest = entries.keys().next();
-        if (oldest.done) break;
-        entries.delete(oldest.value);
+      const existing = entries.get(key);
+      if (existing) {
+        existing.value = value;
+        if (existing !== newest) {
+          unlink(existing);
+          append(existing);
+        }
+        return;
+      }
+      const entry: LruEntry<K, V> = { key, value, older: null, newer: null };
+      entries.set(key, entry);
+      append(entry);
+      while (entries.size > capacity && oldest) {
+        const evicted: LruEntry<K, V> = oldest;
+        unlink(evicted);
+        entries.delete(evicted.key);
         evictions += 1;
       }
     },
