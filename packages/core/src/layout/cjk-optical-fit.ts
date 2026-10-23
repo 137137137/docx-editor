@@ -21,11 +21,17 @@ const CLOSING = /^[、。〉》」』】〕〗〙〛），．］｝]$/u;
 const PUNCTUATION = /^[〈《「『【〔〖〘〚（［｛、。〉》」』】〕〗〙〛），．］｝：]$/u;
 const HAS_PUNCTUATION = /[〈《「『【〔〖〘〚（［｛、。〉》」』】〕〗〙〛），．］｝：]/u;
 const TOLERANCE = 0.001;
+// A curly quote in the East Asian font slot fits like the matching bracket.
+function curlyRole(text: string): 'opening' | 'closing' | undefined {
+  if (text === '‘' || text === '“') return 'opening';
+  if (text === '’' || text === '”') return 'closing';
+  return undefined;
+}
 // Every fit attempt re-reads the whole line, so segmentation dominates its cost. In BMP East
-// Asian, fullwidth, and space text without combining kana or tone marks, each code unit is
-// one grapheme.
+// Asian, fullwidth, curly-quote, and space text without combining kana or tone marks, each
+// code unit is one grapheme.
 const SINGLE_UNIT_CLUSTERS =
-  /^[ \u3000-\u3029\u3030-\u3098\u309b-\u9fff\uff00-\uff9d\uffa0-\uffef]*$/u;
+  /^[ \u2018\u2019\u201c\u201d\u3000-\u3029\u3030-\u3098\u309b-\u9fff\uff00-\uff9d\uffa0-\uffef]*$/u;
 export function fittingClusters(text: string): readonly GraphemeSegment[] {
   if (!isDefaultGraphemeBoundary() || !SINGLE_UNIT_CLUSTERS.test(text))
     return segmentGraphemes(text);
@@ -54,6 +60,7 @@ interface Cell {
   span: StyleSpanRecord;
   readonly sourceIndex: number;
   readonly ordinaryOpaque?: true;
+  readonly qualifiedCurly?: 'opening' | 'closing';
   readonly natural: number;
   readonly alreadyReduced: number;
   readonly ink: { left: number; right: number } | undefined;
@@ -206,13 +213,16 @@ function cellsOf(
         continue;
       }
     }
+    // Only the qualified local path reaches here with a curly quote; the paragraph gate refuses it.
+    const curlyAllowed = requireLocalQualification && span.fontSlot === 'eastAsia';
     const clusters = fittingClusters(span.text);
     if (
       clusters.some(
         (cluster) =>
           cluster.text !== ' ' &&
           !isCjk(cluster.text.codePointAt(0)!) &&
-          !PUNCTUATION.test(cluster.text)
+          !PUNCTUATION.test(cluster.text) &&
+          !(curlyAllowed && curlyRole(cluster.text))
       )
     )
       return undefined;
@@ -235,8 +245,10 @@ function cellsOf(
         else high = middle - 1;
       }
       const baseline = baselinePieces[low]!;
+      const qualifiedCurly = curlyAllowed ? curlyRole(cluster.text) : undefined;
       cells.push({
         sourceIndex,
+        ...(qualifiedCurly ? { qualifiedCurly } : {}),
         alreadyReduced: Math.max(
           0,
           (baseline.style.characterSpacingPt - span.style.characterSpacingPt) * cluster.text.length
@@ -325,7 +337,14 @@ function fitCjkOptically(
 
   const last = cells.at(-1)!;
   // The final closing bearing is removed first. Its measured ink must stay inside.
-  if (CLOSING.test(last.span.text) && finiteInk(last)) {
+  const beforeLast = cells.at(-2);
+  // A final curly quote needs an East Asian character before it; other neighbours have no measured pair.
+  const curlyFinal =
+    last.qualifiedCurly === 'closing' &&
+    beforeLast !== undefined &&
+    isCjk(beforeLast.span.text.codePointAt(0)!) &&
+    !PUNCTUATION.test(beforeLast.span.text);
+  if ((CLOSING.test(last.span.text) || curlyFinal) && finiteInk(last)) {
     const extent = Math.max(last.natural / 2, last.ink.right + (last.span.glyphOffsetPt ?? 0));
     last.reduction = Math.min(deficit, Math.max(0, last.span.box.width - extent));
     deficit -= last.reduction;
@@ -349,18 +368,25 @@ function fitCjkOptically(
     const after = current.span.text;
     let cell: Cell;
     let left: boolean;
+    // Curly quotes join only the ideograph and colon seams; nothing measures their other pairs.
     if (
-      OPENING.test(after) &&
-      (CLOSING.test(before) ||
-        ((isCjk(before.codePointAt(0)!) || previous.ordinaryOpaque === true) &&
-          !PUNCTUATION.test(before)))
+      (OPENING.test(after) &&
+        (CLOSING.test(before) ||
+          ((isCjk(before.codePointAt(0)!) || previous.ordinaryOpaque === true) &&
+            !PUNCTUATION.test(before)))) ||
+      (current.qualifiedCurly === 'opening' &&
+        isCjk(before.codePointAt(0)!) &&
+        !PUNCTUATION.test(before))
     ) {
       cell = current;
       left = true;
     } else if (
-      (before === '：' && OPENING.test(after)) ||
+      (before === '：' && (OPENING.test(after) || current.qualifiedCurly === 'opening')) ||
       (CLOSING.test(before) &&
         (isCjk(after.codePointAt(0)!) || current.ordinaryOpaque === true) &&
+        !PUNCTUATION.test(after)) ||
+      (previous.qualifiedCurly === 'closing' &&
+        isCjk(after.codePointAt(0)!) &&
         !PUNCTUATION.test(after))
     ) {
       cell = previous;

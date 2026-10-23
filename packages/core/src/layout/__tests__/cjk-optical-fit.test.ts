@@ -414,7 +414,7 @@ test('optical line geometry remains stable through cached width changes', () => 
 });
 
 test('the single-unit cluster fast path agrees with grapheme segmentation', () => {
-  const units: string[] = [' '];
+  const units: string[] = [' ', '\u2018', '\u2019', '\u201c', '\u201d'];
   for (const [from, to] of [
     [0x3000, 0x9fff],
     [0xff00, 0xffef],

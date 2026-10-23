@@ -416,3 +416,19 @@ The editor SHALL replace host font resources without replacing its document sess
 - **WHEN** the current replacement resolver fails
 - **THEN** the editor reports the failure with its cause and keeps bounded fallback measurement
 - **AND** it does not restore fonts that the host removed
+
+### Requirement: Qualified East Asian curly bearings in existing punctuation windows
+
+The layout engine SHALL allow curly quotes in runs with the East Asian font hint (`w:hint="eastAsia"`) to contribute measured opening or closing bearings inside an existing qualified CJK punctuation fitting window. The face SHALL resolve, authored character spacing SHALL be zero, horizontal scale SHALL be 100%, and complex shaping SHALL be absent. The document SHALL qualify its East Asian default face and SHALL NOT disable punctuation kerning.
+
+#### Scenario: Qualified curly bearings complete an existing CJK punctuation window
+
+- **GIVEN** a plain source paragraph with supported CJK punctuation and curly quotes in a run with the East Asian font hint
+- **WHEN** the measured line deficit fits within the supported punctuation bearings
+- **THEN** layout fits the protected group without changing source text, authored font size, or UTF-16 source ranges
+
+#### Scenario: Unsupported curly context keeps existing behavior
+
+- **GIVEN** a curly-only punctuation window, unhinted Latin quotes, a curly quote side that faces punctuation or a Latin word, unresolved face, authored tracking, horizontal scaling, complex shaping, decorated text, or source punctuation-kerning refusal
+- **WHEN** layout considers optical fitting
+- **THEN** the new East Asian curly path leaves the unsupported geometry unchanged
