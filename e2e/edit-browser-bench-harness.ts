@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test';
+import { errors, type Page } from '@playwright/test';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -124,6 +124,9 @@ export async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** How long an open may take to finish its complete layout before the harness gives up. */
+const LAYOUT_TIMEOUT_MS = 60_000;
+
 export async function loadHarness(
   page: Page,
   installMeasurementProbe: (page: Page) => Promise<void>,
@@ -133,7 +136,44 @@ export async function loadHarness(
   await page.goto(editBrowserBenchUrl(fixture), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!window.__DOCX_EDITOR_E2E__?.ready());
   await page.waitForFunction(() => window.__DOCX_EDITOR_E2E__?.fontMeasurer() === 'shaped');
-  await page.waitForSelector('.docx-page[data-materialized="true"]', { timeout: 60_000 });
+  // A materialized first page can precede the remaining pagination during progressive open.
+  // Keep the existing preparation budget, and start measurement after the complete layout.
+  try {
+    await page.waitForFunction(
+      () => {
+        const materialized = document.querySelector('.docx-page[data-materialized="true"]');
+        if (!materialized) return false;
+        const bounds = materialized.getBoundingClientRect();
+        return (
+          getComputedStyle(materialized).visibility === 'visible' &&
+          bounds.width > 0 &&
+          bounds.height > 0 &&
+          !document.querySelector('[data-docx-opening-preview], [data-docx-layout-pending]')
+        );
+      },
+      undefined,
+      { timeout: LAYOUT_TIMEOUT_MS }
+    );
+  } catch (error) {
+    if (!(error instanceof errors.TimeoutError)) throw error;
+    // Say what was still pending, so a timeout is not mistaken for a slow benchmark.
+    // A blocked page must not hold the report until the test timeout.
+    const state = await Promise.race([
+      page.evaluate(() => ({
+        pages: document.querySelectorAll('.docx-page').length,
+        materializedPages: document.querySelectorAll('.docx-page[data-materialized="true"]').length,
+        openingPreview: !!document.querySelector('[data-docx-opening-preview]'),
+        layoutPending: !!document.querySelector('[data-docx-layout-pending]'),
+      })),
+      delay(5_000).then(() => null),
+    ]).catch(() => null);
+    throw new Error(
+      `${fixture} did not finish layout in ${LAYOUT_TIMEOUT_MS / 1000} s: ${JSON.stringify(state)}`,
+      {
+        cause: error,
+      }
+    );
+  }
   if (measurementProbe) await installMeasurementProbe(page);
 }
 
