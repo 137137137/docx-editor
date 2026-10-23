@@ -11,6 +11,8 @@
 // It stays an ESTIMATE on the paths it has always approximated: the oversized-word chop
 // and horizontal float passages are placement-time decisions this pass cannot see.
 
+import { automaticTextGap } from './cjk-automatic-spacing.ts';
+import { DEFAULT_CJK_TYPOGRAPHY } from './cjk-typography.ts';
 import { PAGE_BREAK_CHAR } from '@docx-editor.dev/core/store';
 import { pageBreakYieldsToLineBreak } from './page-break-before-line-break.ts';
 import type { FieldAwarePiece } from './field-projection.ts';
@@ -53,6 +55,7 @@ export function anchorLineStartsByModelOffset(input: {
   // one character off whenever a closing mark wrapped down with its carrier, and
   // `zoneApplies` then keyed off the wrong line.
   let probeLastEmitted = '';
+  let previousText: (FieldAwarePiece & { modelEnd: number }) | undefined;
   let probeWordStart = 0;
   let probeWordStartWidth = -1;
   const probeLineOffset = (): number => (probeLineIndex === 0 ? firstLineOffset : 0);
@@ -61,6 +64,7 @@ export function anchorLineStartsByModelOffset(input: {
     probeLineStart = nextStart;
     lineStarts.push(nextStart);
     probeWidth = 0;
+    previousText = undefined;
     probeLineIndex += 1;
   };
   for (const [pieceIndex, piece] of pieces.entries()) {
@@ -76,6 +80,7 @@ export function anchorLineStartsByModelOffset(input: {
       if (probeWidth > 0 && probeWidth + width > probeLineAvail()) closeProbeLine(piece.start);
       probeWidth += width;
       probeLastEmitted = '';
+      previousText = undefined;
       probeWordStartWidth = -1;
       continue;
     }
@@ -84,6 +89,7 @@ export function anchorLineStartsByModelOffset(input: {
       if (probeWidth > 0 && probeWidth + width > probeLineAvail()) closeProbeLine(piece.start);
       probeWidth += width;
       probeLastEmitted = '';
+      previousText = undefined;
       probeWordStartWidth = -1;
       continue;
     }
@@ -104,12 +110,21 @@ export function anchorLineStartsByModelOffset(input: {
       if (candidate.length === 0) continue;
       const style = styleForFontSlot(piece.style, piece.fontSlot);
       const measure = (text: string): number => measurer.measure(displayText(text, style), style);
+      const gap = () =>
+        previousText && previousText.modelEnd === piece.start + consumed
+          ? automaticTextGap(
+              previousText,
+              { ...piece, text: candidate, style },
+              input.typography ?? DEFAULT_CJK_TYPOGRAPHY,
+              measurer
+            )
+          : 0;
       let width =
         piece.fieldAtom?.formControl?.kind === 'checkbox'
           ? style.fontSizePt
           : measure(piece.measureText ?? candidate);
       if (!probePieceLayoutOwned && piece.measureText === undefined) {
-        const remaining = probeLineAvail() - probeWidth;
+        const remaining = probeLineAvail() - probeWidth - gap();
         width = clipWordEnd(candidate, width, remaining, measure, 0.001)?.width ?? width;
         if (probeWidth > 0 && isCollapsibleLineEndWhitespace(candidate))
           width = Math.min(width, Math.max(0, remaining));
@@ -133,7 +148,7 @@ export function anchorLineStartsByModelOffset(input: {
           measurer,
           input.typography.overflowFullwidthPunctuation !== false
         );
-      const fitWidth = input.seamNaturalWidths?.get(piece) ?? width;
+      const fitWidth = (input.seamNaturalWidths?.get(piece) ?? width) + gap();
       if (!hangs && probeWidth > 0 && probeWidth + fitWidth > probeLineAvail()) {
         if (probeDecision === 'forbidden' && probeWordStartWidth <= 0) {
           // Placement pushes the group out past the measure rather than opening a line
@@ -149,7 +164,8 @@ export function anchorLineStartsByModelOffset(input: {
         }
         probeWordStartWidth = 0;
       }
-      probeWidth += width;
+      probeWidth += gap() + width;
+      previousText = { ...piece, text: candidate, style, modelEnd: piece.start + boundary };
       probeLastEmitted = candidate;
       consumed = boundary;
     }

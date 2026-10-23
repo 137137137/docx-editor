@@ -1,6 +1,7 @@
 // Moves a word that overflows at a run boundary inside it. Extracted from paragraph-flow so
 // that module stays inside its line budget; it is the only consumer.
 
+import { automaticTextSpacingBefore, withAutomaticTextSpacing } from './cjk-automatic-spacing.ts';
 import { PAGE_BREAK_CHAR } from '@docx-editor.dev/core/store';
 import { growLineMetricsForText, lineBandText, type PendingLine } from './pending-line.ts';
 import { displayText } from './run-style.ts';
@@ -84,8 +85,15 @@ function placeOpeningWord(
 /** Lay the word's spans again from the pen, regrowing the line metrics they set. */
 function relayWord(context: WordCarryContext, carried: readonly StyleSpanRecord[]): void {
   const line = context.line();
-  for (const span of carried) {
-    line.spans.push({ ...span, box: { ...span.box, x: context.lineOrigin() + line.width } });
+  for (const [index, span] of carried.entries()) {
+    const gap = index === 0 ? 0 : automaticTextSpacingBefore(span);
+    line.width += gap;
+    line.spans.push(
+      withAutomaticTextSpacing(
+        { ...span, box: { ...span.box, x: context.lineOrigin() + line.width } },
+        gap
+      )
+    );
     line.width += span.box.width;
     line.end = span.range.end;
     // An ignored cell page break adds no height, as when first placed.
@@ -166,7 +174,11 @@ export function carryPartialWord(
   let line = context.line();
   const carried = line.spans.splice(start.span);
   restoreWordStart(line, start);
-  const wordWidth = carried.reduce((sum, span) => sum + span.box.width, pendingWidth);
+  const wordWidth = carried.reduce(
+    (sum, span, index) =>
+      sum + span.box.width + (index === 0 ? 0 : automaticTextSpacingBefore(span)),
+    pendingWidth
+  );
   context.setProbeWidth(wordWidth);
   let next = start;
   const first = carried[0];

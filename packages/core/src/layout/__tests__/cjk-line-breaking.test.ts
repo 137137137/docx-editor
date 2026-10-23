@@ -301,11 +301,49 @@ describe('Latin behaviour is unchanged', () => {
   });
 
   test('a Latin word beside CJK stays whole while the CJK wraps freely', () => {
-    // 玄黄ABCD宇 is bounded by ideograph|Latin seams on both sides of ABCD; no new
-    // opportunity appears inside or beside the Latin word, so it wraps as one unit.
-    expect(linesOf(`<w:p>${run('天地玄黄ABCD宇宙洪荒日月盈')}</w:p>`)).toEqual([
+    const source = '天地玄黄ABCD宇宙洪荒日月盈';
+    const body = `<w:p>${run(source)}</w:p>`;
+    const automatic = breakParagraph(paragraph(body), 'p', 0, 60, measurer, undefined, null);
+    expect(automatic.map((line) => line.spans.map((span) => span.text).join(''))).toEqual([
+      '天地玄黄ABCD宇',
+      '宙洪荒日月盈',
+    ]);
+    // The fixed measurer has no authored reverse metric. Only the 11/4 forward gap applies.
+    expect(automatic[0]!.width).toBeCloseTo(9 * 6 + 11 / 4, 8);
+    const latin = automatic[0]!.spans.find((span) => span.text === 'ABCD')!;
+    expect(latin.range).toEqual({ paragraphId: 'p', start: 4, end: 8 });
+    expect(latin.box.width).toBeCloseTo(24, 8);
+    expect(automatic[0]!.spans[0]!.box.x).toBeCloseTo(0, 8);
+    expect(latin.box.x - automatic[0]!.spans[0]!.box.x).toBeCloseTo(4 * 6 + 11 / 4, 8);
+    const following = automatic[0]!.spans.find((span) => span.range.start === 8)!;
+    expect(following.box.x - latin.box.x - latin.box.width).toBeCloseTo(0, 8);
+    for (const line of automatic) {
+      expect(line.width).toBeLessThanOrEqual(60);
+      for (const span of line.spans)
+        expect(span.text).toBe(source.slice(span.range.start, span.range.end));
+    }
+    expect(
+      automatic
+        .flatMap((line) => line.spans)
+        .map((span) => span.text)
+        .join('')
+    ).toBe(source);
+    expect(automatic.at(-1)!.spans.at(-1)!.range.end).toBe(source.length);
+    // An authored false preserves the complete old wrapping contract, without changing text.
+    const original = readOoxmlPart(
+      `<w:document xmlns:w="${W}"><w:body><w:p><w:pPr><w:overflowPunct w:val="0"/><w:autoSpaceDE w:val="0"/></w:pPr>${run(source)}</w:p></w:body></w:document>`,
+      { name: '/word/document.xml', contentType: 'app/xml' }
+    );
+    if (!original.ok) throw new Error(original.reason);
+    const p = original.part.root.children[0]!.children.find((child) => child.kind === 'paragraph')!;
+    const disabled = breakParagraph(p, 'p', 0, 60, measurer, undefined, null);
+    expect(disabled.map((line) => line.spans.map((span) => span.text).join(''))).toEqual([
       '天地玄黄ABCD宇宙',
       '洪荒日月盈',
     ]);
+    expect(disabled[0]!.width).toBeCloseTo(60, 8);
+    for (const line of disabled)
+      for (const span of line.spans)
+        expect(span.text).toBe(source.slice(span.range.start, span.range.end));
   });
 });

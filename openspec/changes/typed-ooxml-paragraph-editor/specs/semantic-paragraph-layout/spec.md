@@ -325,6 +325,60 @@ Row and column insertion, deletion, and column resize commits SHALL publish `flo
 - **WHEN** a middle-table column resize converges without repagination before the following page
 - **THEN** preceding and following unchanged pages retain stable identities
 
+### Requirement: Automatic inter-script spacing
+
+Semantic layout SHALL resolve `w:autoSpaceDE` and `w:autoSpaceDN` through the paragraph cascade, with enabled defaults. It SHALL add bounded layout advances at supported East Asian and Latin-letter or ASCII-digit boundaries. It SHALL preserve source text and canonical UTF-16 offsets. Line fitting, paint, caret geometry, and anchor prediction SHALL use the same advances. Authored character spacing and unsupported run forms SHALL retain their existing behavior.
+
+#### Scenario: An inherited false overrides the enabled default
+
+- **WHEN** a paragraph inherits `w:autoSpaceDN` or `w:autoSpaceDE` with a false value
+- **THEN** that boundary type retains its original advance unless a direct true overrides the inherited value
+
+#### Scenario: A source run boundary separates scripts
+
+- **WHEN** supported adjacent text changes between East Asian and Latin letters or ASCII digits across source runs
+- **THEN** layout applies one boundary advance without adding a source character or changing source ranges
+
+#### Scenario: A boundary moves to another line
+
+- **WHEN** the additional advance prevents adjacent text from fitting on one line
+- **THEN** layout wraps the text and removes the boundary advance at the new line start
+
+#### Scenario: Shared edits remove a script boundary
+
+- **WHEN** two editors converge after edits remove the only East Asian character from a warm paragraph
+- **THEN** both editors remove the obsolete automatic advances and retain shared text, history, and saved source offsets
+
+#### Scenario: Reverse gap uses the authored face metric
+
+- **WHEN** Latin letters or ASCII digits precede supported East Asian text and the shaped measurer resolves the authored Latin face without substitution
+- **THEN** the boundary advance equals half of that face's average character width per em, scaled to the run's font size
+- **AND** glyph advances, source text, and canonical offsets remain unchanged
+
+#### Scenario: Custom metric refuses a boundary
+
+- **WHEN** the automatic-spacing hook returns an unavailable or invalid metric
+- **THEN** the boundary receives no invented gap
+- **AND** measurers without the hook add no reverse advance
+
+#### Scenario: Directional spacing uses the authored font
+
+- **WHEN** supported East Asian text precedes Latin letters or ASCII digits
+- **THEN** the boundary advance equals one quarter of the East Asian run's authored font size
+- **AND** a substitute font's average width cannot change that advance
+
+#### Scenario: Reverse spacing has no authored metric
+
+- **WHEN** Latin letters or ASCII digits precede East Asian text and the authored font metric is unavailable
+- **THEN** the boundary adds no reverse advance
+- **AND** layout does not use a substitute font's average width or change source text
+
+#### Scenario: A group that cannot break keeps its advance
+
+- **WHEN** East Asian text and a Latin letter or ASCII digit share one font and no line break is allowed between them
+- **THEN** line layout draws the same boundary advance that table AutoFit counts
+- **AND** the caret after the boundary sits after the advance
+
 ### Requirement: Host font resource replacement
 
 The editor SHALL replace host font resources without replacing its document session, content, selection, or undo history. Replacement SHALL invalidate font-dependent measurement, paragraph layout, and paint. Document protection and shared collaboration data SHALL remain unchanged.

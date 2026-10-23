@@ -208,3 +208,15 @@ export function spreadPreferredColumns(
   const scale = Math.max(0, fitTo - hairlines) / Math.max(needed - hairlines, EPSILON_PT);
   return floor.map((width) => MIN_COLUMN_PT + (width - MIN_COLUMN_PT) * scale);
 }
+
+/** Widths that match the resolved ones come back by identity, so the shared base stays. */
+export function sameOrComputed(
+  structure: { readonly columnWidthsPt: readonly number[] },
+  computed: readonly number[]
+): readonly number[] {
+  return computed.every(
+    (width, column) => Math.abs(width - structure.columnWidthsPt[column]!) <= EPSILON_PT
+  )
+    ? structure.columnWidthsPt
+    : computed;
+}

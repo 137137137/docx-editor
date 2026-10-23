@@ -32,6 +32,10 @@ export interface CjkParagraphTypography {
   /** Full-width punctuation hangs only on justified paragraphs. */
   readonly overflowFullwidthPunctuation?: boolean;
   readonly characterWrap: boolean;
+  /** Automatic spacing at number/East Asian boundaries; absent means enabled. */
+  readonly autoSpaceDN?: boolean;
+  /** Automatic spacing at Latin/East Asian boundaries; absent means enabled. */
+  readonly autoSpaceDE?: boolean;
 }
 
 export const DEFAULT_CJK_TYPOGRAPHY: CjkParagraphTypography = Object.freeze({
@@ -101,7 +105,11 @@ export function resolveCjkTypography(
 ): CjkParagraphTypography {
   let { kinsoku, overflowPunctuation, characterWrap } = DEFAULT_CJK_TYPOGRAPHY;
   let justified = false;
+  let autoSpaceDN = true;
+  let autoSpaceDE = true;
   for (const prop of props) {
+    if (prop.localName === 'autoSpaceDN') autoSpaceDN = on(prop.attributes?.val);
+    if (prop.localName === 'autoSpaceDE') autoSpaceDE = on(prop.attributes?.val);
     if (prop.localName === 'kinsoku') kinsoku = on(prop.attributes?.val);
     if (prop.localName === 'overflowPunct') overflowPunctuation = on(prop.attributes?.val);
     if (prop.localName === 'wordWrap') characterWrap = !on(prop.attributes?.val);
@@ -115,6 +123,8 @@ export function resolveCjkTypography(
     overflowPunctuation,
     overflowFullwidthPunctuation: overflowPunctuation && justified,
     characterWrap,
+    autoSpaceDN,
+    autoSpaceDE,
   };
 }
 

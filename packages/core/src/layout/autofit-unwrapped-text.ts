@@ -6,11 +6,13 @@ import {
   eastAsianLanguage,
   resolveCjkTypography,
   type CjkTypographySettings,
+  type CjkParagraphTypography,
 } from './cjk-typography.ts';
 import { compressCjkPieces } from './cjk-spacing.ts';
 import type { FieldAwarePiece } from './field-pieces.ts';
 import type { ResolvedTabStops } from './paragraph-tabs.ts';
-import { measureDisplayText } from './run-style.ts';
+import { measureDisplayText, type ResolvedRunStyle } from './run-style.ts';
+import { automaticTextGap, automaticTextSpacingAdvance } from './cjk-automatic-spacing.ts';
 import { styleForFontSlot } from './script-itemization.ts';
 import type { TextMeasurer } from './semantic-records.ts';
 import { withoutLineEndWhitespace } from './trailing-spaces.ts';
@@ -126,12 +128,14 @@ export function measureUnwrappedAutofitText(
   boundaries: readonly number[] | undefined,
   measure: (text: string) => number,
   start: number,
-  nextTabStop: (at: number) => number
+  nextTabStop: (at: number) => number,
+  extraAdvance?: (from: number, to: number) => number
 ): { width: number; trailing: number } {
   let width = 0;
   let trailing = 0;
   let from = 0;
   for (const to of boundaries ?? wordBoundaries(text, false)) {
+    const startOffset = from;
     const candidate = text.slice(from, to);
     from = to;
     if (candidate.length === 0) continue;
@@ -141,11 +145,69 @@ export function measureUnwrappedAutofitText(
       advance = Math.max(0, nextTabStop(start + width) - (start + width));
     } else {
       const ink = withoutLineEndWhitespace(candidate);
-      advance = measure(candidate);
-      if (ink.length < candidate.length) spaces = advance - (ink ? measure(ink) : 0);
+      const natural = measure(candidate);
+      advance = natural + (extraAdvance?.(startOffset, to) ?? 0);
+      if (ink.length < candidate.length) spaces = natural - (ink ? measure(ink) : 0);
     }
     width += advance;
     trailing = spaces < advance ? spaces : trailing + spaces;
   }
   return { width, trailing };
+}
+
+interface AutomaticAutofitTextSpacing {
+  readonly previousText: Parameters<typeof automaticTextSpacingAdvance>[0];
+  minimum(at: number, continues: boolean): number;
+  extraAdvance(from: number, to: number): number;
+}
+
+type AutomaticAutofitSpacingPricer = (
+  piece: FieldAwarePiece,
+  boundaries: readonly number[],
+  style: ResolvedRunStyle,
+  previous: Parameters<typeof automaticTextSpacingAdvance>[0]
+) => AutomaticAutofitTextSpacing;
+
+/** Price automatic gaps once, without losing a kept token's internal advances at a minimum cut. */
+export function automaticAutofitSpacing(
+  typography: CjkParagraphTypography,
+  measurer: TextMeasurer
+): AutomaticAutofitSpacingPricer {
+  return (piece, boundaries, style, previous) => {
+    const gaps = new Map<number, { before: number; internal: number }>();
+    let previousText = previous;
+    let from = 0;
+    for (const to of boundaries) {
+      const text = piece.text.slice(from, to);
+      if (text === '\t') previousText = undefined;
+      else if (text.length > 0) {
+        const current = { ...piece, start: piece.start + from, end: piece.start + to, text, style };
+        const internal = automaticTextSpacingAdvance(undefined, current, typography, measurer);
+        const before =
+          previousText?.end === current.start
+            ? automaticTextGap(previousText, current, typography, measurer)
+            : 0;
+        if (before > 0 || internal > 0) gaps.set(from, { before, internal });
+        previousText = current;
+      }
+      from = to;
+    }
+    const entries = [...gaps];
+    let index = 0;
+    return {
+      previousText,
+      minimum(at: number, continues: boolean): number {
+        const gap = gaps.get(at);
+        return gap ? gap.internal + (continues ? gap.before : 0) : 0;
+      },
+      extraAdvance(from: number, to: number): number {
+        let advance = 0;
+        while (index < entries.length && entries[index]![0] < to) {
+          const [at, gap] = entries[index++]!;
+          if (at >= from) advance += gap.before + gap.internal;
+        }
+        return advance;
+      },
+    };
+  };
 }

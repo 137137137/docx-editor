@@ -1,3 +1,4 @@
+import { automaticTextSpacingBefore } from './cjk-automatic-spacing.ts';
 // The broken-but-unplaced line: the record breakParagraph accumulates and pagination
 // budgets, before placement publishes a LineRecord from it. Extracted from paragraph-flow
 // so the flow module stays under its line budget; paragraph-flow re-exports everything here.
@@ -529,7 +530,7 @@ export function markPendingLineWrapAdvances(line: PendingLine): void {
       flowEnd = Math.max(flowEnd, drawings[next]!.advanceEnd);
     }
     if (!Number.isFinite(flowEnd)) continue;
-    const gap = current.box.x - flowEnd;
+    const gap = current.box.x - flowEnd - automaticTextSpacingBefore(current);
     if (gap <= 0.001) continue;
     line.spans[index] = { ...current, wrapAdvanceBefore: gap };
   }

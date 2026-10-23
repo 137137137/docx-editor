@@ -1,3 +1,5 @@
+import { withAuthoredCjkGapMetric } from './cjk-auto-spacing-metric-port.ts';
+import { createResolvedCjkAutoSpacingGapMetric } from './sfnt-auto-spacing-metrics.ts';
 import { isRunKerningEnabled } from './run-kerning.ts';
 import { runLigatureFeatureKey } from './run-ligatures.ts';
 import { createShapedLineMetrics } from './shaped-line-metrics.ts';
@@ -222,6 +224,8 @@ export function createShapedMeasurer(
     return font;
   };
 
+  const automaticTextSpacingGap = createResolvedCjkAutoSpacingGapMetric(resolveFontCached);
+
   const widthsFor = (
     font: ResolvedFont,
     halfPoints: number,
@@ -284,7 +288,7 @@ export function createShapedMeasurer(
   // Static face numbers, so one read per face serves every size: the em fractions scale.
   const strikeoutByFont = new WeakMap<ResolvedFont, StrikeoutStrokeEm | null>();
 
-  return {
+  const measurer: TextMeasurer = {
     hasResolvedFont(style) {
       return resolveFontCached(style) !== null;
     },
@@ -460,6 +464,7 @@ export function createShapedMeasurer(
       return faceLineMetrics(font, style);
     },
   };
+  return withAuthoredCjkGapMetric(measurer, automaticTextSpacingGap!);
 }
 
 /**
