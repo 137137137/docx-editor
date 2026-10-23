@@ -126,6 +126,7 @@ import { resolvedParagraphMarkChangeSites } from './revision-formatting-projecti
 import { paragraphMergeGroupOf, storyBlocks } from './story-roots.ts';
 import {
   clipInlineDrawingRecordToRegion,
+  columnPaperClip,
   publishAnchoredDrawingsForParagraph,
   anchoredDrawingAtomsInParagraph,
   pageClipRegion,
@@ -1616,6 +1617,8 @@ function* layoutBlocksPass(
         displayMode,
         ...(authorFilter ? { revisionAuthorFilter: authorFilter } : {}),
         ...inlineDrawingFlow(options.inlineDrawingLayout, hostedStory),
+        // Line placement below clips these pictures to the sheet; frames keep the flow clip.
+        ...(!entry.frame ? { deferInlineDrawingHorizontalClip: true } : {}),
         contentLeft: 0,
         contentRight:
           columnCount > 1 ? columnWidth() : entry.indent.left + available + entry.indent.right,
@@ -2663,13 +2666,6 @@ function* layoutBlocksPass(
       }));
       // Word aligns inside the passage a float leaves the line, not the page margins.
       const measure = lineAlignmentMeasure(pendingLine, columnX, lineIndent, lineAvailableWidth);
-      // Use page width: column-zero width would erase drawings in later columns.
-      const pageClip = Object.freeze({
-        x: 0,
-        y: 0,
-        width: contentWidthForReflow,
-        height: contentHeight(),
-      });
       const placedDrawings = pendingLine.drawings.map((drawing) =>
         Object.freeze({ ...shiftInlineDrawingRecord(drawing, penX, cursorY), paragraphId })
       );
@@ -2695,10 +2691,15 @@ function* layoutBlocksPass(
           lineAlignOffset(placedSpans, aligned, alignment, measure.available, measure.used)
       );
       const { spans: alignedSpans, offset: alignOffset } = content;
-      // Clip where alignment put each picture, not where the line's fill left it.
-      const alignedDrawings = content.drawings.map((drawing) =>
-        clipInlineDrawingRecordToRegion(drawing, pageClip)
-      );
+      // Clip where alignment put each picture: paper or mid-gap sideways, the body band vertically.
+      let alignedDrawings = content.drawings;
+      if (alignedDrawings.length > 0) {
+        const paperClip = columnPaperClip(pageContentClip(), columns, columnIndex);
+        const pageClip = { x: paperClip.x, y: 0, width: paperClip.width, height: contentHeight() };
+        alignedDrawings = alignedDrawings.map((drawing) =>
+          clipInlineDrawingRecordToRegion(drawing, pageClip)
+        );
+      }
       const record: LineRecord = {
         id: bodyLineId(paragraph.id, pendingLine.start, lineIndex),
         range: { paragraphId, start: pendingLine.start, end: pendingLine.end },

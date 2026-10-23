@@ -22,7 +22,7 @@ import {
 } from '../store/package/drawing-projection.ts';
 import type { OoxmlNode } from '../store/package/ooxml-tree.ts';
 import { pageClipRegion } from './drawing-page-clip.ts';
-export { pageClipRegion } from './drawing-page-clip.ts';
+export { columnPaperClip, pageClipRegion } from './drawing-page-clip.ts';
 import type { ImageResourceState } from '../store/package/image-resources.ts';
 import {
   DEFAULT_REVISION_DISPLAY_MODE,
@@ -1322,6 +1322,8 @@ export function buildInlineDrawingRecord(options: {
   readonly contentRight: number;
   readonly contentTop?: number;
   readonly contentBottom?: number;
+  /** @internal Body placement applies the horizontal paper clip later. */
+  readonly deferHorizontalClip?: boolean;
   readonly revisions?: readonly RevisionAttribution[];
   readonly bidiLevel?: number;
   /** Lays out a text-box story; called only for a drawing that carries one. */
@@ -1343,18 +1345,19 @@ export function buildInlineDrawingRecord(options: {
   });
   // A turned, shadowed or outlined text box reaches past its extent; the clip keeps that reach.
   const reach = turnedTextboxBounds(geometry.paintBounds, textboxStory);
+  const horizontalClip = options.deferHorizontalClip
+    ? { x: reach.x, width: reach.width }
+    : { x: options.contentLeft, width: Math.max(0, options.contentRight - options.contentLeft) };
   const clipRegion =
     options.contentTop !== undefined && options.contentBottom !== undefined
       ? Object.freeze({
-          x: options.contentLeft,
+          ...horizontalClip,
           y: options.contentTop,
-          width: Math.max(0, options.contentRight - options.contentLeft),
           height: Math.max(0, options.contentBottom - options.contentTop),
         })
       : Object.freeze({
-          x: options.contentLeft,
+          ...horizontalClip,
           y: reach.y,
-          width: Math.max(0, options.contentRight - options.contentLeft),
           height: reach.height,
         });
   const paintBounds = clipBoxToRegion(reach, clipRegion);

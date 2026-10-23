@@ -1104,6 +1104,7 @@ export function breakParagraph(
           baseline: line.baseline,
           contentLeft: contentOriginX,
           contentRight: contentOriginX + rightEdge,
+          ...(flow?.deferInlineDrawingHorizontalClip ? { deferHorizontalClip: true } : {}),
           ...(piece.revisions ? { revisions: piece.revisions } : {}),
           ...(piece.style.shaping ? { bidiLevel: piece.style.shaping.level } : {}),
           layoutTextboxStory: flow?.layoutTextboxStory,
