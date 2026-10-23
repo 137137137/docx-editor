@@ -385,9 +385,34 @@ Semantic layout SHALL resolve `w:autoSpaceDE` and `w:autoSpaceDN` through the pa
 - **THEN** line layout draws the same boundary advance that table AutoFit counts
 - **AND** the caret after the boundary sits after the advance
 
+### Requirement: Kinsoku groups wider than their line
+
+The layout engine SHALL move text that kinsoku keeps together to the next line as one unit. When the unit is wider than that whole line, the engine SHALL break it at its last fitting grapheme, also where kinsoku forbids the break. The automatic advance before each fragment SHALL count toward the fit; the advance at the break SHALL not. Grapheme clusters, combining marks, and no-break characters SHALL never break.
+
+#### Scenario: A strict small kana group wider than the line
+
+- **GIVEN** a strict ja-JP paragraph `前文123ヵ月` at 12 pt in Century and MS Mincho, left-aligned, with automatic spacing
+- **WHEN** the measure is 24 to 34.5 pt, narrower than the 35 pt unit `123ヵ`
+- **THEN** the lines are `前文`, `123`, and `ヵ月`
+- **AND** from 35 pt the unit `123ヵ` stays whole on the second line
+
+#### Scenario: A one-character measure
+
+- **GIVEN** `天。地。人。` in a left-aligned paragraph
+- **WHEN** the measure holds one ideograph
+- **THEN** every character takes its own line, the full stops included
+- **AND** with a justified paragraph that allows hanging, each full stop hangs after its ideograph
+
+#### Scenario: A justified line gives back half of its automatic spacing
+
+- **GIVEN** the same `前文123ヵ月` paragraph, justified
+- **WHEN** the measure is 33.5 to 34.5 pt, where `123ヵ` fits only with its 3 pt advance at half width
+- **THEN** `123ヵ` stays whole on the second line
+- **AND** at 33 pt it breaks after `123`
+
 ### Requirement: East Asian punctuation fitting only on justified paragraphs
 
-The layout engine SHALL fit a line by compressing East Asian punctuation against measured glyph bounds only when the paragraph alignment is justified (`w:jc` `both`, `distribute`, `thaiDistribute`, or a kashida value). Paragraphs with any other alignment SHALL wrap instead of fitting. Adjacent full-width punctuation pairs compress at every alignment.
+The layout engine SHALL fit a line by compressing East Asian punctuation against measured glyph bounds only when the paragraph alignment is justified (`w:jc` `both`, `distribute`, `thaiDistribute`, or a kashida value) and the document defaults (`w:rPrDefault`) name an East Asian face. Other paragraphs SHALL wrap instead of fitting. Adjacent full-width punctuation pairs compress at every alignment.
 
 #### Scenario: A left-aligned paragraph wraps instead of compressing
 
@@ -395,6 +420,54 @@ The layout engine SHALL fit a line by compressing East Asian punctuation against
 - **WHEN** the paragraph is left-aligned, centered, or right-aligned
 - **THEN** the line wraps instead of fitting
 - **AND** the same paragraph fits the line when it is justified
+
+### Requirement: East Asian punctuation fitting capacity
+
+When a justified line compresses East Asian punctuation to fit the next glyph, each closing mark and colon SHALL give up to half its advance on its right side and each opening mark on its left side, next to any glyph on the line. A closing mark or colon before an opening mark SHALL give both sides, each up to half of the smaller glyph. The shrink SHALL go in equal shares to every blank side, and a side that runs out SHALL pass the rest to the others. The next ordinary glyph SHALL join the line only when the compression it needs, as a share of the line's capacity, is no larger than its room divided by 1/64 of the advances before the line's last glyph.
+
+#### Scenario: Two blank sides fit more than half a glyph
+
+- **GIVEN** a justified 12 pt line `甲。乙，丙` followed by more ideographs, with document punctuation compression
+- **WHEN** the measure is 48.6 pt, 11.4 pt short of the natural width
+- **THEN** the whole line fits by compressing both blank sides
+- **AND** at 48.5 pt the last ideograph wraps
+
+#### Scenario: A longer line leaves less compression
+
+- **GIVEN** the same two blank sides on a 15-glyph line
+- **WHEN** the measure leaves the last glyph 2.0 pt of room
+- **THEN** the last glyph wraps
+- **AND** with 2.05 pt of room it fits
+
+#### Scenario: Adjacent punctuation gives both sides
+
+- **GIVEN** a closing mark followed by an opening mark, two closing marks, or two opening marks
+- **WHEN** the line needs compression to fit
+- **THEN** both blank sides at that seam compress
+
+### Requirement: Hanging punctuation only on justified paragraphs
+
+With `w:overflowPunct` on, the layout engine SHALL let line-end punctuation hang past the margin only when the paragraph alignment is justified. This SHALL apply to full-width punctuation and to Latin punctuation in a run with an East Asian language. Left-aligned, centered, and right-aligned lines SHALL keep line-end punctuation inside the margin. A document whose defaults name no East Asian face SHALL hang no punctuation.
+
+#### Scenario: A closing quote stays inside a left-aligned line
+
+- **GIVEN** a Japanese-language run that ends with a closing curly quote one character past the margin
+- **WHEN** the paragraph is left-aligned, centered, or right-aligned
+- **THEN** the quote wraps to the next line with the character before it
+- **AND** the same quote hangs past the margin when the paragraph is justified
+
+#### Scenario: A hanging mark and compression fit one line
+
+- **GIVEN** a justified 12 pt line `甲乙。丙。` followed by more ideographs, with document punctuation compression
+- **WHEN** the measure is 42.1 pt, too narrow for the final full stop to hang alone
+- **THEN** the final full stop hangs past the margin and the middle full stop gives 5.9 pt
+- **AND** at 41.85 pt the last ideograph and its full stop wrap
+
+#### Scenario: A document without an East Asian default face neither fits nor hangs
+
+- **GIVEN** document punctuation compression, a justified paragraph, and document defaults that name no East Asian face
+- **WHEN** a line fits only when its punctuation compresses or hangs
+- **THEN** the line wraps instead
 
 ### Requirement: East Asian punctuation fitting on mixed lines
 
@@ -446,6 +519,6 @@ The layout engine SHALL allow curly quotes in runs with the East Asian font hint
 
 #### Scenario: Unsupported curly context keeps existing behavior
 
-- **GIVEN** a curly-only punctuation window, unhinted Latin quotes, a curly quote side that faces punctuation or a Latin word, unresolved face, authored tracking, horizontal scaling, complex shaping, decorated text, or source punctuation-kerning refusal
+- **GIVEN** a curly-only punctuation window, unhinted Latin quotes, a curly quote's inner side, unresolved face, authored tracking, horizontal scaling, complex shaping, decorated text, or source punctuation-kerning refusal
 - **WHEN** layout considers optical fitting
 - **THEN** the new East Asian curly path leaves the unsupported geometry unchanged

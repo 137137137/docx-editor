@@ -139,21 +139,16 @@ export function anchorLineStartsByModelOffset(input: {
         probeWordStartWidth = probeWidth;
       }
       const hangs =
-        input.typography?.overflowPunctuation &&
-        canHangCjkPunctuation(
-          candidate,
-          piece,
-          probeLineAvail() - probeWidth,
-          width,
-          measurer,
-          input.typography.overflowFullwidthPunctuation !== false
-        );
+        (input.typography?.hangingPunctuation ?? input.typography?.overflowPunctuation) &&
+        canHangCjkPunctuation(candidate, piece, probeLineAvail() - probeWidth, width, measurer);
       const fitWidth = (input.seamNaturalWidths?.get(piece) ?? width) + gap();
       if (!hangs && probeWidth > 0 && probeWidth + fitWidth > probeLineAvail()) {
         if (probeDecision === 'forbidden' && probeWordStartWidth <= 0) {
           // Placement pushes the group out past the measure rather than opening a line
           // before it, so this probe line does not end here either.
         } else if (opens || probeWordStartWidth <= 0) {
+          // A kinsoku group that opens the line is wider than it. Placement cuts it at its
+          // last fitting character; the probe, which never chops, ends the line at this seam.
           closeProbeLine(modelStart);
         } else {
           // Mid-word overflow: placement carries the whole word down, so the next
