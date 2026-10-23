@@ -5,6 +5,8 @@ import { buildStyleCascadeTable } from '../style-cascade.ts';
 import { NO_THEME_FONTS } from '../run-style.ts';
 import { createLayoutSession } from '../layout-session.ts';
 import { linesOf, type TextMeasurer } from '../semantic-records.ts';
+import { fittingClusters } from '../cjk-optical-fit.ts';
+import { segmentGraphemes } from '../grapheme.ts';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const bounds: Record<string, [number, number]> = {
   '（': [0.662, 0.899],
@@ -409,4 +411,25 @@ test('optical line geometry remains stable through cached width changes', () => 
   expect(draw(90)).toEqual(compressed);
   expect(draw(120)[0]!.origins).toEqual([0, 12000, 24000, 36000, 48000, 60000, 72000, 84000]);
   expect(draw(90)).toEqual(compressed);
+});
+
+test('the single-unit cluster fast path agrees with grapheme segmentation', () => {
+  const units: string[] = [' '];
+  for (const [from, to] of [
+    [0x3000, 0x9fff],
+    [0xff00, 0xffef],
+  ] as const)
+    for (let code = from; code <= to; code += 1) units.push(String.fromCharCode(code));
+  let fast = 0;
+  for (const unit of units) {
+    const text = `甲${unit}${unit}乙`;
+    const clusters = fittingClusters(text);
+    expect(clusters).toEqual(segmentGraphemes(text));
+    if (clusters.length === 4) fast += 1;
+  }
+  // Combining kana, tone marks, and halfwidth voiced marks take the segmenter path.
+  const voiced = 'か' + String.fromCharCode(0x3099);
+  expect(fittingClusters(voiced)).toEqual(segmentGraphemes(voiced));
+  expect(fittingClusters(voiced)).toHaveLength(1);
+  expect(fast).toBeGreaterThan(20_000);
 });

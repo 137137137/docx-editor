@@ -379,6 +379,21 @@ Semantic layout SHALL resolve `w:autoSpaceDE` and `w:autoSpaceDN` through the pa
 - **THEN** line layout draws the same boundary advance that table AutoFit counts
 - **AND** the caret after the boundary sits after the advance
 
+### Requirement: East Asian punctuation fitting on mixed lines
+
+When document punctuation compression is on and the document defaults name an East Asian face, a line that also holds complete Latin words, digit groups, or ASCII symbol groups SHALL be able to fit by compressing adjacent East Asian punctuation against measured glyph ink. The Latin groups SHALL keep their natural advances and source ranges.
+
+#### Scenario: A mixed line fits by compressing punctuation
+
+- **WHEN** a qualified line holding East Asian punctuation and a complete Latin word overflows by less than the punctuation's measured spare ink
+- **THEN** the line fits by reducing only the East Asian punctuation advances
+- **AND** the Latin word keeps its natural width, and source text and offsets do not change
+
+#### Scenario: An unqualified run keeps conservative fitting
+
+- **WHEN** a run on a line that holds Latin groups has authored character spacing, horizontal scaling, complex shaping, or an unresolved face
+- **THEN** that line does not use measured-ink fitting
+
 ### Requirement: Host font resource replacement
 
 The editor SHALL replace host font resources without replacing its document session, content, selection, or undo history. Replacement SHALL invalidate font-dependent measurement, paragraph layout, and paint. Document protection and shared collaboration data SHALL remain unchanged.

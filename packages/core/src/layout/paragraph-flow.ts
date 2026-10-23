@@ -51,11 +51,7 @@ import { DEFAULT_REVISION_DISPLAY_MODE, revisionsVisible } from './revision-proj
 import type { ParagraphLayoutCache } from './layout-cache.ts';
 import { cjkChopCutAllowedAt, lineOpenDecisionAt, wordBoundaries } from './cjk-line-break.ts';
 import { cjkParagraphBreaks } from './cjk-paragraph-breaks.ts';
-import {
-  createCjkOpticalFitter,
-  appendOpticalCjkCandidate,
-  canFitCjkOptically,
-} from './cjk-optical-fit.ts';
+import { createParagraphCjkOpticalFitter, appendOpticalCjkCandidate } from './cjk-optical-fit.ts';
 import {
   compressCjkPieces,
   canHangCjkPunctuation,
@@ -249,23 +245,18 @@ export function breakParagraph(
   const { preserveColonAdvances } = advances;
   const pieces = compressCjkPieces(visiblePieces, typography, measurer, advances, available);
   const seamNaturalWidths = cjkSeamNaturalWidths(pieces, visiblePieces, measurer);
-  const opticalParagraph =
-    typography.settings?.compression !== undefined &&
-    typography.settings.compression !== 'doNotCompress' &&
-    !flow?.pageExclusionZones?.length &&
-    measurer.inkBounds !== undefined &&
-    canFitCjkOptically(allPieces);
-  const opticalCompression = opticalParagraph && !preserveColonAdvances;
   const placeableSuffixes = placeableContentSuffixes(pieces, pageBreaksIgnored);
   const replayScope = cellTabReplayScope(flow?.cellAnchorScope, rawPieces);
   const endsParagraph = paragraphEndAt(pieces);
   const cjkBreaks = cjkParagraphBreaks(pieces, typography);
-  const fitCjkOptically = createCjkOpticalFitter(
+  const { opticalParagraph, opticalCompression, fitCjkOptically } = createParagraphCjkOpticalFitter(
+    allPieces,
     pieces,
     cjkBreaks,
     measurer,
-    typography.overflowPunctuation,
-    typography.overflowFullwidthPunctuation !== false
+    typography,
+    !!flow?.pageExclusionZones?.length,
+    preserveColonAdvances
   );
   const layoutEquation = createEquationLayouter(measurer, flow?.equationCacheToken);
   const equationLayoutOf = (piece: FieldAwarePiece) =>
@@ -1391,7 +1382,8 @@ export function breakParagraph(
                 spanRange,
                 width,
                 lineOrigin() + line.width,
-                lineAvailable(),
+                // Reserve the source-owned advance before any optical line mutation.
+                lineAvailable() - automaticGap(),
                 !lineEndSpaces.isCollapsibleLineEndWhitespace(candidate) ||
                   (opensWord && placeableSuffixes[pieceIndex]![boundary] === 1)
               );

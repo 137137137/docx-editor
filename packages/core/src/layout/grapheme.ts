@@ -154,6 +154,11 @@ export function resetGraphemeBoundary(): void {
   clearGraphemeMemo();
 }
 
+/** Whether the default boundary is active, so callers may assume its Unicode grapheme rules. */
+export function isDefaultGraphemeBoundary(): boolean {
+  return activeBoundary === intlGraphemeBoundary;
+}
+
 /**
  * Single-entry memo at the source.
  *
