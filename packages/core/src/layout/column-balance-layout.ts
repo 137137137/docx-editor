@@ -140,7 +140,24 @@ export function* layoutBlocksWithColumnBalanceSteps<HostOptions extends object>(
   );
   if (!options.balanceColumns || columns.count < 2 || options.columnRegionBottom !== undefined) {
     if (options.session) options.session.balanceLimit = null;
-    return yield* layoutPass(bodies, revision, options);
+    const final = yield* layoutPass(bodies, revision, options);
+    if (
+      !options.balanceColumns &&
+      options.sectionMarkCollapses === true &&
+      columns.count > 1 &&
+      final.endsOpenPage &&
+      final.pages.length > 0
+    ) {
+      // A continuous successor clears every column, even when balancing is disabled.
+      const bottoms = columnBottomsOf(final.pages[final.pages.length - 1]!, columns, 0);
+      const endCursorY = bottoms.reduce(
+        (bottom, value) => Math.max(bottom, value),
+        final.endCursorY
+      );
+      if (options.session) options.session.endCursorY = endCursorY;
+      if (endCursorY !== final.endCursorY) return { ...final, endCursorY };
+    }
+    return final;
   }
 
   const session = options.session;

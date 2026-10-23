@@ -37,6 +37,7 @@ const LEGACY_OPTIONS = {
   doNotExpandShiftReturn: ['on-or-missing', 'last'],
   doNotUseHTMLParagraphAutoSpacing: ['on-or-missing', 'first'],
   doNotUseIndentAsNumberingTabStop: ['on-or-missing', 'first'],
+  noColumnBalance: ['on-or-missing', 'last'],
   noExtraLineSpacing: ['on-or-missing', 'last'],
 } as const satisfies Record<string, Reading>;
 

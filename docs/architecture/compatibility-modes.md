@@ -60,6 +60,7 @@ The `docx/no-raw-compatibility-mode` lint rule rejects a comparison of `compatib
 | `tableParagraphWidowControl` | `modern` | Paragraphs that split in table cells apply widow control |
 | `vMergeTextMovesPastHeadRow` | `modern` | Merged cell text moves whole past a head row that cannot hold it |
 | `adjustLineHeightInTable` | `w:adjustLineHeightInTable` | Cell paragraphs snap to the line grid |
+| `noColumnBalance` | `w:noColumnBalance` in `legacy` modes | Columns fill in order without balancing |
 | `doNotBreakWrappedTables` | `w:doNotBreakWrappedTables` | A floating table that fits a page does not break |
 | `fixedParagraphSpacing` | `w:doNotUseHTMLParagraphAutoSpacing` | Adjacent paragraph spacing adds up |
 | `ignoreIndentAsNumberingTabStop` | `w:doNotUseIndentAsNumberingTabStop` | A numbering tab ignores the hanging indent |

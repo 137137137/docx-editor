@@ -80,6 +80,25 @@ const fixtures = [
     ),
   },
   {
+    name: 'unbalanced column continuation',
+    bytes: zipDocument(
+      Array.from({ length: 18 }, (_, i) => p('B' + i, 30)).join('') +
+        p('', 1, sect(2)) +
+        p('TARGET', 70) +
+        sect(),
+      {
+        overrides:
+          '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>',
+        documentRels:
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="settings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>',
+        extraXml: {
+          'word/settings.xml':
+            '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:compat><w:noColumnBalance/></w:compat></w:settings>',
+        },
+      }
+    ),
+  },
+  {
     name: 'column spacing',
     bytes: zipDocument(
       p('PREFIX', 50, sect()) + p('LEFT', 110) + p('TARGET', 20, '', 13) + sect(2)
@@ -241,6 +260,18 @@ test.each(fixtures)(
         if (block.kind === 'paragraph' && !block.outOfFlow && block !== target)
           expect(block.box.y + block.box.height).toBeLessThanOrEqual(target.box.y + 1e-6);
       }
+    }
+    if (name === 'unbalanced column continuation') {
+      const pages = a.surface!.layout().pages;
+      expect(pages).toHaveLength(3);
+      const preceding = pages[1]!.fragments.filter((block) => block.kind === 'paragraph');
+      expect(preceding.some((block) => block.box.y + block.box.height === 180)).toBe(true);
+      const target = pages[2]!.fragments.find(
+        (block) =>
+          block.kind === 'paragraph' &&
+          block.lines.some((line) => line.spans.some((span) => span.text === 'TARGET'))
+      );
+      expect(target?.box.y).toBe(0);
     }
     const aid = select(a),
       bid = select(b);

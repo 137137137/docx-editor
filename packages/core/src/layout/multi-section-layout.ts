@@ -604,7 +604,10 @@ export function* layoutMultiSectionDocumentSteps(
     // (ECMA-376 §17.6.4). The break that ENDS this section is the next section's `w:type`;
     // the document's last section has no such break, so it keeps the fill-first shape.
     const endsContinuous = sections[sectionIndex + 1]?.properties.breakType === 'continuous';
-    const balanceColumns = section.properties.columns.count > 1 && endsContinuous;
+    const balanceColumns =
+      section.properties.columns.count > 1 &&
+      endsContinuous &&
+      options.styleCascade?.noColumnBalance !== true;
     // A page break and the empty mark after it advance one sheet when a later section opens
     // the next sheet. Mark-only sections in between then continue on the break's sheet. A
     // balanced section is left as it was: the balance search needs one open page.

@@ -172,6 +172,12 @@ A floating table at the top level of a header or footer sits outside the story f
 
 When you compare a multipage table, check the space between each repeated header and its first body row. The table pagination note lists the shared-border measurement limits. Keep the original document when you report a spacing issue.
 
+### Text columns
+
+A multi-column section balances its final page before a continuous section follows. Earlier pages retain their column distribution.
+
+If settings enable `w:noColumnBalance` in a document saved in compatibility mode 14 or earlier, or with no declared mode, the section fills each column before the next. In compatibility mode 15 and later, the option has no effect and the section still balances. An absent flag or an explicit off value retains balancing. The following continuous section starts below the tallest column, even when balancing is disabled.
+
 ### Images and drawings
 
 <FeatureMatrix category="images" />
