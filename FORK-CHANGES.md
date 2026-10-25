@@ -4,6 +4,11 @@ This fork of [docx-editor](https://github.com/eigenpal/docx-editor) is licensed 
 
 ## Modified by Counselcite from @docx-editor.dev 2.31.0
 
+A section's note number format when the section authors note properties without one:
+
+- `packages/core/src/store/package/note-properties.ts`: `sectionFormat` numbers such a section in the default format, as Word does, instead of the document-wide format from settings.xml.
+- Tests: `packages/core/src/store/package/__tests__/note-properties-format.test.ts` (new).
+
 A document search that builds each paragraph's text once per revision:
 
 - `packages/core/src/binding/document-search.ts`: a paragraph's searchable text is kept per part and paragraph node, so a second query of the same revision does not build it again.
