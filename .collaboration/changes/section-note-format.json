@@ -1,0 +1,10 @@
+{
+  "impact": "no-impact",
+  "fields": [],
+  "before": "A section whose footnotePr or endnotePr omitted numFmt resolved its format from settings.xml, so a chicago document-wide format numbered every later section's notes in symbols.",
+  "after": "Such a section resolves to the default format; the document-wide format applies only to a section with no note properties of its own.",
+  "reason": "Only how resolved note properties are read changes. The authored properties, shared state, operations, snapshots and protocol messages are untouched.",
+  "tests": ["packages/core/src/store/package/__tests__/note-properties-format.test.ts"],
+  "changeset": "section-note-format",
+  "migration": null
+}
