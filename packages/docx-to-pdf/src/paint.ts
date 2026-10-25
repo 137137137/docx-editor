@@ -55,6 +55,25 @@ function extractedText(span: SemanticSpanVisit['span']): string {
   return element ? span.text : span.text.replaceAll('\u00ad', '-');
 }
 
+/** Border styles `rule()` draws as authored; any other style is drawn as an approximation. */
+const FAITHFUL_RULES: ReadonlySet<string> = new Set([
+  'single',
+  'thick',
+  'dashed',
+  'dotted',
+  'double',
+  'triple',
+]);
+
+const DASHED_RULES = new Set([
+  'dotted',
+  'dashed',
+  'dashSmallGap',
+  'dotDash',
+  'dotDotDash',
+  'dashDotStroked',
+]);
+
 function rule(
   box: LayoutBox,
   colorHex: string | null,
@@ -63,7 +82,36 @@ function rule(
   y: number,
   height: number
 ): string {
-  if (style === 'double') {
+  // A triple rule draws three equal strokes in its five-stroke band.
+  if (style === 'triple') {
+    const horizontal = box.width >= box.height;
+    const fifth = (horizontal ? box.height : box.width) / 5;
+    return [0, 2 * fifth, 4 * fifth]
+      .map((offset) =>
+        rule(
+          {
+            ...box,
+            x: box.x + (horizontal ? 0 : offset),
+            y: box.y + (horizontal ? offset : 0),
+            width: horizontal ? box.width : fifth,
+            height: horizontal ? fifth : box.height,
+          },
+          colorHex,
+          'single',
+          x,
+          y,
+          height
+        )
+      )
+      .join('\n');
+  }
+  // Compound styles fill their published band as the double approximation, as on screen.
+  if (
+    style === 'double' ||
+    style === 'doubleWave' ||
+    style.startsWith('thinThick') ||
+    style.startsWith('thickThin')
+  ) {
     const horizontal = box.width >= box.height;
     const third = (horizontal ? box.height : box.width) / 3;
     return [0, 2 * third]
@@ -85,8 +133,8 @@ function rule(
       )
       .join('\n');
   }
-  if (style === 'solid' || style === 'single' || style === 'thick')
-    return `${color(colorHex)} rg ${rect(box, x, y, height, true)} f`;
+  // Only the dash family breaks the rule; other line styles and art borders fill it.
+  if (!DASHED_RULES.has(style)) return `${color(colorHex)} rg ${rect(box, x, y, height, true)} f`;
   const horizontal = box.width >= box.height;
   const width = horizontal ? box.height : box.width;
   const sx = box.x + x + (horizontal ? 0 : width / 2),
@@ -131,7 +179,7 @@ function decorations(
         const style = border.edge.val;
         if (border.edge.shadow)
           work.report('border-shadow', 'Paragraph border shadow is not encoded', pageIndex);
-        if (!['single', 'thick', 'dashed', 'dotted', 'double'].includes(style))
+        if (!FAITHFUL_RULES.has(style))
           work.report(
             'paragraph-border-style',
             `Unsupported paragraph border: ${style}`,
@@ -369,10 +417,7 @@ export async function paint(
         record.index
       ]!;
       for (const border of record.pageBorders.strokes) {
-        if (
-          !['single', 'thick', 'dashed', 'dotted', 'double'].includes(border.edge.val) ||
-          border.edge.shadow
-        )
+        if (!FAITHFUL_RULES.has(border.edge.val) || border.edge.shadow)
           work.report(
             'page-border-style',
             `Unsupported page border: ${border.edge.val}`,
@@ -404,10 +449,15 @@ export async function paint(
   const drawings: SemanticDrawingVisit[] = [];
   for (const warning of layout.contentWarnings ?? [])
     work.report(`core-${warning.code}`, warning.code);
-  forEachSemanticSpan(layout, (visit) => {
-    work.tick();
-    spans.push(visit);
-  });
+  // An empty numbered paragraph still shows its number: its marker rides an empty span.
+  forEachSemanticSpan(
+    layout,
+    (visit) => {
+      work.tick();
+      spans.push(visit);
+    },
+    { spanlessMarkers: true }
+  );
   forEachSemanticDrawing(layout, (visit) => {
     work.tick();
     drawings.push(visit);
@@ -683,7 +733,7 @@ export async function paint(
       const y = visit.storyOrigin.y - visit.page.box.y;
       if (visit.paragraph.clipToBox) out.push(`q ${rect(visit.paragraph.box, x, y, height)} W n`);
       for (const { box, edge } of strokes) {
-        if (edge.shadow || !['single', 'thick', 'dashed', 'dotted', 'double'].includes(edge.val))
+        if (edge.shadow || !FAITHFUL_RULES.has(edge.val))
           work.report(
             'run-border-style',
             `Unsupported character border: ${edge.val}${edge.shadow ? ' with shadow' : ''}`,
