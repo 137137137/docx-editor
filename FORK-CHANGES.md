@@ -8,6 +8,8 @@ A section's note number format when the section authors note properties without 
 
 - `packages/core/src/store/package/note-properties.ts`: `sectionFormat` numbers such a section in the default format, as Word does, instead of the document-wide format from settings.xml.
 - Tests: `packages/core/src/store/package/__tests__/note-properties-format.test.ts` (new).
+- `packages/core/src/layout/document-notes-input.ts`, `packages/core/src/layout/field-noteref.ts`: the last section reads its own body-level `w:sectPr` for its note properties, as `surface-note-state.ts` already did, instead of the document defaults.
+- Tests: `packages/core/src/layout/__tests__/final-section-note-format.test.ts` (new).
 
 A document search that builds each paragraph's text once per revision:
 
